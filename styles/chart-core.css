@@ -1,0 +1,40 @@
+/*
+ * Default --chart-* token contract for chart-core. Declared on :where(:root)
+ * (specificity 0,0,0) so any app-provided :root declaration overrides these
+ * regardless of import order — in this app, tokens.semantic.css keeps winning
+ * and there is zero visual change. A standalone consumer gets these fallbacks.
+ */
+:where(:root) {
+  --chart-positive: #16a34a;
+  --chart-negative: #dc2626;
+  --chart-axis-label: #888888;
+  --chart-separator: #cccccc;
+  --chart-tooltip-label: #888888;
+
+  --chart-ema-10-label: #3b82f6;
+  --chart-ema-20-label: #6b7280;
+  --chart-ema-50-label: #ef4444;
+  --chart-ema-200-label: #22c55e;
+
+  --chart-high-1y-label: #ef4444;
+  --chart-high-2y-label: #f59e0b;
+  --chart-high-3y-label: #8b5cf6;
+  --chart-high-all-label: #06b6d4;
+
+  /* Legacy aliases the SVG series strokes read. */
+  --ema-10: var(--chart-ema-10-label);
+  --ema-20: var(--chart-ema-20-label);
+  --ema-50: var(--chart-ema-50-label);
+  --ema-200: var(--chart-ema-200-label);
+  --high-1y: var(--chart-high-1y-label);
+  --high-2y: var(--chart-high-2y-label);
+  --high-3y: var(--chart-high-3y-label);
+  --high-all: var(--chart-high-all-label);
+
+  --bg-card: #ffffff;
+
+  /* Axis / tooltip font-size tokens. */
+  --text-2hxs: 9px;
+  --text-3xs: 10px;
+  --text-sm: 13px;
+}
