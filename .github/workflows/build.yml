@@ -61,10 +61,23 @@ jobs:
           '
 
       - name: Publish to dist branch
-        uses: JamesIves/github-pages-deploy-action@v4
-        with:
-          branch: dist
-          folder: dist
-          single-commit: true
-          clean: true
-          commit-message: "build: publish dist from ${{ github.sha }}"
+        run: |
+          set -euo pipefail
+
+          # Stash the freshly built artifacts outside the work tree.
+          staging="$(mktemp -d)"
+          cp dist/index.js dist/index.d.ts dist/style.css dist/package.json "$staging/"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          # Republish unconditionally: recreate `dist` as a single fresh commit
+          # built from the current head, even when the output is byte-identical to
+          # the previous publish. No diff check — saving the latest head's build is
+          # this step's only job, and the commit always records the source SHA.
+          git checkout --orphan dist-tmp
+          git rm -rf . >/dev/null 2>&1 || true
+          cp "$staging"/index.js "$staging"/index.d.ts "$staging"/style.css "$staging"/package.json .
+          git add index.js index.d.ts style.css package.json
+          git commit -m "build: publish dist from ${GITHUB_SHA}"
+          git push --force origin dist-tmp:dist
