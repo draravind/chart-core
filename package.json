@@ -1,0 +1,39 @@
+{
+  "name": "@draravind/chart-core",
+  "version": "0.0.0",
+  "type": "module",
+  "description": "Reusable, project-agnostic D3 candlestick/OHLC chart engine with indicators and overlay host.",
+  "license": "UNLICENSED",
+  "private": false,
+  "sideEffects": [
+    "**/*.css"
+  ],
+  "files": [
+    "dist"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./style.css": "./dist/style.css"
+  },
+  "scripts": {
+    "build": "vite build"
+  },
+  "peerDependencies": {
+    "d3": "^7",
+    "lucide-react": "^1.8.0",
+    "react": ">=18",
+    "react-dom": ">=18"
+  },
+  "devDependencies": {
+    "@types/d3": "^7.4.3",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.1",
+    "typescript": "~5.9.3",
+    "vite": "^8.0.4",
+    "vite-plugin-dts": "^4.5.4"
+  }
+}

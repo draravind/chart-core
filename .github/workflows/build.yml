@@ -1,0 +1,70 @@
+name: Build and publish dist
+
+# Rebuild the runnable form on every push to main and commit it to the dedicated
+# `dist` branch, so consumers install prebuilt files (zero on-arrival build).
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-dist
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile=false
+
+      - name: Build
+        run: pnpm build
+
+      - name: Generate dist-branch package.json (root-relative)
+        run: |
+          node -e '
+            const fs = require("fs");
+            const src = JSON.parse(fs.readFileSync("package.json", "utf8"));
+            const out = {
+              name: src.name,
+              version: src.version,
+              type: "module",
+              description: src.description,
+              license: src.license,
+              sideEffects: ["**/*.css"],
+              files: ["index.js", "index.d.ts", "style.css"],
+              exports: {
+                ".": { types: "./index.d.ts", import: "./index.js" },
+                "./style.css": "./style.css"
+              },
+              peerDependencies: src.peerDependencies
+            };
+            fs.writeFileSync("dist/package.json", JSON.stringify(out, null, 2) + "\n");
+          '
+
+      - name: Publish to dist branch
+        uses: JamesIves/github-pages-deploy-action@v4
+        with:
+          branch: dist
+          folder: dist
+          single-commit: true
+          clean: true
+          commit-message: "build: publish dist from ${{ github.sha }}"
