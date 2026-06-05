@@ -1,9 +1,14 @@
 import type * as d3 from 'd3';
+import type { ResolvedIndicator } from './indicators/types';
 
 // Plan A shape — identical to the app's `EodBar` (services/api.ts), including the
 // optional indicator columns, so `EodBar[]` flows into `Chart`'s `data: Candle[]`
-// by structural compatibility with no rename and no cross-package import. Plan B
-// slims this and drops the indicator columns.
+// by structural compatibility with no rename and no cross-package import.
+//
+// Plan B: EMAs now compute in-browser, so the `ema*` columns are DEAD (kept on
+// the type for read-tolerance until the backend follow-up drops them). The
+// `high*` columns stay live — the rolling-highs indicator is data-backed and
+// reads them off each bar.
 export type Candle = {
   date: string;
   open: number;
@@ -22,15 +27,6 @@ export type Candle = {
 };
 
 export type ChartType = 'candlestick' | 'bar';
-
-export type Indicators = {
-  ema10: boolean;
-  ema20: boolean;
-  ema50: boolean;
-  ema200: boolean;
-  highs: boolean;
-  patterns: boolean;
-};
 
 export type AutoFitMode = 'price' | 'priceAndOverlays';
 
@@ -56,7 +52,9 @@ export type ChartScaleApi = {
   visibleBarsInt: number;
   visibleStartIdx: number;
   dataLength: number;
-  indicators: Indicators;
+  // Resolved in-browser indicators (config + computed series, aligned to
+  // `data`). The crosshair + autofit read these; overlay plugins do not.
+  indicators: ResolvedIndicator[];
   // 'pan'     -> high-frequency translate; plugin calls overlay.setTransform only.
   // 'rescale' -> geometry rebuilt; plugin calls overlay.updateScales (full positionAll).
   // The 'pan' notification fires SYNCHRONOUSLY inside the pan rAF so the plugin's

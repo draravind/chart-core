@@ -19,7 +19,21 @@
   cursor: crosshair;
 }
 
+/* Canvas series layer sits beneath the interactive SVG. The SVG must be
+ * explicitly stacked above it: a positioned canvas with z-index:0 would
+ * otherwise paint over an unpositioned <svg> by CSS stacking rules and hide the
+ * crosshair/overlays. pointer-events:none lets every mouse action fall through
+ * to the SVG. */
+.seriesCanvas {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+}
+
 .chartSvg {
+  position: relative;
+  z-index: 1;
   width: 100%;
   height: 100%;
   display: block;

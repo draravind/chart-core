@@ -8,7 +8,13 @@ import React, {
 } from 'react';
 import { BarChart3, MousePointerClick, RotateCcw } from 'lucide-react';
 import * as d3 from 'd3';
-import type { AutoFitMode, Candle, ChartType, Indicators } from './types';
+import type { AutoFitMode, Candle, ChartType } from './types';
+import type {
+  IndicatorConfig,
+  IndicatorSeries,
+  ResolvedIndicator,
+} from './indicators/types';
+import { getIndicator } from './indicators/registry';
 import {
   computeVolumeStats,
   formatPrice,
@@ -16,8 +22,15 @@ import {
   formatVolumeTick,
   type VolumeLabel,
 } from './utils/chartCalculations';
+import { toColumns } from './utils/toColumns';
+import { drawSeries } from './utils/drawSeries';
+import {
+  createColorResolver,
+  type ColorResolver,
+} from './utils/resolveChartColors';
 import styles from './Chart.module.css';
 import './styles/chart-core.css';
+
 import {
   mountChartPatternOverlay,
   type ChartPatternOverlayHandle,
@@ -32,56 +45,6 @@ import {
 } from './context';
 
 const MARGIN = { top: 4, right: 60, bottom: 30, left: 0 };
-const EMA_COLORS = {
-  ema10: 'var(--ema-10)',
-  ema20: 'var(--ema-20)',
-  ema50: 'var(--ema-50)',
-  ema200: 'var(--ema-200)',
-} as const;
-const EMA_TOOLTIP_COLORS = {
-  ema10: 'var(--chart-ema-10-label)',
-  ema20: 'var(--chart-ema-20-label)',
-  ema50: 'var(--chart-ema-50-label)',
-  ema200: 'var(--chart-ema-200-label)',
-} as const;
-const EMA_LABELS = {
-  ema10: 'EMA 10',
-  ema20: 'EMA 20',
-  ema50: 'EMA 50',
-  ema200: 'EMA 200',
-} as const;
-const EMA_KEYS = ['ema10', 'ema20', 'ema50', 'ema200'] as const;
-const HIGH_KEYS = ['high1y', 'high2y', 'high3y', 'highAll'] as const;
-const HIGH_COLORS = {
-  high1y: 'var(--high-1y)',
-  high2y: 'var(--high-2y)',
-  high3y: 'var(--high-3y)',
-  highAll: 'var(--high-all)',
-} as const;
-const HIGH_LABELS = {
-  high1y: '1Y',
-  high2y: '2Y',
-  high3y: '3Y',
-  highAll: 'ATH',
-} as const;
-const HIGH_TOOLTIP_COLORS = {
-  high1y: 'var(--chart-high-1y-label)',
-  high2y: 'var(--chart-high-2y-label)',
-  high3y: 'var(--chart-high-3y-label)',
-  highAll: 'var(--chart-high-all-label)',
-} as const;
-
-function isHighVisible(key: (typeof HIGH_KEYS)[number], b: Candle): boolean {
-  const v = b[key];
-  if (v == null) return false;
-  if (v === b.high) return false;
-  if (key === 'highAll') return true;
-  const nextKey =
-    key === 'high1y' ? 'high2y' : key === 'high2y' ? 'high3y' : 'highAll';
-  const next = b[nextKey];
-  if (next == null) return false;
-  return Math.abs(v - next) / next > 0.01;
-}
 const CHART_FONT = "'Helvetica Neue', Helvetica, Arial, sans-serif";
 
 const VOLUME_HEIGHT_RATIO = 0.15;
@@ -97,19 +60,25 @@ const AXIS_OPACITY = 0.12;
 const TICK_SIZE = 4;
 const N_PRICE_TICKS = 10;
 const MUTED_COLOR = 'var(--chart-tooltip-label)';
-const VOL_OPACITY_STANDARD = 0.35;
-const VOL_OPACITY_FADED = 0.12;
+// Pre-built tspan slots per crosshair tooltip group (≥ max cells: 4 EMAs / 4 high tiers).
+const TOOLTIP_CELL_SLOTS = 4;
 
 const DEFAULT_PRICE_FORMAT = d3.format(',.0f');
 
 type Props = {
   data: Candle[] | undefined;
+  // Older bars used ONLY to seed in-browser indicator computation (e.g. EMA200
+  // needs ~460 prior bars). Kept separate from `data` so geometry/pan/axes stay
+  // byte-identical to the display window — indicators compute over
+  // concat(warmupSeed, data) then slice back to `data`.
+  warmupSeed?: Candle[];
   visibleBars: number;
   onVisibleBarsChange?: (n: number | ((prev: number) => number)) => void;
   panOffset: number;
   onPanOffsetChange: (n: number | ((prev: number) => number)) => void;
   chartType: ChartType;
-  indicators: Indicators;
+  // Registry-driven indicator catalog (one entry per drawn config).
+  indicators: IndicatorConfig[];
   autoFitMode: AutoFitMode;
   onAutoFitModeChange: (m: AutoFitMode) => void;
   infoBarExpanded: boolean;
@@ -138,6 +107,7 @@ type Sel<E extends d3.BaseType = d3.BaseType> = d3.Selection<
 
 const Chart = ({
   data,
+  warmupSeed,
   visibleBars,
   onVisibleBarsChange,
   panOffset,
@@ -157,6 +127,12 @@ const Chart = ({
 }: Props) => {
   const wrapperRef = useRef<HTMLDivElement | null>(null);
   const svgRef = useRef<SVGSVGElement | null>(null);
+  // Canvas series layer (volume/candles/indicators). Sits beneath the SVG.
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const canvasCtxRef = useRef<{ ctx: CanvasRenderingContext2D; dpr: number } | null>(
+    null,
+  );
+  const colorResolverRef = useRef<ColorResolver | null>(null);
   const [containerWidth, setContainerWidth] = useState(0);
   const [containerHeight, setContainerHeight] = useState(0);
 
@@ -265,6 +241,94 @@ const Chart = ({
   // of pan/zoom, so it recomputes only when the dataset changes.
   const volStats = useMemo(() => computeVolumeStats(data ?? []), [data]);
 
+  // Resolve each enabled indicator over concat(warmupSeed, data), then slice
+  // the computed series back to the display window so they align with `data`
+  // (warm-up bars are seeding-only and never rendered/pannable).
+  const resolvedIndicators = useMemo<ResolvedIndicator[]>(() => {
+    if (!data || data.length === 0) return [];
+    const enabled = indicators.filter((c) => c.enabled);
+    if (enabled.length === 0) return [];
+    const seed = warmupSeed && warmupSeed.length ? warmupSeed : [];
+    const combined = seed.length ? seed.concat(data) : data;
+    const cols = toColumns(combined);
+    const input = { ...cols, bars: combined };
+    const seedLen = seed.length;
+    return enabled.map((config) => {
+      const def = getIndicator(config.defKey);
+      if (!def) return { config, series: {} as IndicatorSeries };
+      const full = def.compute(input, config.params);
+      const series: IndicatorSeries = {};
+      for (const key of Object.keys(full)) {
+        series[key] = seedLen ? full[key].subarray(seedLen) : full[key];
+      }
+      return { config, series };
+    });
+  }, [data, warmupSeed, indicators]);
+
+  // Everything the canvas redraw needs that is NOT a live scale field. Rebuilt
+  // in Effect B (after the y-scale exists); the pan path reuses it with only a
+  // fresh baseTranslateX.
+  const drawStateRef = useRef<{
+    cssWidth: number;
+    cssHeight: number;
+    width: number;
+    fullHeight: number;
+    priceHeight: number;
+    gap: number;
+    volumeHeight: number;
+    hasVolume: boolean;
+    volMax: number;
+    volSma: (number | undefined)[];
+    bandwidth: number;
+    renderStart: number;
+    renderEnd: number;
+    renderSlice: Candle[];
+    chartType: ChartType;
+    data: Candle[];
+    colors: { positive: string; negative: string };
+    indicators: ResolvedIndicator[];
+  } | null>(null);
+
+  // Stable redraw entrypoint. Reads the cached draw-state + live scale fields
+  // (xScale/yPrice from the last rescale, baseTranslateX which moves on pan).
+  const redrawSeries = useCallback(() => {
+    const cc = canvasCtxRef.current;
+    const st = drawStateRef.current;
+    if (!cc || !st) return;
+    drawSeries(cc.ctx, {
+      dpr: cc.dpr,
+      cssWidth: st.cssWidth,
+      cssHeight: st.cssHeight,
+      marginLeft: MARGIN.left,
+      marginTop: MARGIN.top,
+      marginBottom: MARGIN.bottom,
+      rightBuffer: RIGHT_BUFFER,
+      width: st.width,
+      fullHeight: st.fullHeight,
+      priceHeight: st.priceHeight,
+      gap: st.gap,
+      volumeHeight: st.volumeHeight,
+      hasVolume: st.hasVolume,
+      volMax: st.volMax,
+      volSma: st.volSma,
+      bandwidth: st.bandwidth,
+      baseTranslateX: scaleApi.baseTranslateX,
+      renderStart: st.renderStart,
+      renderEnd: st.renderEnd,
+      renderSlice: st.renderSlice,
+      chartType: st.chartType,
+      xScale: scaleApi.xScale,
+      yPrice: scaleApi.yPrice,
+      data: st.data,
+      colors: st.colors,
+      indicators: st.indicators.map((r) => ({
+        config: r.config,
+        series: r.series,
+      })),
+      resolveColor: (v) => colorResolverRef.current?.resolve(v) ?? '#888888',
+    });
+  }, [scaleApi]);
+
   const priceBottomPx = useMemo(
     () => (layout ? MARGIN.top + layout.priceHeight + layout.gap / 2 : 0),
     [layout],
@@ -323,11 +387,9 @@ const Chart = ({
   const rightBorderRef = useRef<Sel<SVGLineElement> | null>(null);
   const chartGroupSelRef = useRef<Sel<SVGGElement> | null>(null);
   const xAxisGRef = useRef<Sel<SVGGElement> | null>(null);
-  const volBarsGroupRef = useRef<Sel<SVGGElement> | null>(null);
+  // Volume milestone text labels stay SVG (low node count). The high-count
+  // series (volume bars, candles, indicator lines) paint on the canvas layer.
   const volLabelsGroupRef = useRef<Sel<SVGGElement> | null>(null);
-  const candleGroupRef = useRef<Sel<SVGGElement> | null>(null);
-  const emaGroupRef = useRef<Sel<SVGGElement> | null>(null);
-  const highsGroupRef = useRef<Sel<SVGGElement> | null>(null);
   const crosshairVRef = useRef<Sel<SVGLineElement> | null>(null);
   const crosshairHRef = useRef<Sel<SVGLineElement> | null>(null);
   const infoTextRef = useRef<Sel<SVGTextElement> | null>(null);
@@ -472,6 +534,55 @@ const Chart = ({
     };
   }, []);
 
+  // Color resolver — a probe <span> under the themed wrapper that resolves the
+  // canvas's CSS-var (incl. color-mix()) colors to rgb. Re-created on mount.
+  useEffect(() => {
+    if (!wrapperRef.current) return;
+    const resolver = createColorResolver(wrapperRef.current);
+    colorResolverRef.current = resolver;
+    return () => {
+      resolver.destroy();
+      colorResolverRef.current = null;
+    };
+  }, []);
+
+  // Canvas DPR backing-store sizing. CSS px matches the svg box; the backing
+  // store is px*dpr with the context pre-scaled by dpr. Re-applies + redraws on
+  // a devicePixelRatio change (browser zoom / cross-monitor drag) which a
+  // ResizeObserver won't catch, via a re-armed resolution media query.
+  const layoutTotalHeight = layout?.totalHeight ?? null;
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas || layoutTotalHeight == null || containerWidth === 0) return;
+    const cssW = containerWidth;
+    const cssH = layoutTotalHeight + MARGIN.top + MARGIN.bottom;
+    let mql: MediaQueryList | null = null;
+
+    const onChange = () => apply();
+    function apply() {
+      const c = canvas;
+      if (!c) return;
+      const dpr = window.devicePixelRatio || 1;
+      c.style.width = `${cssW}px`;
+      c.style.height = `${cssH}px`;
+      c.width = Math.round(cssW * dpr);
+      c.height = Math.round(cssH * dpr);
+      const ctx = c.getContext('2d');
+      if (ctx) {
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        canvasCtxRef.current = { ctx, dpr };
+        redrawSeries();
+      }
+      if (mql) mql.removeEventListener('change', onChange);
+      mql = window.matchMedia(`(resolution: ${dpr}dppx)`);
+      mql.addEventListener('change', onChange);
+    }
+    apply();
+    return () => {
+      if (mql) mql.removeEventListener('change', onChange);
+    };
+  }, [containerWidth, layoutTotalHeight, redrawSeries]);
+
   useEffect(() => {
     const wrapper = wrapperRef.current;
     if (!wrapper || !onVisibleBarsChange) return;
@@ -541,6 +652,7 @@ const Chart = ({
         scaleApi.baseTranslateX = s.baseTx;
         notifyScale('pan');
         patternOverlayHandleRef.current?.setTransform(s.baseTx);
+        redrawSeries();
       }
     };
     const onMove = (e: MouseEvent) => {
@@ -565,6 +677,7 @@ const Chart = ({
           scaleApi.baseTranslateX = tx;
           notifyScale('pan');
           patternOverlayHandleRef.current?.setTransform(tx);
+          redrawSeries();
         });
       }
     };
@@ -578,7 +691,7 @@ const Chart = ({
         pendingFrameRef.current = null;
       }
     };
-  }, [scaleApi, notifyScale]);
+  }, [scaleApi, notifyScale, redrawSeries]);
 
   // Effect 1 — Build static SVG structure once. All long-lived selections
   // are cached in refs; size-dependent attrs are set in Effect 2.
@@ -634,13 +747,17 @@ const Chart = ({
       .attr('stop-color', '#776a5a');
     bgGradientUserRef.current = gradUser as Sel<SVGLinearGradientElement>;
 
+    // The canvas series layer (beneath this SVG) now paints the background
+    // gradient, so this rect is transparent — it would otherwise sit at the
+    // SVG's z-index ABOVE the canvas and hide the candles. The `defs` gradients
+    // above stay (the trade-overlay handles sample the userSpace twin).
     bgRectRef.current = g
       .append('rect')
       .attr('x', -MARGIN.left)
       .attr('y', -MARGIN.top)
       .attr('rx', 12)
       .attr('ry', 12)
-      .attr('fill', 'url(#chart-bg-gradient)') as Sel<SVGRectElement>;
+      .attr('fill', 'transparent') as Sel<SVGRectElement>;
 
     yPriceAxisGRef.current = g
       .append('g')
@@ -686,11 +803,7 @@ const Chart = ({
       .style('font-weight', '500')
       .style('color', 'var(--chart-axis-label)') as Sel<SVGGElement>;
 
-    volBarsGroupRef.current = chartGroup.append('g') as Sel<SVGGElement>;
     volLabelsGroupRef.current = chartGroup.append('g') as Sel<SVGGElement>;
-    candleGroupRef.current = chartGroup.append('g') as Sel<SVGGElement>;
-    emaGroupRef.current = chartGroup.append('g') as Sel<SVGGElement>;
-    highsGroupRef.current = chartGroup.append('g') as Sel<SVGGElement>;
 
     crosshairVRef.current = g
       .append('line')
@@ -738,7 +851,7 @@ const Chart = ({
       label: Sel<SVGTSpanElement>;
       value: Sel<SVGTSpanElement>;
     }[] = [];
-    for (let i = 0; i < EMA_KEYS.length; i++) {
+    for (let i = 0; i < TOOLTIP_CELL_SLOTS; i++) {
       emaPairs.push({
         label: emaText.append('tspan') as Sel<SVGTSpanElement>,
         value: emaText.append('tspan') as Sel<SVGTSpanElement>,
@@ -760,7 +873,7 @@ const Chart = ({
       label: Sel<SVGTSpanElement>;
       value: Sel<SVGTSpanElement>;
     }[] = [];
-    for (let i = 0; i < HIGH_KEYS.length; i++) {
+    for (let i = 0; i < TOOLTIP_CELL_SLOTS; i++) {
       highsPairs.push({
         label: highsText.append('tspan') as Sel<SVGTSpanElement>,
         value: highsText.append('tspan') as Sel<SVGTSpanElement>,
@@ -862,11 +975,7 @@ const Chart = ({
       chartGroupSelRef.current = null;
       chartGroupRef.current = null;
       xAxisGRef.current = null;
-      volBarsGroupRef.current = null;
       volLabelsGroupRef.current = null;
-      candleGroupRef.current = null;
-      emaGroupRef.current = null;
-      highsGroupRef.current = null;
       crosshairVRef.current = null;
       crosshairHRef.current = null;
       infoTextRef.current = null;
@@ -899,7 +1008,6 @@ const Chart = ({
       visibleSlice,
       renderStart,
       renderEnd,
-      renderSlice,
       hasVolume,
       volumeHeight,
       gap,
@@ -1016,25 +1124,6 @@ const Chart = ({
       .attr('stroke', AXIS_STROKE)
       .attr('stroke-opacity', AXIS_OPACITY);
 
-    volBarsGroupRef
-      .current!.attr('transform', `translate(0,${priceHeight + gap})`)
-      .selectAll<SVGRectElement, Candle>('rect')
-      .data(renderSlice, (d: Candle) => d.date)
-      .join('rect')
-      .attr('x', (_, i) => xScale(i + renderStart)!)
-      .attr('y', (d) => (d.volume > 0 ? yVol(d.volume) : volumeHeight))
-      .attr('width', bandwidth)
-      .attr('height', (d) => (d.volume > 0 ? volumeHeight - yVol(d.volume) : 0))
-      .attr('fill', (d) =>
-        d.close >= d.open ? 'var(--chart-positive)' : 'var(--chart-negative)',
-      )
-      .attr('opacity', (d, i) => {
-        const sma = volStats.sma[i + renderStart];
-        return sma !== undefined && d.volume < sma
-          ? VOL_OPACITY_FADED
-          : VOL_OPACITY_STANDARD;
-      });
-
     const LABEL_GAP = 2; // px above bar top
     const LABEL_MIN_Y = 9; // keep tallest bar's label inside the volume pane
     const visibleLabels = volStats.labels.filter(
@@ -1056,96 +1145,6 @@ const Chart = ({
       .attr('fill', 'var(--chart-axis-label)')
       .text((m) => m.text);
 
-    const ohlcColor = (d: Candle) =>
-      d.close >= d.open ? 'var(--chart-positive)' : 'var(--chart-negative)';
-    const candleGroup = candleGroupRef.current!;
-
-    // Data joins + x/width attrs only. y/height set in Effect B.
-    if (chartType === 'bar') {
-      const tickLen = bandwidth / 2;
-      candleGroup.selectAll('line.wick').data([]).join('line');
-      candleGroup.selectAll('rect.body').data([]).join('rect');
-
-      candleGroup
-        .selectAll<SVGLineElement, Candle>('line.ohlc-stem')
-        .data(renderSlice, (d: Candle) => d.date)
-        .join('line')
-        .attr('class', 'ohlc-stem')
-        .attr('x1', (_, i) => xScale(i + renderStart)! + bandwidth / 2)
-        .attr('x2', (_, i) => xScale(i + renderStart)! + bandwidth / 2)
-        .attr('stroke', ohlcColor)
-        .attr('stroke-width', 1.25);
-      candleGroup
-        .selectAll<SVGLineElement, Candle>('line.ohlc-open')
-        .data(renderSlice, (d: Candle) => d.date)
-        .join('line')
-        .attr('class', 'ohlc-open')
-        .attr('x1', (_, i) => xScale(i + renderStart)!)
-        .attr('x2', (_, i) => xScale(i + renderStart)! + tickLen)
-        .attr('stroke', ohlcColor)
-        .attr('stroke-width', 1.25);
-      candleGroup
-        .selectAll<SVGLineElement, Candle>('line.ohlc-close')
-        .data(renderSlice, (d: Candle) => d.date)
-        .join('line')
-        .attr('class', 'ohlc-close')
-        .attr('x1', (_, i) => xScale(i + renderStart)! + tickLen)
-        .attr('x2', (_, i) => xScale(i + renderStart)! + bandwidth)
-        .attr('stroke', ohlcColor)
-        .attr('stroke-width', 1.25);
-    } else {
-      candleGroup.selectAll('line.ohlc-stem').data([]).join('line');
-      candleGroup.selectAll('line.ohlc-open').data([]).join('line');
-      candleGroup.selectAll('line.ohlc-close').data([]).join('line');
-
-      candleGroup
-        .selectAll<SVGLineElement, Candle>('line.wick')
-        .data(renderSlice, (d: Candle) => d.date)
-        .join('line')
-        .attr('class', 'wick')
-        .attr('x1', (_, i) => xScale(i + renderStart)! + bandwidth / 2)
-        .attr('x2', (_, i) => xScale(i + renderStart)! + bandwidth / 2)
-        .attr('stroke', ohlcColor)
-        .attr('stroke-width', 1.25);
-      candleGroup
-        .selectAll<SVGRectElement, Candle>('rect.body')
-        .data(renderSlice, (d: Candle) => d.date)
-        .join('rect')
-        .attr('class', 'body')
-        .attr('x', (_, i) => xScale(i + renderStart)!)
-        .attr('width', bandwidth)
-        .attr('fill', ohlcColor);
-    }
-
-    type EmaDatum = { key: (typeof EMA_KEYS)[number]; color: string };
-    const emaData: EmaDatum[] = EMA_KEYS.filter((k) => indicators[k]).map(
-      (k) => ({ key: k, color: EMA_COLORS[k] }),
-    );
-    // Path elements are created/removed here. `d=` is set in Effect B.
-    emaGroupRef
-      .current!.selectAll<SVGPathElement, EmaDatum>('path.ema')
-      .data(emaData, (d: EmaDatum) => d.key)
-      .join('path')
-      .attr('class', 'ema')
-      .attr('fill', 'none')
-      .attr('stroke', (d) => d.color)
-      .attr('stroke-width', 1.2);
-
-    type HighDatum = { key: (typeof HIGH_KEYS)[number]; color: string };
-    const highData: HighDatum[] = indicators.highs
-      ? HIGH_KEYS.map((k) => ({ key: k, color: HIGH_COLORS[k] }))
-      : [];
-    highsGroupRef
-      .current!.selectAll<SVGPathElement, HighDatum>('path.high')
-      .data(highData, (d: HighDatum) => d.key)
-      .join('path')
-      .attr('class', 'high')
-      .attr('fill', 'none')
-      .attr('stroke', (d) => d.color)
-      .attr('stroke-width', 1.1)
-      .attr('stroke-opacity', 0.5)
-      .attr('stroke-dasharray', (d) => (d.key === 'highAll' ? null : '4,3'));
-
     crosshairVRef.current!.attr('y2', fullHeight);
     crosshairHRef.current!.attr('x2', width);
 
@@ -1156,19 +1155,27 @@ const Chart = ({
       .attr('y', 0)
       .attr('width', MARGIN.right)
       .attr('height', priceHeight);
-  }, [layout, chartType, indicators, containerWidth, data, volStats]);
+  }, [layout, containerWidth, data, volStats]);
 
-  // Effect B — y-scale draw. Runs on priceZoom changes too. Recomputes
-  // yPrice and updates only the y-dependent attrs on already-mounted
-  // selections from Effect A.
+  // Effect B — y-scale draw. Runs on priceZoom changes too. Recomputes yPrice,
+  // redraws the price axis, publishes the scale api, and repaints the canvas
+  // series (candles/volume/indicators) for the new y-scale.
   useEffect(() => {
     if (!data || !layout) return;
-    if (!candleGroupRef.current || !emaGroupRef.current) return;
+    if (!yPriceAxisGRef.current) return;
     const {
       visibleSlice,
+      visStart,
+      visEnd,
       renderSlice,
       renderStart,
+      renderEnd,
       priceHeight,
+      fullHeight,
+      gap,
+      volumeHeight,
+      hasVolume,
+      totalHeight,
       width,
       xScale,
       bandwidth,
@@ -1181,24 +1188,17 @@ const Chart = ({
     let priceMin = d3.min(visibleSlice, (d) => d.low) ?? 0;
     let priceMax = d3.max(visibleSlice, (d) => d.high) ?? 1;
     if (autoFitMode === 'priceAndOverlays') {
-      for (const key of EMA_KEYS) {
-        if (indicators[key]) {
-          const vals = visibleSlice
-            .map((d) => d[key])
-            .filter((v): v is number => v != null);
-          if (vals.length) {
-            priceMin = Math.min(priceMin, d3.min(vals)!);
-            priceMax = Math.max(priceMax, d3.max(vals)!);
-          }
-        }
-      }
-      if (indicators.highs) {
-        for (const key of HIGH_KEYS) {
-          const vals = visibleSlice
-            .map((d) => d[key])
-            .filter((v): v is number => v != null);
-          if (vals.length) {
-            priceMax = Math.max(priceMax, d3.max(vals)!);
+      // Expand the price domain over the in-browser indicator series across the
+      // visible window (replaces the old b.ema/b.high column reads).
+      for (const { series } of resolvedIndicators) {
+        for (const key of Object.keys(series)) {
+          const arr = series[key];
+          for (let g = visStart; g < visEnd && g < arr.length; g++) {
+            const v = arr[g];
+            if (!Number.isNaN(v)) {
+              if (v < priceMin) priceMin = v;
+              if (v > priceMax) priceMax = v;
+            }
           }
         }
       }
@@ -1261,60 +1261,6 @@ const Chart = ({
       .attr('stroke', AXIS_STROKE)
       .attr('stroke-opacity', AXIS_OPACITY);
 
-    const candleGroup = candleGroupRef.current;
-
-    if (chartType === 'bar') {
-      candleGroup
-        .selectAll<SVGLineElement, Candle>('line.ohlc-stem')
-        .attr('y1', (d) => yPrice(d.high))
-        .attr('y2', (d) => yPrice(d.low));
-      candleGroup
-        .selectAll<SVGLineElement, Candle>('line.ohlc-open')
-        .attr('y1', (d) => yPrice(d.open))
-        .attr('y2', (d) => yPrice(d.open));
-      candleGroup
-        .selectAll<SVGLineElement, Candle>('line.ohlc-close')
-        .attr('y1', (d) => yPrice(d.close))
-        .attr('y2', (d) => yPrice(d.close));
-    } else {
-      candleGroup
-        .selectAll<SVGLineElement, Candle>('line.wick')
-        .attr('y1', (d) => yPrice(d.high))
-        .attr('y2', (d) => yPrice(d.low));
-      candleGroup
-        .selectAll<SVGRectElement, Candle>('rect.body')
-        .attr('y', (d) => yPrice(Math.max(d.open, d.close)))
-        .attr('height', (d) =>
-          Math.max(1, Math.abs(yPrice(d.open) - yPrice(d.close))),
-        );
-    }
-
-    emaGroupRef
-      .current!.selectAll<SVGPathElement, { key: (typeof EMA_KEYS)[number] }>(
-        'path.ema',
-      )
-      .attr('d', (d) => {
-        const line = d3
-          .line<Candle>()
-          .defined((b) => b[d.key] != null)
-          .x((_, i) => xScale(i + renderStart)! + bandwidth / 2)
-          .y((b) => yPrice(b[d.key]!));
-        return line(renderSlice);
-      });
-
-    highsGroupRef
-      .current!.selectAll<SVGPathElement, { key: (typeof HIGH_KEYS)[number] }>(
-        'path.high',
-      )
-      .attr('d', (d) => {
-        const line = d3
-          .line<Candle>()
-          .defined((b) => isHighVisible(d.key, b))
-          .x((_, i) => xScale(i + renderStart)! + bandwidth / 2)
-          .y((b) => yPrice(b[d.key]!));
-        return line(renderSlice);
-      });
-
     // Publish geometry to the scale api (in place) + notify subscribers.
     scaleApi.data = data;
     scaleApi.xScale = xScale;
@@ -1328,7 +1274,7 @@ const Chart = ({
     scaleApi.width = width;
     scaleApi.baseTranslateX = baseTranslateX;
     scaleApi.dataLength = data.length;
-    scaleApi.indicators = indicators;
+    scaleApi.indicators = resolvedIndicators;
     notifyScale('rescale');
 
     // Pattern overlay is a core feature; drive its scales directly.
@@ -1342,15 +1288,49 @@ const Chart = ({
       priceHeight,
       dataLength: data.length,
     });
+
+    // Cache the draw-state for the canvas series + paint it now (covers data /
+    // layout / y-scale / indicator / chartType changes — the pan path reuses
+    // this with only a fresh baseTranslateX).
+    const resolveColor = (v: string) =>
+      colorResolverRef.current?.resolve(v) ?? '#888888';
+    const volMax = d3.max(visibleSlice, (d) => d.volume) || 1;
+    drawStateRef.current = {
+      cssWidth: containerWidth,
+      cssHeight: totalHeight + MARGIN.top + MARGIN.bottom,
+      width,
+      fullHeight,
+      priceHeight,
+      gap,
+      volumeHeight,
+      hasVolume,
+      volMax,
+      volSma: volStats.sma,
+      bandwidth,
+      renderStart,
+      renderEnd,
+      renderSlice,
+      chartType,
+      data,
+      colors: {
+        positive: resolveColor('var(--chart-positive)'),
+        negative: resolveColor('var(--chart-negative)'),
+      },
+      indicators: resolvedIndicators,
+    };
+    redrawSeries();
   }, [
     layout,
-    indicators,
+    resolvedIndicators,
     priceZoom,
     chartType,
     data,
     visibleBars,
     autoFitMode,
     overlayPriceBounds,
+    containerWidth,
+    volStats,
+    redrawSeries,
     scaleApi,
     notifyScale,
   ]);
@@ -1373,7 +1353,16 @@ const Chart = ({
     scaleApi.baseTranslateX = baseTranslateX;
     notifyScale('pan');
     patternOverlayHandleRef.current?.setTransform(baseTranslateX);
-  }, [panOffset, visibleBars, dataLength, containerWidth, scaleApi, notifyScale]);
+    redrawSeries();
+  }, [
+    panOffset,
+    visibleBars,
+    dataLength,
+    containerWidth,
+    scaleApi,
+    notifyScale,
+    redrawSeries,
+  ]);
 
   // Chart-pattern overlay: read-only; flips between data and [] when the
   // patterns feature toggles, so the keyed join exits all groups on hide.
@@ -1591,33 +1580,45 @@ const Chart = ({
       const ROW_PITCH = 18;
       let rowIdx = 1;
 
-      const emaActiveFlags = EMA_KEYS.map(
-        (k) => stateIndicators[k] && d[k] != null,
-      );
-      const emaAnyActive = emaActiveFlags.some(Boolean);
-      const highsActive =
-        stateIndicators.highs &&
-        (d.high1y != null ||
-          d.high2y != null ||
-          d.high3y != null ||
-          d.highAll != null);
+      // Gather tooltip cells from the resolved indicator configs, bucketed by
+      // their `tooltipGroup`. The pre-built ema/highs rows source their content
+      // (label + value + color) from these — values read off `series[realIdx]`.
+      type Cell = { label: string; value: number; fill: string };
+      const cellsForGroup = (group: string): { cells: Cell[]; title?: string } => {
+        const cells: Cell[] = [];
+        let title: string | undefined;
+        for (const r of stateIndicators) {
+          if (r.config.style.tooltipGroup !== group) continue;
+          if (r.config.style.tooltipTitle) title = r.config.style.tooltipTitle;
+          for (const line of r.config.style.lines) {
+            const arr = r.series[line.seriesKey];
+            const value = arr ? arr[realIdx] : NaN;
+            cells.push({ label: line.label, value, fill: line.labelColorVar });
+          }
+        }
+        return { cells, title };
+      };
 
+      const emaGroup = cellsForGroup('ema');
+      const highsGroup = cellsForGroup('highs');
+      const emaAnyActive = emaGroup.cells.some((c) => !Number.isNaN(c.value));
+      const highsActive = highsGroup.cells.some((c) => !Number.isNaN(c.value));
       const totalActive = (emaAnyActive ? 1 : 0) + (highsActive ? 1 : 0);
 
       const emaRow = emaRowRef.current;
       if (emaRow) {
         if (expanded && emaAnyActive) {
-          for (let i = 0; i < EMA_KEYS.length; i++) {
-            const key = EMA_KEYS[i];
+          for (let i = 0; i < emaRow.pairs.length; i++) {
             const pair = emaRow.pairs[i];
-            if (emaActiveFlags[i]) {
+            const cell = emaGroup.cells[i];
+            if (cell && !Number.isNaN(cell.value)) {
               pair.label
-                .text(`${EMA_LABELS[key]}: `)
+                .text(`${cell.label}: `)
                 .attr('fill', MUTED_COLOR)
                 .style('display', null);
               pair.value
-                .text(`${formatPrice(d[key])}  `)
-                .attr('fill', EMA_TOOLTIP_COLORS[key])
+                .text(`${formatPrice(cell.value)}  `)
+                .attr('fill', cell.fill)
                 .style('display', null);
             } else {
               pair.label.style('display', 'none').text('');
@@ -1636,19 +1637,20 @@ const Chart = ({
       const highsRow = highsRowRef.current;
       if (highsRow) {
         if (expanded && highsActive) {
-          highsRow.title.text('Highs  ').attr('fill', MUTED_COLOR);
-          for (let i = 0; i < HIGH_KEYS.length; i++) {
-            const key = HIGH_KEYS[i];
+          highsRow.title
+            .text(`${highsGroup.title ?? 'Highs'}  `)
+            .attr('fill', MUTED_COLOR);
+          for (let i = 0; i < highsRow.pairs.length; i++) {
             const pair = highsRow.pairs[i];
-            const v = d[key];
-            if (v != null) {
+            const cell = highsGroup.cells[i];
+            if (cell && !Number.isNaN(cell.value)) {
               pair.label
-                .text(`${HIGH_LABELS[key]} `)
+                .text(`${cell.label} `)
                 .attr('fill', MUTED_COLOR)
                 .style('display', null);
               pair.value
-                .text(`${formatPrice(v)}  `)
-                .attr('fill', HIGH_TOOLTIP_COLORS[key])
+                .text(`${formatPrice(cell.value)}  `)
+                .attr('fill', cell.fill)
                 .style('display', null);
             } else {
               pair.label.style('display', 'none').text('');
@@ -1774,6 +1776,11 @@ const Chart = ({
           ref={wrapperRef}
           data-trade-overlay-anchor=""
         >
+          <canvas
+            ref={canvasRef}
+            className={styles.seriesCanvas}
+            aria-hidden="true"
+          />
           <svg ref={svgRef} className={styles.chartSvg} />
           {priceBottomPx > 0 && (
             <button

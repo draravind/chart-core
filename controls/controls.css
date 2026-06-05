@@ -1,0 +1,46 @@
+/* Relocated from the app's global index.css so the promoted ChartControls is
+ * self-contained within the chart-core boundary. The app keeps its own
+ * identical .pill-toggle-* globals for other callers; these duplicate the same
+ * rules harmlessly. */
+
+.pill-toggle-group {
+  display: inline-flex;
+  align-items: center;
+  height: 36px;
+  border-radius: var(--radius-full);
+  background: var(--surface-panel-header);
+  padding: var(--space-1);
+  box-shadow: var(--shadow-inset-track);
+}
+
+.pill-toggle-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 28px;
+  border: none;
+  border-radius: var(--radius-full);
+  padding: 0 var(--space-4);
+  font-size: var(--text-base);
+  font-weight: var(--font-weight-medium);
+  color: var(--text-muted);
+  background: transparent;
+  cursor: pointer;
+  transition: background-color var(--transition-fast), color var(--transition-fast);
+  white-space: nowrap;
+}
+
+.pill-toggle-btn:hover:not(.is-active) {
+  color: var(--text-primary);
+}
+
+.pill-toggle-btn.is-active {
+  background: var(--color-dark-700);
+  color: var(--text-primary);
+  box-shadow: var(--shadow-pill-active);
+}
+
+.pill-toggle-btn-sm {
+  padding: 0 var(--space-3);
+  font-size: var(--text-xs);
+}

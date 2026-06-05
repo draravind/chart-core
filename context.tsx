@@ -30,14 +30,7 @@ export function createChartScaleApi(): {
     visibleBarsInt: 0,
     visibleStartIdx: 0,
     dataLength: 0,
-    indicators: {
-      ema10: false,
-      ema20: false,
-      ema50: false,
-      ema200: false,
-      highs: false,
-      patterns: false,
-    },
+    indicators: [],
     subscribe(cb) {
       subscribers.add(cb);
       return () => {
