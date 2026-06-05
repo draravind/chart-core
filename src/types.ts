@@ -43,6 +43,9 @@ export type ChartScaleApi = {
   data: Candle[];
   xScale: d3.ScaleBand<number>;
   yPrice: d3.ScaleLogarithmic<number, number>;
+  // Subpane (RS line) linear y-scale; null when no subpane indicator is active
+  // or no finite RS values exist. Its range encodes the subpane band geometry.
+  ySub?: d3.ScaleLinear<number, number> | null;
   step: number;
   bandwidth: number;
   baseTranslateX: number;

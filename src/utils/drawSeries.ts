@@ -32,6 +32,9 @@ export type DrawSeriesParams = {
   chartType: ChartType;
   xScale: d3.ScaleBand<number>;
   yPrice: d3.ScaleLogarithmic<number, number>;
+  // Subpane (RS line) linear y-scale; null/absent when no subpane indicator is
+  // active or there are no finite RS values to scale.
+  ySub?: d3.ScaleLinear<number, number> | null;
   data: readonly Candle[];
   colors: SeriesColors;
   indicators: { config: IndicatorConfig; series: IndicatorSeries }[];
@@ -196,20 +199,21 @@ function drawBars(ctx: CanvasRenderingContext2D, p: DrawSeriesParams): void {
 
 function drawIndicators(ctx: CanvasRenderingContext2D, p: DrawSeriesParams): void {
   if (p.indicators.length === 0) return;
-  const scale = {
-    xScale: p.xScale,
-    yPrice: p.yPrice,
-    bandwidth: p.bandwidth,
-    data: p.data,
-    renderStart: p.renderStart,
-    renderEnd: p.renderEnd,
-  };
   for (const { config, series } of p.indicators) {
     const def = getIndicator(config.defKey);
     if (!def) continue;
-    if (def.pane !== 'price') {
-      throw new Error('subpane indicators not yet supported');
-    }
+    const isSubpane = typeof def.pane === 'object' && 'subpane' in def.pane;
+    if (isSubpane && !p.ySub) continue; // benchmark absent / no finite RS values
+    const y = isSubpane ? p.ySub! : p.yPrice;
+    const scale = {
+      xScale: p.xScale,
+      yPrice: p.yPrice,
+      y: (value: number) => y(value),
+      bandwidth: p.bandwidth,
+      data: p.data,
+      renderStart: p.renderStart,
+      renderEnd: p.renderEnd,
+    };
     const resolved = config.style.lines.map((l) => ({
       seriesKey: l.seriesKey,
       color: p.resolveColor(l.colorVar),

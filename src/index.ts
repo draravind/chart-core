@@ -47,6 +47,7 @@ export type {
   IndicatorInput,
   ResolvedIndicator,
 } from './indicators/types';
+export type { RsParams } from './indicators/builtins/rsLine';
 
 export { default as ChartControls } from './controls/ChartControls';
 

@@ -11,6 +11,7 @@ import * as d3 from 'd3';
 import type { AutoFitMode, Candle, ChartType } from './types';
 import type {
   IndicatorConfig,
+  IndicatorInput,
   IndicatorSeries,
   ResolvedIndicator,
 } from './indicators/types';
@@ -48,6 +49,9 @@ const MARGIN = { top: 4, right: 60, bottom: 30, left: 0 };
 const CHART_FONT = "'Helvetica Neue', Helvetica, Arial, sans-serif";
 
 const VOLUME_HEIGHT_RATIO = 0.15;
+// RS (relative-strength) subpane band below volume, and the gap above it.
+const RS_SUBPANE_HEIGHT_RATIO = 0.15;
+const RS_SUBPANE_GAP_RATIO = 0.02;
 // No empty gap between the price area and the volume divider — the price
 // chart's drawing region extends right down to the divider line. Visual
 // breathing room between the lowest visible price and the divider comes
@@ -72,6 +76,9 @@ type Props = {
   // byte-identical to the display window — indicators compute over
   // concat(warmupSeed, data) then slice back to `data`.
   warmupSeed?: Candle[];
+  // Benchmark close keyed by Candle.date ('YYYY-MM-DD'). Supplied by the app ONLY
+  // when the RS indicator is enabled; absent otherwise (RS then yields NaN/no-op).
+  benchmarkClose?: Record<string, number>;
   visibleBars: number;
   onVisibleBarsChange?: (n: number | ((prev: number) => number)) => void;
   panOffset: number;
@@ -108,6 +115,7 @@ type Sel<E extends d3.BaseType = d3.BaseType> = d3.Selection<
 const Chart = ({
   data,
   warmupSeed,
+  benchmarkClose,
   visibleBars,
   onVisibleBarsChange,
   panOffset,
@@ -168,6 +176,16 @@ const Chart = ({
     [dataLength],
   );
 
+  // Whether any enabled indicator draws on a subpane (the RS line). Declared
+  // before `layout` because the height redistribution depends on it.
+  const hasSubpane = useMemo(
+    () =>
+      indicators.some(
+        (c) => c.enabled && typeof getIndicator(c.defKey)?.pane === 'object',
+      ),
+    [indicators],
+  );
+
   // Geometry that depends on data + viewport but NOT on priceZoom. Hoisted
   // out of the draw effect so the y-zoom path skips re-running x-scale,
   // candle data joins, volume bars, x-axis, separators, etc.
@@ -195,10 +213,16 @@ const Chart = ({
     const renderEnd = Math.min(data.length, visEnd + bufferBars);
     const renderSlice = data.slice(renderStart, renderEnd);
     const hasVolume = (d3.max(visibleSlice, (d) => d.volume) ?? 0) > 0;
+    const subpaneHeight = hasSubpane ? totalHeight * RS_SUBPANE_HEIGHT_RATIO : 0;
+    const subpaneGap = hasSubpane ? totalHeight * RS_SUBPANE_GAP_RATIO : 0;
     const volumeHeight = hasVolume ? totalHeight * VOLUME_HEIGHT_RATIO : 0;
     const gap = hasVolume ? totalHeight * PRICE_VOLUME_GAP_RATIO : 0;
-    const priceHeight = totalHeight - volumeHeight - gap;
-    const fullHeight = priceHeight + gap + volumeHeight;
+    const priceHeight =
+      totalHeight - volumeHeight - gap - subpaneHeight - subpaneGap;
+    const fullHeight =
+      priceHeight + gap + volumeHeight + subpaneGap + subpaneHeight;
+    const subpaneTop = priceHeight + gap + volumeHeight + subpaneGap;
+    const subpaneBottom = subpaneTop + subpaneHeight;
     const width = containerWidth - MARGIN.left - MARGIN.right;
     const step = (width - RIGHT_BUFFER) / visibleBars;
     const baseTranslateX = (effectiveOffset + visibleBars - data.length) * step;
@@ -226,6 +250,10 @@ const Chart = ({
       gap,
       priceHeight,
       fullHeight,
+      subpaneHeight,
+      subpaneGap,
+      subpaneTop,
+      subpaneBottom,
       width,
       step,
       baseTranslateX,
@@ -235,7 +263,15 @@ const Chart = ({
       visibleStartIdx,
       effectiveOffset,
     };
-  }, [data, visibleBars, panOffset, containerWidth, containerHeight, xDomain]);
+  }, [
+    data,
+    visibleBars,
+    panOffset,
+    containerWidth,
+    containerHeight,
+    xDomain,
+    hasSubpane,
+  ]);
 
   // Volume SMA + HVE/HVY milestone labels. Keyed on `data` only — independent
   // of pan/zoom, so it recomputes only when the dataset changes.
@@ -251,7 +287,15 @@ const Chart = ({
     const seed = warmupSeed && warmupSeed.length ? warmupSeed : [];
     const combined = seed.length ? seed.concat(data) : data;
     const cols = toColumns(combined);
-    const input = { ...cols, bars: combined };
+    const input: IndicatorInput = { ...cols, bars: combined };
+    if (benchmarkClose) {
+      const bc = new Float64Array(combined.length);
+      for (let i = 0; i < combined.length; i++) {
+        const v = benchmarkClose[combined[i].date];
+        bc[i] = v == null ? NaN : v;
+      }
+      input.benchmarkClose = bc;
+    }
     const seedLen = seed.length;
     return enabled.map((config) => {
       const def = getIndicator(config.defKey);
@@ -263,7 +307,7 @@ const Chart = ({
       }
       return { config, series };
     });
-  }, [data, warmupSeed, indicators]);
+  }, [data, warmupSeed, indicators, benchmarkClose]);
 
   // Everything the canvas redraw needs that is NOT a live scale field. Rebuilt
   // in Effect B (after the y-scale exists); the pan path reuses it with only a
@@ -319,6 +363,7 @@ const Chart = ({
       chartType: st.chartType,
       xScale: scaleApi.xScale,
       yPrice: scaleApi.yPrice,
+      ySub: scaleApi.ySub,
       data: st.data,
       colors: st.colors,
       indicators: st.indicators.map((r) => ({
@@ -383,6 +428,7 @@ const Chart = ({
   const clipRectRef = useRef<Sel<SVGRectElement> | null>(null);
   const yPriceAxisGRef = useRef<Sel<SVGGElement> | null>(null);
   const yVolAxisGRef = useRef<Sel<SVGGElement> | null>(null);
+  const ySubAxisGRef = useRef<Sel<SVGGElement> | null>(null);
   const sepGroupRef = useRef<Sel<SVGGElement> | null>(null);
   const rightBorderRef = useRef<Sel<SVGLineElement> | null>(null);
   const chartGroupSelRef = useRef<Sel<SVGGElement> | null>(null);
@@ -405,6 +451,12 @@ const Chart = ({
     pairs: { label: Sel<SVGTSpanElement>; value: Sel<SVGTSpanElement> }[];
   };
   const highsRowRef = useRef<HighsRow | null>(null);
+  type RsRow = {
+    text: Sel<SVGTextElement>;
+    title: Sel<SVGTSpanElement>;
+    pairs: { label: Sel<SVGTSpanElement>; value: Sel<SVGTSpanElement> }[];
+  };
+  const rsRowRef = useRef<RsRow | null>(null);
   type ChevronGroup = {
     group: Sel<SVGGElement>;
     icon: Sel<SVGTextElement>;
@@ -773,6 +825,14 @@ const Chart = ({
       .style('font-weight', '500')
       .style('color', 'var(--chart-axis-label)') as Sel<SVGGElement>;
 
+    ySubAxisGRef.current = g
+      .append('g')
+      .style('font-size', 'var(--text-2hxs)')
+      .style('font-family', CHART_FONT)
+      .style('font-weight', '500')
+      .style('color', 'var(--chart-axis-label)')
+      .style('display', 'none') as Sel<SVGGElement>;
+
     sepGroupRef.current = g.append('g') as Sel<SVGGElement>;
 
     rightBorderRef.current = g
@@ -881,6 +941,28 @@ const Chart = ({
     }
     highsRowRef.current = { text: highsText, title: highsTitle, pairs: highsPairs };
 
+    const rsText = g
+      .append('text')
+      .attr('x', 8)
+      .style('font-size', 'var(--text-sm)')
+      .style('font-family', CHART_FONT)
+      .style('font-weight', '500')
+      .style('pointer-events', 'none')
+      .attr('fill', 'currentColor')
+      .style('display', 'none') as Sel<SVGTextElement>;
+    const rsTitle = rsText.append('tspan') as Sel<SVGTSpanElement>;
+    const rsPairs: {
+      label: Sel<SVGTSpanElement>;
+      value: Sel<SVGTSpanElement>;
+    }[] = [];
+    for (let i = 0; i < TOOLTIP_CELL_SLOTS; i++) {
+      rsPairs.push({
+        label: rsText.append('tspan') as Sel<SVGTSpanElement>,
+        value: rsText.append('tspan') as Sel<SVGTSpanElement>,
+      });
+    }
+    rsRowRef.current = { text: rsText, title: rsTitle, pairs: rsPairs };
+
     const priceLabelG = g.append('g').style('visibility', 'hidden');
     priceLabelGroupRef.current = priceLabelG as Sel<SVGGElement>;
     priceLabelG
@@ -970,6 +1052,7 @@ const Chart = ({
       clipRectRef.current = null;
       yPriceAxisGRef.current = null;
       yVolAxisGRef.current = null;
+      ySubAxisGRef.current = null;
       sepGroupRef.current = null;
       rightBorderRef.current = null;
       chartGroupSelRef.current = null;
@@ -982,6 +1065,7 @@ const Chart = ({
       infoSpansRef.current = [];
       emaRowRef.current = null;
       highsRowRef.current = null;
+      rsRowRef.current = null;
       chevronGroupRef.current = null;
       priceLabelGroupRef.current = null;
       priceLabelTextRef.current = null;
@@ -1013,6 +1097,9 @@ const Chart = ({
       gap,
       priceHeight,
       fullHeight,
+      subpaneGap,
+      subpaneTop,
+      subpaneBottom,
       width,
       baseTranslateX,
       xScale,
@@ -1079,7 +1166,12 @@ const Chart = ({
       yVolAxisGRef.current!.style('display', 'none');
     }
 
-    const sepValues = hasVolume ? [priceHeight + gap / 2, fullHeight] : [];
+    // Separators, built additively so each present band gets its divider:
+    // price/volume split, the divider above the RS band, and the bottom border.
+    const sepValues: number[] = [];
+    if (hasVolume) sepValues.push(priceHeight + gap / 2);
+    if (hasSubpane) sepValues.push(subpaneTop - subpaneGap / 2);
+    if (hasVolume || hasSubpane) sepValues.push(fullHeight);
     sepGroupRef
       .current!.selectAll<SVGLineElement, number>('line')
       .data(sepValues)
@@ -1102,10 +1194,7 @@ const Chart = ({
     );
 
     xAxisGRef
-      .current!.attr(
-        'transform',
-        `translate(0,${priceHeight + gap + volumeHeight})`,
-      )
+      .current!.attr('transform', `translate(0,${subpaneBottom})`)
       .call(
         d3
           .axisBottom(xScale)
@@ -1155,7 +1244,7 @@ const Chart = ({
       .attr('y', 0)
       .attr('width', MARGIN.right)
       .attr('height', priceHeight);
-  }, [layout, containerWidth, data, volStats]);
+  }, [layout, containerWidth, data, volStats, hasSubpane]);
 
   // Effect B — y-scale draw. Runs on priceZoom changes too. Recomputes yPrice,
   // redraws the price axis, publishes the scale api, and repaints the canvas
@@ -1175,6 +1264,9 @@ const Chart = ({
       gap,
       volumeHeight,
       hasVolume,
+      subpaneHeight,
+      subpaneTop,
+      subpaneBottom,
       totalHeight,
       width,
       xScale,
@@ -1189,8 +1281,11 @@ const Chart = ({
     let priceMax = d3.max(visibleSlice, (d) => d.high) ?? 1;
     if (autoFitMode === 'priceAndOverlays') {
       // Expand the price domain over the in-browser indicator series across the
-      // visible window (replaces the old b.ema/b.high column reads).
-      for (const { series } of resolvedIndicators) {
+      // visible window (replaces the old b.ema/b.high column reads). Subpane
+      // indicators (RS line) live on their own scale — their ratio values must
+      // NOT pollute the price-pane domain, so skip them here.
+      for (const { config, series } of resolvedIndicators) {
+        if (typeof getIndicator(config.defKey)?.pane === 'object') continue;
         for (const key of Object.keys(series)) {
           const arr = series[key];
           for (let g = visStart; g < visEnd && g < arr.length; g++) {
@@ -1261,8 +1356,66 @@ const Chart = ({
       .attr('stroke', AXIS_STROKE)
       .attr('stroke-opacity', AXIS_OPACITY);
 
+    // Subpane (RS line) linear y-scale. Domain spans the finite RS values across
+    // the visible window with 8% padding; range targets the subpane band (so
+    // axisRight + drawPolyline/drawDots both project into it). Independent of
+    // priceZoom. Null when no subpane band exists or no finite RS values.
+    let ySub: d3.ScaleLinear<number, number> | null = null;
+    if (subpaneHeight > 0) {
+      let lo = Infinity;
+      let hi = -Infinity;
+      for (const { series } of resolvedIndicators) {
+        const arr = series.rs;
+        if (!arr) continue;
+        for (let g = visStart; g < visEnd && g < arr.length; g++) {
+          const v = arr[g];
+          if (!Number.isNaN(v)) {
+            if (v < lo) lo = v;
+            if (v > hi) hi = v;
+          }
+        }
+      }
+      if (Number.isFinite(lo) && hi > lo) {
+        const pad = (hi - lo) * 0.08;
+        ySub = d3
+          .scaleLinear()
+          .domain([lo - pad, hi + pad])
+          .range([subpaneBottom, subpaneTop]);
+      } else if (Number.isFinite(lo)) {
+        // Single distinct RS value across the window: pad proportionally so the
+        // axis never shows negative ticks for a strictly-positive ratio.
+        const spread = lo !== 0 ? Math.abs(lo) * 0.1 : 1;
+        ySub = d3
+          .scaleLinear()
+          .domain([lo - spread, lo + spread])
+          .range([subpaneBottom, subpaneTop]);
+      }
+    }
+
+    if (ySub) {
+      ySubAxisGRef.current!
+        .style('display', null)
+        .attr('transform', `translate(${width},0)`)
+        .call(
+          d3
+            .axisRight<d3.NumberValue>(ySub)
+            .ticks(3)
+            .tickSize(TICK_SIZE)
+            .tickFormat((d) => d3.format('.2f')(Number(d))),
+        );
+      ySubAxisGRef.current!.select('.domain').remove();
+      ySubAxisGRef
+        .current!.selectAll('line')
+        .attr('stroke', AXIS_STROKE)
+        .attr('stroke-opacity', AXIS_OPACITY);
+    } else {
+      ySubAxisGRef.current!.selectAll('*').remove();
+      ySubAxisGRef.current!.style('display', 'none');
+    }
+
     // Publish geometry to the scale api (in place) + notify subscribers.
     scaleApi.data = data;
+    scaleApi.ySub = ySub;
     scaleApi.xScale = xScale;
     scaleApi.yPrice = yPrice;
     scaleApi.step = step;
@@ -1481,6 +1634,7 @@ const Chart = ({
     const hideTooltipRows = () => {
       emaRowRef.current?.text.style('display', 'none');
       highsRowRef.current?.text.style('display', 'none');
+      rsRowRef.current?.text.style('display', 'none');
       chevronGroupRef.current?.group.style('display', 'none');
     };
 
@@ -1601,9 +1755,15 @@ const Chart = ({
 
       const emaGroup = cellsForGroup('ema');
       const highsGroup = cellsForGroup('highs');
+      const rsGroup = cellsForGroup('rs');
       const emaAnyActive = emaGroup.cells.some((c) => !Number.isNaN(c.value));
       const highsActive = highsGroup.cells.some((c) => !Number.isNaN(c.value));
-      const totalActive = (emaAnyActive ? 1 : 0) + (highsActive ? 1 : 0);
+      // The signal cell is always 0/1 (never NaN), so gate the RS row on the RS
+      // line value being finite (benchmark-covered) rather than `.some(...)`.
+      const rsLineCell = rsGroup.cells.find((c) => c.label === 'RS');
+      const rsActive = !!rsLineCell && !Number.isNaN(rsLineCell.value);
+      const totalActive =
+        (emaAnyActive ? 1 : 0) + (highsActive ? 1 : 0) + (rsActive ? 1 : 0);
 
       const emaRow = emaRowRef.current;
       if (emaRow) {
@@ -1663,6 +1823,45 @@ const Chart = ({
           rowIdx++;
         } else {
           highsRow.text.style('display', 'none');
+        }
+      }
+
+      const rsRow = rsRowRef.current;
+      if (rsRow) {
+        if (expanded && rsActive) {
+          rsRow.title
+            .text(`${rsGroup.title ?? 'RS'}  `)
+            .attr('fill', MUTED_COLOR);
+          for (let i = 0; i < rsRow.pairs.length; i++) {
+            const pair = rsRow.pairs[i];
+            const cell = rsGroup.cells[i];
+            if (cell && !Number.isNaN(cell.value)) {
+              // RS is a ratio (format .2f); the signal cell is a 0/1 flag → Yes/No.
+              const isSignal = cell.label === 'Signal';
+              const valueText = isSignal
+                ? cell.value === 1
+                  ? 'Yes'
+                  : 'No'
+                : d3.format('.2f')(cell.value);
+              pair.label
+                .text(`${cell.label}: `)
+                .attr('fill', MUTED_COLOR)
+                .style('display', null);
+              pair.value
+                .text(`${valueText}  `)
+                .attr('fill', cell.fill)
+                .style('display', null);
+            } else {
+              pair.label.style('display', 'none').text('');
+              pair.value.style('display', 'none').text('');
+            }
+          }
+          rsRow.text
+            .attr('y', 14 + rowIdx * ROW_PITCH)
+            .style('display', null);
+          rowIdx++;
+        } else {
+          rsRow.text.style('display', 'none');
         }
       }
 

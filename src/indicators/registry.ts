@@ -1,6 +1,7 @@
 import type { IndicatorDef } from './types';
 import { emaDef } from './builtins/ema';
 import { highsDef } from './builtins/rollingHigh';
+import { rsLineDef } from './builtins/rsLine';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const registry = new Map<string, IndicatorDef<any>>();
@@ -21,3 +22,4 @@ export function listIndicators(): IndicatorDef[] {
 // Built-ins registered on import.
 registerIndicator(emaDef);
 registerIndicator(highsDef);
+registerIndicator(rsLineDef);

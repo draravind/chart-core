@@ -26,6 +26,9 @@ export type IndicatorInput = {
   v: Float64Array;
   /** The source bars (length matches the arrays); data-backed defs read columns off these. */
   bars: readonly Candle[];
+  /** Benchmark close, date-aligned to `bars`. Present only when an indicator that
+   *  needs it (RS line) is enabled. `ema`/`highs` ignore it. */
+  benchmarkClose?: Float64Array;
 };
 
 /**
@@ -67,7 +70,9 @@ export type ResolvedLineStyle = {
 /** Geometry + source bars handed to `IndicatorDef.draw`. */
 export type IndicatorDrawScale = {
   xScale: d3.ScaleBand<number>;
-  yPrice: d3.ScaleLogarithmic<number, number>;
+  yPrice: d3.ScaleLogarithmic<number, number>; // kept for price-pane readers
+  /** Per-indicator value→pixel projection (price log scale or a subpane scale). */
+  y: (value: number) => number;
   bandwidth: number;
   /** Display-window bars (aligned to the indicator series). */
   data: readonly Candle[];

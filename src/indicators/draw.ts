@@ -13,7 +13,7 @@ export function drawPolyline(
   style: ResolvedLineStyle,
   defined: (globalIdx: number) => boolean,
 ): void {
-  const { xScale, yPrice, bandwidth, renderStart, renderEnd } = scale;
+  const { xScale, bandwidth, renderStart, renderEnd } = scale;
   ctx.save();
   ctx.beginPath();
   ctx.lineWidth = style.width;
@@ -29,7 +29,7 @@ export function drawPolyline(
       continue;
     }
     const x = xScale(g)! + bandwidth / 2;
-    const y = yPrice(values[g]);
+    const y = scale.y(values[g]);
     if (penDown) ctx.lineTo(x, y);
     else {
       ctx.moveTo(x, y);
@@ -37,5 +37,31 @@ export function drawPolyline(
     }
   }
   ctx.stroke();
+  ctx.restore();
+}
+
+/**
+ * Paint filled marker dots on the line at every bar the `marked` predicate
+ * selects (and that has a finite value). Used for the RS-line signal markers.
+ */
+export function drawDots(
+  ctx: CanvasRenderingContext2D,
+  scale: IndicatorDrawScale,
+  values: Float64Array,
+  style: ResolvedLineStyle,
+  marked: (globalIdx: number) => boolean,
+  radius = 2.5,
+): void {
+  const { xScale, bandwidth, renderStart, renderEnd } = scale;
+  ctx.save();
+  ctx.fillStyle = style.color;
+  ctx.globalAlpha = style.opacity ?? 1;
+  for (let g = renderStart; g < renderEnd; g++) {
+    if (!marked(g) || Number.isNaN(values[g])) continue;
+    const x = xScale(g)! + bandwidth / 2;
+    ctx.beginPath();
+    ctx.arc(x, scale.y(values[g]), radius, 0, Math.PI * 2);
+    ctx.fill();
+  }
   ctx.restore();
 }
