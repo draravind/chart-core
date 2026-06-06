@@ -137,7 +137,10 @@ function drawCandles(ctx: CanvasRenderingContext2D, p: DrawSeriesParams): void {
   const negWicks = new Path2D();
   const posBodies: { x: number; y: number; w: number; h: number }[] = [];
   const negBodies: { x: number; y: number; w: number; h: number }[] = [];
-  const bw = Math.max(1, Math.round(bandwidth));
+  // Snap body to an odd width so a true middle column exists for the wick.
+  // Even widths have no center column, forcing a crisp 1px wick off to one side.
+  let bw = Math.max(1, Math.round(bandwidth));
+  if (bw % 2 === 0) bw = Math.max(1, bw - 1);
   for (let i = 0; i < renderSlice.length; i++) {
     const g = i + renderStart;
     const d = renderSlice[i];
