@@ -1,0 +1,8 @@
+[project]
+name = "chart-core"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "numpy>=2.4.6",
+    "ta-lib>=0.6.8",
+]

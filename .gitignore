@@ -4,3 +4,8 @@ dist
 .DS_Store
 
 temp/
+
+# Python dev tooling (uv-managed venv for TA-Lib reference probing)
+.venv/
+__pycache__/
+*.pyc
