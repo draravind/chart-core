@@ -45,6 +45,7 @@
   --bb-upper: #60a5fa;
   --bb-mid: #9ca3af;
   --bb-lower: #60a5fa;
+  --stage2-band: #22c55e; /* Stage 2 advancing — bottom band (alpha via opacity) */
 
   /* TA-Lib library — momentum/volatility subpanes. */
   --rsi-line: #8b5cf6;

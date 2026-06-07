@@ -79,5 +79,5 @@ jobs:
           git rm -rf . >/dev/null 2>&1 || true
           cp "$staging"/index.js "$staging"/index.d.ts "$staging"/style.css "$staging"/package.json .
           git add index.js index.d.ts style.css package.json
-          git commit -m "build: publish dist from ${GITHUB_SHA}"
+          git commit -m "build: publish dist from ${GITHUB_SHA:0:6}"
           git push --force origin dist-tmp:dist

@@ -1264,7 +1264,13 @@ const Chart = ({
       // NOT pollute the price-pane domain, so skip them here.
       for (const { config, series } of resolvedIndicators) {
         if (typeof getIndicator(config.defKey)?.pane === 'object') continue;
+        // Marker lines (width 0, e.g. the Stage 2 band's 1/NaN flag) are not
+        // prices — exclude them so they never collapse the log price domain.
+        const markerKeys = new Set(
+          config.style.lines.filter((l) => l.width === 0).map((l) => l.seriesKey),
+        );
         for (const key of Object.keys(series)) {
+          if (markerKeys.has(key)) continue;
           const arr = series[key];
           for (let g = visStart; g < visEnd && g < arr.length; g++) {
             const v = arr[g];
@@ -1771,6 +1777,7 @@ const Chart = ({
         if (r.config.style.tooltipTitle) group.title = r.config.style.tooltipTitle;
         const isPrice = getIndicator(r.config.defKey)?.pane === 'price';
         for (const line of r.config.style.lines) {
+          if (isPrice && line.width === 0) continue; // price-pane marker: no numeric value
           const arr = r.series[line.seriesKey];
           if (!arr) continue; // marker-only carrier line (no data)
           group.cells.push({

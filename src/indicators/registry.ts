@@ -2,6 +2,7 @@ import type { IndicatorConfig, IndicatorDef } from './types';
 import { emaDef } from './builtins/ema';
 import { highsDef } from './builtins/rollingHigh';
 import { rsLineDef } from './builtins/rsLine';
+import { stage2Def } from './builtins/stage2';
 // TA-Lib library — price-pane overlays.
 import { smaDef } from './builtins/sma';
 import { emaTalibDef } from './builtins/emaTalib';
@@ -66,6 +67,7 @@ export function defaultConfigFor(
 registerIndicator(emaDef);
 registerIndicator(highsDef);
 registerIndicator(rsLineDef);
+registerIndicator(stage2Def);
 
 const TI_DEFS: IndicatorDef[] = [
   smaDef,
