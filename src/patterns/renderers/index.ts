@@ -3,6 +3,7 @@ import type * as d3 from 'd3';
 import type { PatternMarker } from '../types';
 import type { ChartPatternCtx } from '../mountChartPatternOverlay';
 import { renderBaseBreakout } from './baseBreakout';
+import { renderConsolidation } from './consolidation';
 import { renderHighTightFlag } from './highTightFlag';
 
 export type RendererFn = (
@@ -15,4 +16,5 @@ export type RendererFn = (
 export const renderers: Record<string, RendererFn> = {
   high_tight_flag: renderHighTightFlag,
   base_breakout: renderBaseBreakout,
+  consolidation: renderConsolidation,
 };

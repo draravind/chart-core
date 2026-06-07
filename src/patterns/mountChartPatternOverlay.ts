@@ -4,6 +4,14 @@ import type { Candle } from '../types';
 import type { PatternMarker } from './types';
 import { renderers } from './renderers';
 
+export type HoverRegion = {
+  x0: number;
+  x1: number;
+  y0: number;
+  y1: number;
+  label: SVGGElement;
+};
+
 export type ChartPatternCtx = {
   detections: PatternMarker[];
   bars: Candle[];
@@ -16,6 +24,7 @@ export type ChartPatternCtx = {
   baseTranslateX: number;
   dataLength: number;
   marginTop: number;
+  registerHover?: (r: HoverRegion) => void;
 };
 
 export type ChartPatternScaleCtx = {
@@ -33,6 +42,7 @@ export type ChartPatternOverlayHandle = {
   update(ctx: ChartPatternCtx): void;
   updateScales(scaleCtx: ChartPatternScaleCtx): void;
   setTransform(translateX: number): void;
+  setPointer(mx: number | null, my: number | null): void;
   destroy(): void;
 };
 
@@ -60,13 +70,38 @@ export function mountChartPatternOverlay(parent: SVGGElement): ChartPatternOverl
     .attr('class', 'chart-pattern-overlay-labels') as d3.Selection<SVGGElement, unknown, null, undefined>;
 
   let lastCtx: ChartPatternCtx | null = null;
+  let hoverRegions: HoverRegion[] = [];
+  let pointer: { mx: number; my: number } | null = null;
+  let currentTranslateX = 0;
+
+  const applyHover = () => {
+    for (const r of hoverRegions) {
+      let vis = false;
+      if (pointer) {
+        const lx = pointer.mx - currentTranslateX; // viewport → local x
+        vis =
+          lx >= r.x0 && lx <= r.x1 && pointer.my >= r.y0 && pointer.my <= r.y1;
+      }
+      r.label.style.display = vis ? '' : 'none';
+    }
+  };
+
+  const setPointer = (mx: number | null, my: number | null) => {
+    pointer = mx == null || my == null ? null : { mx, my };
+    applyHover();
+  };
 
   const setTransform = (translateX: number) => {
+    currentTranslateX = translateX;
     outerG.attr('transform', `translate(${translateX},0)`);
     labelOuterG.attr('transform', `translate(${translateX},0)`);
+    applyHover();
   };
 
   const render = (ctx: ChartPatternCtx) => {
+    hoverRegions = [];
+    ctx.registerHover = (r: HoverRegion) => hoverRegions.push(r);
+
     const groups = outerG
       .selectAll<SVGGElement, PatternMarker>('g.chart-pattern-detection')
       .data(ctx.detections, keyFor);
@@ -105,6 +140,8 @@ export function mountChartPatternOverlay(parent: SVGGElement): ChartPatternOverl
       const renderer = renderers[detection.pattern_name];
       renderer?.(detection, target, labelTarget, ctx);
     });
+
+    applyHover();
   };
 
   const update = (ctx: ChartPatternCtx) => {
@@ -122,6 +159,7 @@ export function mountChartPatternOverlay(parent: SVGGElement): ChartPatternOverl
     lastCtx.width = scaleCtx.width;
     lastCtx.priceHeight = scaleCtx.priceHeight;
     lastCtx.dataLength = scaleCtx.dataLength;
+    currentTranslateX = scaleCtx.baseTranslateX;
     setTransform(scaleCtx.baseTranslateX);
     render(lastCtx);
   };
@@ -131,5 +169,5 @@ export function mountChartPatternOverlay(parent: SVGGElement): ChartPatternOverl
     labelWrapper.remove();
   };
 
-  return { update, updateScales, setTransform, destroy };
+  return { update, updateScales, setTransform, setPointer, destroy };
 }

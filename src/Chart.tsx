@@ -1654,6 +1654,7 @@ const Chart = ({
       infoTextRef.current?.style('visibility', 'hidden');
       hideTooltipRows();
       priceLabelGroupRef.current?.style('visibility', 'hidden');
+      patternOverlayHandleRef.current?.setPointer(null, null);
     };
 
     const updateCrosshair = () => {
@@ -1661,6 +1662,7 @@ const Chart = ({
       const pos = crosshairLastPosRef.current;
       if (!pos || scaleApi.data.length === 0) return;
       const { mx, my } = pos;
+      patternOverlayHandleRef.current?.setPointer(mx, my);
       const {
         data: stateData,
         yPrice,
