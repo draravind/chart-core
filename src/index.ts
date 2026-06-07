@@ -32,6 +32,8 @@ export {
   getIndicator,
   listIndicators,
   defaultConfigFor,
+  formatIndicatorParams,
+  OVERLAY_ORDER,
   SUBPANE_ORDER,
 } from './indicators/registry';
 export {
@@ -49,6 +51,7 @@ export type {
   SubpaneScaleHint,
   IndicatorInput,
   ResolvedIndicator,
+  ParamSpec,
 } from './indicators/types';
 export type { RsParams } from './indicators/builtins/rsLine';
 export type { Stage2Params } from './indicators/builtins/stage2';

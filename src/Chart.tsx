@@ -16,6 +16,7 @@ import type {
   ResolvedIndicator,
 } from './indicators/types';
 import { getIndicator, SUBPANE_ORDER } from './indicators/registry';
+import IndicatorLegend from './controls/IndicatorLegend';
 import type { SubpaneScaleHint } from './indicators/types';
 import {
   computeSubpaneBands,
@@ -75,12 +76,6 @@ const AXIS_OPACITY = 0.12;
 const TICK_SIZE = 4;
 const N_PRICE_TICKS = 10;
 const MUTED_COLOR = 'var(--chart-tooltip-label)';
-// Pre-built tspan slots per crosshair tooltip group (≥ max cells: 4 EMAs / 4 high
-// tiers / 3 BBANDS bands / 3 MACD values).
-const TOOLTIP_CELL_SLOTS = 4;
-// Pooled tooltip rows — one per active `tooltipGroup`. Generous upper bound that
-// covers every overlay + subpane indicator enabled at once.
-const MAX_TOOLTIP_ROWS = 20;
 
 const DEFAULT_PRICE_FORMAT = d3.format(',.0f');
 
@@ -101,6 +96,9 @@ type Props = {
   chartType: ChartType;
   // Registry-driven indicator catalog (one entry per drawn config).
   indicators: IndicatorConfig[];
+  // Mutate the active indicator set — the on-chart legend removes instances and
+  // edits their params through this.
+  onIndicatorsChange: (indicators: IndicatorConfig[]) => void;
   autoFitMode: AutoFitMode;
   onAutoFitModeChange: (m: AutoFitMode) => void;
   infoBarExpanded: boolean;
@@ -137,6 +135,7 @@ const Chart = ({
   onPanOffsetChange,
   chartType,
   indicators,
+  onIndicatorsChange,
   autoFitMode,
   onAutoFitModeChange,
   infoBarExpanded,
@@ -463,28 +462,6 @@ const Chart = ({
   const crosshairHRef = useRef<Sel<SVGLineElement> | null>(null);
   const infoTextRef = useRef<Sel<SVGTextElement> | null>(null);
   const infoSpansRef = useRef<Sel<SVGTSpanElement>[]>([]);
-  // Pooled crosshair tooltip rows. One pooled row is assigned per active
-  // `tooltipGroup` at draw time (titles + cells filled dynamically), so the same
-  // markup serves any set of enabled indicators without per-frame DOM creation.
-  type TooltipRow = {
-    text: Sel<SVGTextElement>;
-    title: Sel<SVGTSpanElement>;
-    pairs: { label: Sel<SVGTSpanElement>; value: Sel<SVGTSpanElement> }[];
-  };
-  const tooltipRowsRef = useRef<TooltipRow[]>([]);
-  type ChevronGroup = {
-    group: Sel<SVGGElement>;
-    icon: Sel<SVGTextElement>;
-  };
-  const chevronGroupRef = useRef<ChevronGroup | null>(null);
-  const infoBarExpandedRef = useRef(infoBarExpanded);
-  useEffect(() => {
-    infoBarExpandedRef.current = infoBarExpanded;
-  }, [infoBarExpanded]);
-  const onInfoBarExpandedChangeRef = useRef(onInfoBarExpandedChange);
-  useEffect(() => {
-    onInfoBarExpandedChangeRef.current = onInfoBarExpandedChange;
-  }, [onInfoBarExpandedChange]);
   const priceLabelGroupRef = useRef<Sel<SVGGElement> | null>(null);
   const priceLabelTextRef = useRef<Sel<SVGTextElement> | null>(null);
   const overlayRectRef = useRef<Sel<SVGRectElement> | null>(null);
@@ -495,10 +472,20 @@ const Chart = ({
   // Crosshair rAF coalescing.
   const crosshairRafRef = useRef<number | null>(null);
   const crosshairLastPosRef = useRef<{ mx: number; my: number } | null>(null);
-  // Effect 4 publishes its latest `updateCrosshair`; the chevron click handler
-  // (mounted in Effect 1) reads it to refresh the tooltip immediately on
-  // toggle, instead of waiting for the next mousemove.
-  const updateCrosshairRef = useRef<(() => void) | null>(null);
+  // Hovered bar index, published from the imperative crosshair handler to the
+  // React indicator legend (which renders each row's value at that bar). A
+  // subscription rather than state so only the legend re-renders on hover, not
+  // all of Chart.
+  const hoverIndexSubsRef = useRef(new Set<(idx: number | null) => void>());
+  const subscribeHoverIndex = useCallback(
+    (cb: (idx: number | null) => void) => {
+      hoverIndexSubsRef.current.add(cb);
+      return () => {
+        hoverIndexSubsRef.current.delete(cb);
+      };
+    },
+    [],
+  );
 
   // Chart-pattern overlay — read-only, bundled core feature; single persistent
   // handle (no per-tool map since detections aren't editable).
@@ -919,32 +906,6 @@ const Chart = ({
       );
     }
 
-    // Pool of reusable tooltip rows (title tspan + N label/value cell pairs).
-    tooltipRowsRef.current = [];
-    for (let r = 0; r < MAX_TOOLTIP_ROWS; r++) {
-      const rowText = g
-        .append('text')
-        .attr('x', 8)
-        .style('font-size', 'var(--text-sm)')
-        .style('font-family', CHART_FONT)
-        .style('font-weight', '500')
-        .style('pointer-events', 'none')
-        .attr('fill', 'currentColor')
-        .style('display', 'none') as Sel<SVGTextElement>;
-      const title = rowText.append('tspan') as Sel<SVGTSpanElement>;
-      const pairs: {
-        label: Sel<SVGTSpanElement>;
-        value: Sel<SVGTSpanElement>;
-      }[] = [];
-      for (let i = 0; i < TOOLTIP_CELL_SLOTS; i++) {
-        pairs.push({
-          label: rowText.append('tspan') as Sel<SVGTSpanElement>,
-          value: rowText.append('tspan') as Sel<SVGTSpanElement>,
-        });
-      }
-      tooltipRowsRef.current.push({ text: rowText, title, pairs });
-    }
-
     const priceLabelG = g.append('g').style('visibility', 'hidden');
     priceLabelGroupRef.current = priceLabelG as Sel<SVGGElement>;
     priceLabelG
@@ -974,40 +935,6 @@ const Chart = ({
       .attr('fill', 'transparent')
       .style('cursor', 'ns-resize')
       .style('pointer-events', 'all') as Sel<SVGRectElement>;
-
-    // Chevron must paint AFTER overlayRectRef so its click handler isn't
-    // intercepted by the transparent overlay rect (which captures mousedown
-    // to start pan-drag).
-    const chevGroup = g
-      .append('g')
-      .attr('class', 'infobar-chevron')
-      .style('cursor', 'pointer')
-      .style('pointer-events', 'all')
-      .style('display', 'none') as Sel<SVGGElement>;
-    const chevIcon = chevGroup
-      .append('text')
-      .attr('x', 0)
-      .attr('y', 0)
-      .style('font-size', 'var(--text-sm)')
-      .style('font-family', CHART_FONT)
-      .style('font-weight', '500')
-      .attr('fill', MUTED_COLOR) as Sel<SVGTextElement>;
-    chevGroup.on('mousedown', (event: MouseEvent) => {
-      event.stopPropagation();
-    });
-    chevGroup.on('click', (event: MouseEvent) => {
-      event.preventDefault();
-      event.stopPropagation();
-      onInfoBarExpandedChangeRef.current((v) => !v);
-      const fn = updateCrosshairRef.current;
-      if (fn && crosshairLastPosRef.current != null) {
-        if (crosshairRafRef.current != null) {
-          cancelAnimationFrame(crosshairRafRef.current);
-        }
-        crosshairRafRef.current = requestAnimationFrame(fn);
-      }
-    });
-    chevronGroupRef.current = { group: chevGroup, icon: chevIcon };
 
     // Overlay hosts: created here in their exact z-order slots (trigger beneath
     // trade) and published reactively so app plugins can mount into them.
@@ -1046,8 +973,6 @@ const Chart = ({
       crosshairHRef.current = null;
       infoTextRef.current = null;
       infoSpansRef.current = [];
-      tooltipRowsRef.current = [];
-      chevronGroupRef.current = null;
       priceLabelGroupRef.current = null;
       priceLabelTextRef.current = null;
       overlayRectRef.current = null;
@@ -1649,16 +1574,15 @@ const Chart = ({
     const overlay = overlayRectRef.current;
     if (!overlay) return;
 
-    const hideTooltipRows = () => {
-      for (const row of tooltipRowsRef.current) row.text.style('display', 'none');
-      chevronGroupRef.current?.group.style('display', 'none');
+    const notifyHover = (idx: number | null) => {
+      for (const cb of hoverIndexSubsRef.current) cb(idx);
     };
 
     const hideOverlays = () => {
       crosshairVRef.current?.style('visibility', 'hidden');
       crosshairHRef.current?.style('visibility', 'hidden');
       infoTextRef.current?.style('visibility', 'hidden');
-      hideTooltipRows();
+      notifyHover(null);
       priceLabelGroupRef.current?.style('visibility', 'hidden');
       patternOverlayHandleRef.current?.setPointer(null, null);
     };
@@ -1678,7 +1602,6 @@ const Chart = ({
         visibleStartIdx,
         priceHeight,
         width,
-        indicators: stateIndicators,
       } = scaleApi;
 
       crosshairHRef
@@ -1703,7 +1626,7 @@ const Chart = ({
           .attr('x2', mx)
           .style('visibility', 'visible');
         infoTextRef.current!.style('visibility', 'hidden');
-        hideTooltipRows();
+        notifyHover(null);
         return;
       }
 
@@ -1716,7 +1639,7 @@ const Chart = ({
       const realIdx = visibleStartIdx + slot;
       if (realIdx < 0 || realIdx >= stateData.length) {
         infoTextRef.current!.style('visibility', 'hidden');
-        hideTooltipRows();
+        notifyHover(null);
         return;
       }
 
@@ -1748,109 +1671,9 @@ const Chart = ({
       }
       infoTextRef.current!.style('visibility', 'visible');
 
-      const expanded = infoBarExpandedRef.current;
-      const ROW_PITCH = 18;
-      let rowIdx = 1;
-
-      // Bucket tooltip cells from the resolved indicator configs by their
-      // `tooltipGroup`, preserving first-appearance order. Each active group maps
-      // to one pooled row. Marker-only lines without a series array (e.g. the
-      // MACD HistDown color carrier) contribute no cell.
-      type Cell = {
-        label: string;
-        value: number;
-        fill: string;
-        isPrice: boolean;
-        isSignal: boolean;
-      };
-      type Group = { title?: string; cells: Cell[] };
-      const groups: Group[] = [];
-      const groupByKey = new Map<string, Group>();
-      for (const r of stateIndicators) {
-        const key = r.config.style.tooltipGroup;
-        let group = groupByKey.get(key);
-        if (!group) {
-          group = { cells: [] };
-          groupByKey.set(key, group);
-          groups.push(group);
-        }
-        if (r.config.style.tooltipTitle) group.title = r.config.style.tooltipTitle;
-        const isPrice = getIndicator(r.config.defKey)?.pane === 'price';
-        for (const line of r.config.style.lines) {
-          if (isPrice && line.width === 0) continue; // price-pane marker: no numeric value
-          const arr = r.series[line.seriesKey];
-          if (!arr) continue; // marker-only carrier line (no data)
-          group.cells.push({
-            label: line.label,
-            value: arr[realIdx],
-            fill: line.labelColorVar,
-            isPrice,
-            // A 0/1 signal flag is always finite — it must not gate row activity.
-            isSignal: line.label === 'Signal',
-          });
-        }
-      }
-
-      const rows = tooltipRowsRef.current;
-      const fmtSub = d3.format(',.2f');
-      let activeCount = 0;
-      let usedRow = 0;
-      for (const group of groups) {
-        const active = group.cells.some(
-          (c) => !c.isSignal && !Number.isNaN(c.value),
-        );
-        if (!active) continue;
-        activeCount++;
-        if (!expanded) continue;
-        const row = rows[usedRow];
-        if (!row) break; // pool exhausted (more groups than MAX_TOOLTIP_ROWS)
-        usedRow++;
-        row.title
-          .text(group.title ? `${group.title}  ` : '')
-          .attr('fill', MUTED_COLOR);
-        for (let i = 0; i < row.pairs.length; i++) {
-          const pair = row.pairs[i];
-          const cell = group.cells[i];
-          if (cell && (cell.isSignal || !Number.isNaN(cell.value))) {
-            const valueText = cell.isSignal
-              ? cell.value === 1
-                ? 'Yes'
-                : 'No'
-              : cell.isPrice
-                ? fmtPriceRef.current(cell.value)
-                : fmtSub(cell.value);
-            pair.label
-              .text(`${cell.label}: `)
-              .attr('fill', MUTED_COLOR)
-              .style('display', null);
-            pair.value
-              .text(`${valueText}  `)
-              .attr('fill', cell.fill)
-              .style('display', null);
-          } else {
-            pair.label.style('display', 'none').text('');
-            pair.value.style('display', 'none').text('');
-          }
-        }
-        row.text.attr('y', 14 + rowIdx * ROW_PITCH).style('display', null);
-        rowIdx++;
-      }
-      // Hide any pooled rows not used this frame.
-      for (let i = usedRow; i < rows.length; i++)
-        rows[i].text.style('display', 'none');
-
-      const chev = chevronGroupRef.current;
-      if (chev) {
-        if (activeCount === 0) {
-          chev.group.style('display', 'none');
-        } else {
-          const chevY = 14 + rowIdx * ROW_PITCH;
-          chev.group
-            .attr('transform', `translate(8,${chevY})`)
-            .style('display', null);
-          chev.icon.text(expanded ? '▴' : '▾');
-        }
-      }
+      // Publish the hovered bar; the React indicator legend reads each config's
+      // series at this index to show live values per row.
+      notifyHover(realIdx);
     };
 
     overlay.on('mousedown', function (event: MouseEvent) {
@@ -1884,7 +1707,6 @@ const Chart = ({
     // pointer-events: all). d3.pointer is anchored to rootG so coords stay
     // in the chart-inner coordinate space, identical to the previous
     // overlayRect-relative coords.
-    updateCrosshairRef.current = updateCrosshair;
     const svgSel = d3.select(svgRef.current);
     svgSel
       .on('mousemove.crosshair', function (event: MouseEvent) {
@@ -1897,11 +1719,22 @@ const Chart = ({
           crosshairRafRef.current = requestAnimationFrame(updateCrosshair);
         }
       })
-      .on('mouseleave.crosshair', function () {
+      .on('mouseleave.crosshair', function (event: MouseEvent) {
         if (dragStateRef.current.active) return;
         if (crosshairRafRef.current != null) {
           cancelAnimationFrame(crosshairRafRef.current);
           crosshairRafRef.current = null;
+        }
+        // Moving onto the on-chart indicator legend (HTML overlay above the SVG)
+        // fires this mouseleave. Don't blank the readout/values — hide only the
+        // crosshair lines + price tag (the legend shows its own hand cursor) and
+        // leave the OHLC readout + indicator values frozen at the last bar.
+        const rt = event.relatedTarget as Element | null;
+        if (rt && typeof rt.closest === 'function' && rt.closest('[data-chart-legend]')) {
+          crosshairVRef.current?.style('visibility', 'hidden');
+          crosshairHRef.current?.style('visibility', 'hidden');
+          priceLabelGroupRef.current?.style('visibility', 'hidden');
+          return;
         }
         crosshairLastPosRef.current = null;
         hideOverlays();
@@ -1914,7 +1747,6 @@ const Chart = ({
         cancelAnimationFrame(crosshairRafRef.current);
         crosshairRafRef.current = null;
       }
-      updateCrosshairRef.current = null;
     };
   }, [scaleApi]);
 
@@ -1955,6 +1787,21 @@ const Chart = ({
             aria-hidden="true"
           />
           <svg ref={svgRef} className={styles.chartSvg} />
+          {layout != null && (
+            <IndicatorLegend
+              indicators={indicators}
+              onIndicatorsChange={onIndicatorsChange}
+              resolved={resolvedIndicators}
+              subpanes={layout.subpanes}
+              marginTop={MARGIN.top}
+              marginLeft={MARGIN.left}
+              barCount={dataLength}
+              expanded={infoBarExpanded}
+              onExpandedChange={onInfoBarExpandedChange}
+              subscribeHoverIndex={subscribeHoverIndex}
+              priceFormatter={fmtPrice}
+            />
+          )}
           {priceBottomPx > 0 && (
             <button
               type="button"

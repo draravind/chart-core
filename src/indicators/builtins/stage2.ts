@@ -23,8 +23,14 @@ const BAND_PX = 12;
 export const stage2Def: IndicatorDef<Stage2Params> = {
   key: 'stage2',
   label: 'Stage 2',
+  longLabel: 'Stage 2 Advancing',
   pane: 'price',
   defaultParams: { smaPeriod: 150, slopeLookback: 20, slopeMin: 0.01, minPeriods: 100 },
+  formatParams: (p) => `${p.smaPeriod},${p.slopeLookback}`,
+  paramSpecs: [
+    { key: 'smaPeriod', label: 'SMA length', kind: 'number', min: 1 },
+    { key: 'slopeLookback', label: 'Slope lookback', kind: 'number', min: 1 },
+  ],
   // Full SMA window + the slope shift, so every displayed bar matches the scan.
   warmupBars: (p) => p.smaPeriod + p.slopeLookback,
   compute: (input: IndicatorInput, p) => {

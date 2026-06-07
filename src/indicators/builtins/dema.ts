@@ -8,8 +8,11 @@ export type DemaParams = { period: number };
 export const demaDef: IndicatorDef<DemaParams> = {
   key: 'ti:dema',
   label: 'DEMA',
+  longLabel: 'Double Exponential Moving Average',
   pane: 'price',
   defaultParams: { period: 20 },
+  formatParams: (p) => String(p.period),
+  paramSpecs: [{ key: 'period', label: 'Length', kind: 'number', min: 1 }],
   warmupBars: (p) => 2 * (p.period - 1) + Math.max(250, 5 * p.period),
   compute: (input, p) => {
     const out = dema(input.c, p.period);

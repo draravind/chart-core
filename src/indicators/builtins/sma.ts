@@ -8,8 +8,11 @@ export type SmaParams = { period: number };
 export const smaDef: IndicatorDef<SmaParams> = {
   key: 'ti:sma',
   label: 'SMA',
+  longLabel: 'Simple Moving Average',
   pane: 'price',
   defaultParams: { period: 20 },
+  formatParams: (p) => String(p.period),
+  paramSpecs: [{ key: 'period', label: 'Length', kind: 'number', min: 1 }],
   warmupBars: (p) => p.period - 1 + Math.max(250, 5 * p.period),
   compute: (input, p) => {
     const out = sma(input.c, p.period);

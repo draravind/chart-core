@@ -50,6 +50,7 @@ function highVisibleAt(
 export const highsDef: IndicatorDef = {
   key: 'highs',
   label: 'Highs',
+  longLabel: 'Rolling Highs',
   pane: 'price',
   defaultParams: {},
   warmupBars: () => 0,

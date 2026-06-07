@@ -8,6 +8,7 @@ export type TrangeParams = Record<string, never>;
 export const trangeDef: IndicatorDef<TrangeParams> = {
   key: 'ti:trange',
   label: 'TRANGE',
+  longLabel: 'True Range',
   pane: { subpane: 'trange' },
   defaultParams: {},
   warmupBars: () => 1 + 250,

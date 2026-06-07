@@ -8,8 +8,11 @@ export type WmaParams = { period: number };
 export const wmaDef: IndicatorDef<WmaParams> = {
   key: 'ti:wma',
   label: 'WMA',
+  longLabel: 'Weighted Moving Average',
   pane: 'price',
   defaultParams: { period: 20 },
+  formatParams: (p) => String(p.period),
+  paramSpecs: [{ key: 'period', label: 'Length', kind: 'number', min: 1 }],
   warmupBars: (p) => p.period - 1 + Math.max(250, 5 * p.period),
   compute: (input, p) => {
     const out = wma(input.c, p.period);

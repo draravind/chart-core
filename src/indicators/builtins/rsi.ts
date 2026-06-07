@@ -8,11 +8,14 @@ export type RsiParams = { period: number };
 export const rsiDef: IndicatorDef<RsiParams> = {
   key: 'ti:rsi',
   label: 'RSI',
+  longLabel: 'Relative Strength Index',
   pane: {
     subpane: 'rsi',
     scaleHint: { fixedDomain: [0, 100], guideLines: [30, 70] },
   },
   defaultParams: { period: 14 },
+  formatParams: (p) => String(p.period),
+  paramSpecs: [{ key: 'period', label: 'Length', kind: 'number', min: 1 }],
   warmupBars: (p) => p.period + Math.max(250, 5 * p.period),
   compute: (input, p) => {
     const out = rsi(input.c, p.period);

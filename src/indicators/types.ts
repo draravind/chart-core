@@ -100,10 +100,35 @@ export type IndicatorDrawScale = {
   renderEnd: number;
 };
 
+/**
+ * One user-editable param, driving a control in the legend popover. `number`
+ * renders an `<input type="number">` (optional min/max/step); `enum` renders a
+ * `<select>` over `options` (display label + numeric value).
+ */
+export type ParamSpec =
+  | {
+      key: string;
+      label: string;
+      kind: 'number';
+      min?: number;
+      max?: number;
+      step?: number;
+    }
+  | {
+      key: string;
+      label: string;
+      kind: 'enum';
+      options: { label: string; value: number }[];
+    };
+
 export type IndicatorDef<P = Record<string, unknown>> = {
   /** Registry key, e.g. `ema` / `highs`. */
   key: string;
+  /** Compact label for the legend row + crosshair tooltips, e.g. `BBANDS`. */
   label: string;
+  /** Full human name for the param popover title, e.g. `Bollinger Bands`.
+   *  Falls back to `label` when absent. */
+  longLabel?: string;
   pane: IndicatorPane;
   defaultParams: P;
   /** Older bars needed to seed the computation (drives the warm-up fetch). */
@@ -116,6 +141,14 @@ export type IndicatorDef<P = Record<string, unknown>> = {
     style: ResolvedLineStyle[],
   ): void;
   defaultStyle: IndicatorStyle;
+  /** Short legend summary, e.g. "50" for EMA, "12,26,9" for MACD. Declared as a
+   *  method (not an arrow property) so `IndicatorDef<P>` stays assignable to the
+   *  erased `IndicatorDef` — matching `compute`/`warmupBars`. */
+  formatParams?(params: P): string;
+  /** Ordered editable params. The popover renders one control per entry (kind →
+   *  control type). Params absent here are not user-editable (stay at default,
+   *  never shown) — this subsumes any need for a `hiddenParams` field. */
+  paramSpecs?: ParamSpec[];
 };
 
 /**

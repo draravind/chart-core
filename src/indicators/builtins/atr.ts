@@ -8,8 +8,11 @@ export type AtrParams = { period: number };
 export const atrDef: IndicatorDef<AtrParams> = {
   key: 'ti:atr',
   label: 'ATR',
+  longLabel: 'Average True Range',
   pane: { subpane: 'atr' },
   defaultParams: { period: 14 },
+  formatParams: (p) => String(p.period),
+  paramSpecs: [{ key: 'period', label: 'Length', kind: 'number', min: 1 }],
   warmupBars: (p) => p.period + Math.max(250, 5 * p.period),
   compute: (input, p) => {
     const out = atr(input.h, input.l, input.c, p.period);

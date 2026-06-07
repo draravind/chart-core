@@ -11,11 +11,14 @@ export type WillrParams = { period: number };
 export const willrDef: IndicatorDef<WillrParams> = {
   key: 'ti:willr',
   label: 'WILLR',
+  longLabel: 'Williams %R',
   pane: {
     subpane: 'willr',
     scaleHint: { fixedDomain: [-100, 0], guideLines: [-20, -80] },
   },
   defaultParams: { period: 14 },
+  formatParams: (p) => String(p.period),
+  paramSpecs: [{ key: 'period', label: 'Length', kind: 'number', min: 1 }],
   warmupBars: (p) => p.period - 1 + Math.max(250, 5 * p.period),
   compute: (input, p) => {
     const n = input.c.length;

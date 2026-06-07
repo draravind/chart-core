@@ -8,8 +8,11 @@ export type DxParams = { period: number };
 export const dxDef: IndicatorDef<DxParams> = {
   key: 'ti:dx',
   label: 'DX',
+  longLabel: 'Directional Movement Index',
   pane: { subpane: 'dx', scaleHint: { fixedDomain: [0, 100] } },
   defaultParams: { period: 14 },
+  formatParams: (p) => String(p.period),
+  paramSpecs: [{ key: 'period', label: 'Length', kind: 'number', min: 1 }],
   warmupBars: (p) => p.period + Math.max(250, 5 * p.period),
   compute: (input, p) => {
     const out = dx(input.h, input.l, input.c, p.period);

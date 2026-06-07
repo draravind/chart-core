@@ -8,8 +8,11 @@ export type TemaParams = { period: number };
 export const temaDef: IndicatorDef<TemaParams> = {
   key: 'ti:tema',
   label: 'TEMA',
+  longLabel: 'Triple Exponential Moving Average',
   pane: 'price',
   defaultParams: { period: 20 },
+  formatParams: (p) => String(p.period),
+  paramSpecs: [{ key: 'period', label: 'Length', kind: 'number', min: 1 }],
   warmupBars: (p) => 3 * (p.period - 1) + Math.max(250, 5 * p.period),
   compute: (input, p) => {
     const out = tema(input.c, p.period);

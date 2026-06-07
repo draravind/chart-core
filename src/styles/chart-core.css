@@ -98,6 +98,10 @@
   --text-xs: 0.75rem;
   --text-primary: #bcbab6;
   --text-muted: #8e8b86;
+  /* Warm red for live invalid / out-of-range field flags (border at full value,
+   * focus ring at ~26% alpha). Sits on --surface-panel-raised without clashing
+   * with the blue focus accent. */
+  --field-invalid: #d6705f;
 
   --font-weight-medium: 500;
   --transition-fast: 0.15s ease;

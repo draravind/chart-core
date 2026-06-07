@@ -1,6 +1,7 @@
 import type { IndicatorDef } from '../types';
 import { maDispatch, maLookback, stddevPop, round2 } from '../talibMath';
 import { drawLines } from '../draw';
+import { MA_TYPE_OPTIONS } from '../paramSpecs';
 
 export type BbandsParams = {
   period: number;
@@ -17,8 +18,16 @@ export type BbandsParams = {
 export const bbandsDef: IndicatorDef<BbandsParams> = {
   key: 'ti:bbands',
   label: 'BBANDS',
+  longLabel: 'Bollinger Bands',
   pane: 'price',
   defaultParams: { period: 20, nbdevup: 2, nbdevdn: 2, matype: 0 },
+  formatParams: (p) => `${p.period},${p.nbdevup}`,
+  paramSpecs: [
+    { key: 'period', label: 'Length', kind: 'number', min: 1 },
+    { key: 'nbdevup', label: 'Upper band', kind: 'number', min: 0, step: 0.1 },
+    { key: 'nbdevdn', label: 'Lower band', kind: 'number', min: 0, step: 0.1 },
+    { key: 'matype', label: 'Moving average type', kind: 'enum', options: MA_TYPE_OPTIONS },
+  ],
   warmupBars: (p) =>
     Math.max(maLookback(p.matype, p.period), p.period - 1) +
     Math.max(250, 5 * p.period),

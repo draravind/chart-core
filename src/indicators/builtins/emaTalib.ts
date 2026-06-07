@@ -11,8 +11,11 @@ export type EmaTalibParams = { period: number };
 export const emaTalibDef: IndicatorDef<EmaTalibParams> = {
   key: 'ti:ema',
   label: 'EMA',
+  longLabel: 'Exponential Moving Average',
   pane: 'price',
   defaultParams: { period: 20 },
+  formatParams: (p) => String(p.period),
+  paramSpecs: [{ key: 'period', label: 'Length', kind: 'number', min: 1 }],
   warmupBars: (p) => p.period - 1 + Math.max(250, 5 * p.period),
   compute: (input, p) => {
     const out = emaTalib(input.c, p.period);

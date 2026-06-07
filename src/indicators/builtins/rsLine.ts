@@ -15,8 +15,11 @@ const round2 = (v: number): number => Math.round(v * 100) / 100;
 export const rsLineDef: IndicatorDef<RsParams> = {
   key: 'rs',
   label: 'RS Line',
+  longLabel: 'Relative Strength Line',
   pane: { subpane: 'rs' },
   defaultParams: { lookback: 252 },
+  formatParams: (p) => String(p.lookback),
+  paramSpecs: [{ key: 'lookback', label: 'Lookback', kind: 'number', min: 1 }],
   warmupBars: (p) => p.lookback,
   compute: (input: IndicatorInput, p) => {
     const n = input.c.length;

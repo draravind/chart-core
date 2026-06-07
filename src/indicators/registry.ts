@@ -1,5 +1,4 @@
 import type { IndicatorConfig, IndicatorDef } from './types';
-import { emaDef } from './builtins/ema';
 import { highsDef } from './builtins/rollingHigh';
 import { rsLineDef } from './builtins/rsLine';
 import { stage2Def } from './builtins/stage2';
@@ -62,9 +61,8 @@ export function defaultConfigFor(
 }
 
 // Built-ins registered on import. Last-write-wins (Map.set), so the legacy
-// `ema`/`highs`/`rs` keys stay owned by their original defs and the TA-Lib
+// `highs`/`rs` keys stay owned by their original defs and the TA-Lib
 // library uses collision-proof `ti:`-prefixed keys.
-registerIndicator(emaDef);
 registerIndicator(highsDef);
 registerIndicator(rsLineDef);
 registerIndicator(stage2Def);
@@ -89,6 +87,28 @@ const TI_DEFS: IndicatorDef[] = [
   trangeDef,
 ];
 for (const def of TI_DEFS) registerIndicator(def);
+
+/**
+ * Short legend summary for a config (e.g. "12,26,9" for MACD), via the def's
+ * `formatParams`. Empty string when the def has none (no-param indicators).
+ */
+export function formatIndicatorParams(config: IndicatorConfig): string {
+  const def = getIndicator(config.defKey);
+  if (!def?.formatParams) return '';
+  return def.formatParams(config.params);
+}
+
+/** Canonical left-to-right ordering for price-pane overlays in the picker. */
+export const OVERLAY_ORDER: string[] = [
+  'ti:ema',
+  'ti:sma',
+  'ti:wma',
+  'ti:dema',
+  'ti:tema',
+  'ti:bbands',
+  'highs',
+  'stage2',
+];
 
 /** Canonical top-to-bottom subpane stacking order (stable across toggles). */
 export const SUBPANE_ORDER: string[] = [

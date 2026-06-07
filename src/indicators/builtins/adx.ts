@@ -8,8 +8,11 @@ export type AdxParams = { period: number };
 export const adxDef: IndicatorDef<AdxParams> = {
   key: 'ti:adx',
   label: 'ADX',
+  longLabel: 'Average Directional Index',
   pane: { subpane: 'adx', scaleHint: { fixedDomain: [0, 100] } },
   defaultParams: { period: 14 },
+  formatParams: (p) => String(p.period),
+  paramSpecs: [{ key: 'period', label: 'Length', kind: 'number', min: 1 }],
   warmupBars: (p) => 2 * p.period - 1 + Math.max(250, 5 * p.period),
   compute: (input, p) => {
     const out = adx(input.h, input.l, input.c, p.period);

@@ -1,6 +1,7 @@
 import type { IndicatorDef } from '../types';
 import { rawStochK, maDispatch, round2 } from '../talibMath';
 import { drawLines } from '../draw';
+import { MA_TYPE_OPTIONS } from '../paramSpecs';
 
 export type StochParams = {
   fastk: number;
@@ -18,6 +19,7 @@ export type StochParams = {
 export const stochDef: IndicatorDef<StochParams> = {
   key: 'ti:stoch',
   label: 'STOCH',
+  longLabel: 'Stochastic',
   pane: {
     subpane: 'stoch',
     scaleHint: { fixedDomain: [0, 100], guideLines: [20, 80] },
@@ -29,6 +31,14 @@ export const stochDef: IndicatorDef<StochParams> = {
     slowd: 3,
     slowd_matype: 0,
   },
+  formatParams: (p) => `${p.fastk},${p.slowk},${p.slowd}`,
+  paramSpecs: [
+    { key: 'fastk', label: '%K length', kind: 'number', min: 1 },
+    { key: 'slowk', label: '%K smoothing', kind: 'number', min: 1 },
+    { key: 'slowk_matype', label: '%K moving average', kind: 'enum', options: MA_TYPE_OPTIONS },
+    { key: 'slowd', label: '%D smoothing', kind: 'number', min: 1 },
+    { key: 'slowd_matype', label: '%D moving average', kind: 'enum', options: MA_TYPE_OPTIONS },
+  ],
   warmupBars: (p) =>
     p.fastk - 1 + (p.slowk - 1) + (p.slowd - 1) + Math.max(250, 5 * p.fastk),
   compute: (input, p) => {

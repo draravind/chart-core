@@ -8,8 +8,11 @@ export type NatrParams = { period: number };
 export const natrDef: IndicatorDef<NatrParams> = {
   key: 'ti:natr',
   label: 'NATR',
+  longLabel: 'Normalized Average True Range',
   pane: { subpane: 'natr' },
   defaultParams: { period: 14 },
+  formatParams: (p) => String(p.period),
+  paramSpecs: [{ key: 'period', label: 'Length', kind: 'number', min: 1 }],
   warmupBars: (p) => p.period + Math.max(250, 5 * p.period),
   compute: (input, p) => {
     const n = input.c.length;

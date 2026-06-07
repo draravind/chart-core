@@ -13,8 +13,15 @@ export type MacdParams = { fast: number; slow: number; signal: number };
 export const macdDef: IndicatorDef<MacdParams> = {
   key: 'ti:macd',
   label: 'MACD',
+  longLabel: 'Moving Average Convergence Divergence',
   pane: { subpane: 'macd', scaleHint: { zeroLine: true } },
   defaultParams: { fast: 12, slow: 26, signal: 9 },
+  formatParams: (p) => `${p.fast},${p.slow},${p.signal}`,
+  paramSpecs: [
+    { key: 'fast', label: 'Fast', kind: 'number', min: 1 },
+    { key: 'slow', label: 'Slow', kind: 'number', min: 1 },
+    { key: 'signal', label: 'Signal', kind: 'number', min: 1 },
+  ],
   warmupBars: (p) =>
     p.slow - 1 + (p.signal - 1) + Math.max(250, 5 * p.slow),
   compute: (input, p) => {
