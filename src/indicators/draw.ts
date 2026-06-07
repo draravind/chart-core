@@ -1,4 +1,8 @@
-import type { IndicatorDrawScale, ResolvedLineStyle } from './types';
+import type {
+  IndicatorDrawScale,
+  IndicatorSeries,
+  ResolvedLineStyle,
+} from './types';
 
 /**
  * Paint a single indicator line on canvas across the render window. `defined`
@@ -37,6 +41,85 @@ export function drawPolyline(
     }
   }
   ctx.stroke();
+  ctx.restore();
+}
+
+/**
+ * Default multi-line painter: draw every styled line as a polyline gated on a
+ * finite value. Lines with `width === 0` are markers (not strokes) and skipped.
+ */
+export function drawLines(
+  ctx: CanvasRenderingContext2D,
+  series: IndicatorSeries,
+  scale: IndicatorDrawScale,
+  style: ResolvedLineStyle[],
+): void {
+  for (const line of style) {
+    if (line.width === 0) continue;
+    const values = series[line.seriesKey];
+    if (!values) continue;
+    drawPolyline(ctx, scale, values, line, (g) => !Number.isNaN(values[g]));
+  }
+}
+
+/**
+ * Paint vertical bars from the zero line to each finite value across the render
+ * window. Used for the MACD histogram; bars above zero use `color`, below use
+ * `negColor` (falls back to `color`). The zero pixel is derived from the
+ * subpane scale so the bars sit on the pane's own zero crossing.
+ */
+export function drawHistogram(
+  ctx: CanvasRenderingContext2D,
+  scale: IndicatorDrawScale,
+  values: Float64Array,
+  style: ResolvedLineStyle,
+  negColor?: string,
+): void {
+  const { xScale, bandwidth, renderStart, renderEnd } = scale;
+  const zeroY = scale.y(0);
+  const barW = Math.max(1, bandwidth);
+  ctx.save();
+  ctx.globalAlpha = style.opacity ?? 1;
+  for (let g = renderStart; g < renderEnd; g++) {
+    const v = values[g];
+    if (Number.isNaN(v)) continue;
+    const x = xScale(g)! + bandwidth / 2 - barW / 2;
+    const y = scale.y(v);
+    ctx.fillStyle = v >= 0 ? style.color : (negColor ?? style.color);
+    const top = Math.min(y, zeroY);
+    const h = Math.max(1, Math.abs(zeroY - y));
+    ctx.fillRect(x, top, barW, h);
+  }
+  ctx.restore();
+}
+
+/**
+ * Paint dashed horizontal guide lines at the given subpane VALUES (e.g. RSI
+ * 30/70, the MACD zero line). Drawn across the full render window width.
+ */
+export function drawGuideLines(
+  ctx: CanvasRenderingContext2D,
+  scale: IndicatorDrawScale,
+  levels: number[],
+  color: string,
+  opts?: { dash?: number[]; opacity?: number; width?: number },
+): void {
+  const { xScale, bandwidth, renderStart, renderEnd } = scale;
+  if (renderEnd <= renderStart || levels.length === 0) return;
+  const x0 = xScale(renderStart)! + bandwidth / 2;
+  const x1 = xScale(renderEnd - 1)! + bandwidth / 2;
+  ctx.save();
+  ctx.strokeStyle = color;
+  ctx.lineWidth = opts?.width ?? 1;
+  ctx.globalAlpha = opts?.opacity ?? 0.25;
+  ctx.setLineDash(opts?.dash ?? [3, 3]);
+  for (const level of levels) {
+    const y = scale.y(level);
+    ctx.beginPath();
+    ctx.moveTo(x0, y);
+    ctx.lineTo(x1, y);
+    ctx.stroke();
+  }
   ctx.restore();
 }
 

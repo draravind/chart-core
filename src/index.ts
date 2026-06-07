@@ -31,6 +31,8 @@ export {
   registerIndicator,
   getIndicator,
   listIndicators,
+  defaultConfigFor,
+  SUBPANE_ORDER,
 } from './indicators/registry';
 export {
   computeEMA,
@@ -44,10 +46,49 @@ export type {
   IndicatorStyle,
   IndicatorLineStyle,
   IndicatorPane,
+  SubpaneScaleHint,
   IndicatorInput,
   ResolvedIndicator,
 } from './indicators/types';
 export type { RsParams } from './indicators/builtins/rsLine';
+
+// TA-Lib indicator library — pure compute primitives + per-indicator param types.
+export {
+  sma,
+  wma,
+  emaTalib,
+  dema,
+  tema,
+  maDispatch,
+  rsi,
+  rawStochK,
+  dx as computeDx,
+  adx as computeAdx,
+  atr as computeAtr,
+  trueRange,
+  stddevPop,
+  rollingMin,
+  rollingMax,
+  wilderSmooth,
+  wilderSum,
+} from './indicators/talibMath';
+export type { SmaParams } from './indicators/builtins/sma';
+export type { EmaTalibParams } from './indicators/builtins/emaTalib';
+export type { WmaParams } from './indicators/builtins/wma';
+export type { DemaParams } from './indicators/builtins/dema';
+export type { TemaParams } from './indicators/builtins/tema';
+export type { BbandsParams } from './indicators/builtins/bbands';
+export type { RsiParams } from './indicators/builtins/rsi';
+export type { MacdParams } from './indicators/builtins/macd';
+export type { StochParams } from './indicators/builtins/stoch';
+export type { StochfParams } from './indicators/builtins/stochf';
+export type { StochrsiParams } from './indicators/builtins/stochrsi';
+export type { WillrParams } from './indicators/builtins/willr';
+export type { AdxParams } from './indicators/builtins/adx';
+export type { DxParams } from './indicators/builtins/dx';
+export type { AtrParams } from './indicators/builtins/atr';
+export type { NatrParams } from './indicators/builtins/natr';
+export type { TrangeParams } from './indicators/builtins/trange';
 
 export { default as ChartControls } from './controls/ChartControls';
 

@@ -17,10 +17,17 @@ export function createChartScaleApi(): {
   notify: (reason: ChartScaleReason) => void;
 } {
   const subscribers = new Set<(api: ChartScaleApi, reason: ChartScaleReason) => void>();
+  const subpaneScales = new Map<string, d3.ScaleLinear<number, number>>();
   const api: ChartScaleApi = {
     data: [],
     xScale: d3.scaleBand<number>(),
     yPrice: d3.scaleLog<number, number>(),
+    subpaneScales,
+    // Deprecated alias preserved for external consumers of the public
+    // `ChartScaleApi` (no in-repo callers). Reads the current 'rs' subpane scale.
+    get ySub(): d3.ScaleLinear<number, number> | null {
+      return this.subpaneScales.get('rs') ?? null;
+    },
     step: 0,
     bandwidth: 0,
     baseTranslateX: 0,

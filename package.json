@@ -19,7 +19,8 @@
     "./style.css": "./dist/style.css"
   },
   "scripts": {
-    "build": "vite build"
+    "build": "vite build",
+    "test": "vitest run"
   },
   "peerDependencies": {
     "d3": "^7",
@@ -34,6 +35,7 @@
     "@vitejs/plugin-react": "^6.0.1",
     "typescript": "~5.9.3",
     "vite": "^8.0.4",
-    "vite-plugin-dts": "^4.5.4"
+    "vite-plugin-dts": "^4.5.4",
+    "vitest": "^4.1.8"
   }
 }

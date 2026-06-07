@@ -11,8 +11,27 @@ import type { Candle } from '../types';
 // display window, and paints it on the canvas series layer.
 // ---------------------------------------------------------------------------
 
-/** Where the indicator draws. Only the price overlay is implemented today. */
-export type IndicatorPane = 'price' | { subpane: string };
+/**
+ * Per-subpane scale hint. Bounded oscillators pin a `fixedDomain` (+ optional
+ * `guideLines` at notable levels); unbounded ones autofit over their drawn
+ * series, optionally forced symmetric about a `zeroLine`. `autofitPadding` is a
+ * fractional pad applied to an autofit domain (default 8%).
+ */
+export type SubpaneScaleHint = {
+  fixedDomain?: [number, number];
+  guideLines?: number[];
+  zeroLine?: boolean;
+  autofitPadding?: number;
+};
+
+/**
+ * Where the indicator draws — the price overlay, or a named subpane. A subpane
+ * indicator may carry a `scaleHint` describing how its pane scales (fixed vs.
+ * autofit, guide lines, zero line).
+ */
+export type IndicatorPane =
+  | 'price'
+  | { subpane: string; scaleHint?: SubpaneScaleHint };
 
 /** One Float64Array per drawn line. NaN marks a gap (no value at that bar). */
 export type IndicatorSeries = Record<string, Float64Array>;

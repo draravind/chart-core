@@ -15,7 +15,12 @@ import type {
   IndicatorSeries,
   ResolvedIndicator,
 } from './indicators/types';
-import { getIndicator } from './indicators/registry';
+import { getIndicator, SUBPANE_ORDER } from './indicators/registry';
+import type { SubpaneScaleHint } from './indicators/types';
+import {
+  computeSubpaneBands,
+  computeSubpaneDomain,
+} from './indicators/subpaneLayout';
 import {
   computeVolumeStats,
   formatPrice,
@@ -49,9 +54,15 @@ const MARGIN = { top: 4, right: 60, bottom: 30, left: 0 };
 const CHART_FONT = "'Helvetica Neue', Helvetica, Arial, sans-serif";
 
 const VOLUME_HEIGHT_RATIO = 0.15;
-// RS (relative-strength) subpane band below volume, and the gap above it.
-const RS_SUBPANE_HEIGHT_RATIO = 0.15;
-const RS_SUBPANE_GAP_RATIO = 0.02;
+// Subpane stacking (D1 policy): each oscillator pane gets a fixed share of the
+// chart height with a small gap above it; the price pane shrinks toward a floor
+// as panes stack, after which the remaining zone splits equally among panes.
+const SUBPANE_HEIGHT_RATIO = 0.13;
+const SUBPANE_GAP_RATIO = 0.02;
+const PRICE_FLOOR_RATIO = 0.45;
+// Minimum padding applied to an autofit subpane domain when the def's scaleHint
+// does not override it.
+const DEFAULT_SUBPANE_PAD = 0.08;
 // No empty gap between the price area and the volume divider — the price
 // chart's drawing region extends right down to the divider line. Visual
 // breathing room between the lowest visible price and the divider comes
@@ -64,8 +75,12 @@ const AXIS_OPACITY = 0.12;
 const TICK_SIZE = 4;
 const N_PRICE_TICKS = 10;
 const MUTED_COLOR = 'var(--chart-tooltip-label)';
-// Pre-built tspan slots per crosshair tooltip group (≥ max cells: 4 EMAs / 4 high tiers).
+// Pre-built tspan slots per crosshair tooltip group (≥ max cells: 4 EMAs / 4 high
+// tiers / 3 BBANDS bands / 3 MACD values).
 const TOOLTIP_CELL_SLOTS = 4;
+// Pooled tooltip rows — one per active `tooltipGroup`. Generous upper bound that
+// covers every overlay + subpane indicator enabled at once.
+const MAX_TOOLTIP_ROWS = 20;
 
 const DEFAULT_PRICE_FORMAT = d3.format(',.0f');
 
@@ -176,15 +191,22 @@ const Chart = ({
     [dataLength],
   );
 
-  // Whether any enabled indicator draws on a subpane (the RS line). Declared
-  // before `layout` because the height redistribution depends on it.
-  const hasSubpane = useMemo(
-    () =>
-      indicators.some(
-        (c) => c.enabled && typeof getIndicator(c.defKey)?.pane === 'object',
-      ),
-    [indicators],
-  );
+  // Ordered, distinct subpane keys of the enabled indicators, in the canonical
+  // SUBPANE_ORDER (so panes never reorder on toggle). Unknown keys append in
+  // first-seen order. Declared before `layout` because the height redistribution
+  // depends on it.
+  const activeSubpanes = useMemo(() => {
+    const present = new Set<string>();
+    for (const c of indicators) {
+      if (!c.enabled) continue;
+      const pane = getIndicator(c.defKey)?.pane;
+      if (pane && typeof pane === 'object' && 'subpane' in pane)
+        present.add(pane.subpane);
+    }
+    const ordered = SUBPANE_ORDER.filter((k) => present.has(k));
+    const extras = [...present].filter((k) => !SUBPANE_ORDER.includes(k));
+    return ordered.concat(extras);
+  }, [indicators]);
 
   // Geometry that depends on data + viewport but NOT on priceZoom. Hoisted
   // out of the draw effect so the y-zoom path skips re-running x-scale,
@@ -213,16 +235,18 @@ const Chart = ({
     const renderEnd = Math.min(data.length, visEnd + bufferBars);
     const renderSlice = data.slice(renderStart, renderEnd);
     const hasVolume = (d3.max(visibleSlice, (d) => d.volume) ?? 0) > 0;
-    const subpaneHeight = hasSubpane ? totalHeight * RS_SUBPANE_HEIGHT_RATIO : 0;
-    const subpaneGap = hasSubpane ? totalHeight * RS_SUBPANE_GAP_RATIO : 0;
     const volumeHeight = hasVolume ? totalHeight * VOLUME_HEIGHT_RATIO : 0;
     const gap = hasVolume ? totalHeight * PRICE_VOLUME_GAP_RATIO : 0;
-    const priceHeight =
-      totalHeight - volumeHeight - gap - subpaneHeight - subpaneGap;
-    const fullHeight =
-      priceHeight + gap + volumeHeight + subpaneGap + subpaneHeight;
-    const subpaneTop = priceHeight + gap + volumeHeight + subpaneGap;
-    const subpaneBottom = subpaneTop + subpaneHeight;
+    // Subpane zone sizing (D1) — see computeSubpaneBands.
+    const { priceHeight, subpanes, fullHeight, subGap } = computeSubpaneBands({
+      totalHeight,
+      volumeHeight,
+      gap,
+      subpaneKeys: activeSubpanes,
+      heightRatio: SUBPANE_HEIGHT_RATIO,
+      gapRatio: SUBPANE_GAP_RATIO,
+      floorRatio: PRICE_FLOOR_RATIO,
+    });
     const width = containerWidth - MARGIN.left - MARGIN.right;
     const step = (width - RIGHT_BUFFER) / visibleBars;
     const baseTranslateX = (effectiveOffset + visibleBars - data.length) * step;
@@ -250,10 +274,8 @@ const Chart = ({
       gap,
       priceHeight,
       fullHeight,
-      subpaneHeight,
-      subpaneGap,
-      subpaneTop,
-      subpaneBottom,
+      subpanes,
+      subGap,
       width,
       step,
       baseTranslateX,
@@ -270,7 +292,7 @@ const Chart = ({
     containerWidth,
     containerHeight,
     xDomain,
-    hasSubpane,
+    activeSubpanes,
   ]);
 
   // Volume SMA + HVE/HVY milestone labels. Keyed on `data` only — independent
@@ -363,7 +385,7 @@ const Chart = ({
       chartType: st.chartType,
       xScale: scaleApi.xScale,
       yPrice: scaleApi.yPrice,
-      ySub: scaleApi.ySub,
+      subpaneScales: scaleApi.subpaneScales,
       data: st.data,
       colors: st.colors,
       indicators: st.indicators.map((r) => ({
@@ -429,6 +451,7 @@ const Chart = ({
   const yPriceAxisGRef = useRef<Sel<SVGGElement> | null>(null);
   const yVolAxisGRef = useRef<Sel<SVGGElement> | null>(null);
   const ySubAxisGRef = useRef<Sel<SVGGElement> | null>(null);
+  const subGuidesGroupRef = useRef<Sel<SVGGElement> | null>(null);
   const sepGroupRef = useRef<Sel<SVGGElement> | null>(null);
   const rightBorderRef = useRef<Sel<SVGLineElement> | null>(null);
   const chartGroupSelRef = useRef<Sel<SVGGElement> | null>(null);
@@ -440,23 +463,15 @@ const Chart = ({
   const crosshairHRef = useRef<Sel<SVGLineElement> | null>(null);
   const infoTextRef = useRef<Sel<SVGTextElement> | null>(null);
   const infoSpansRef = useRef<Sel<SVGTSpanElement>[]>([]);
-  type EmaRow = {
-    text: Sel<SVGTextElement>;
-    pairs: { label: Sel<SVGTSpanElement>; value: Sel<SVGTSpanElement> }[];
-  };
-  const emaRowRef = useRef<EmaRow | null>(null);
-  type HighsRow = {
+  // Pooled crosshair tooltip rows. One pooled row is assigned per active
+  // `tooltipGroup` at draw time (titles + cells filled dynamically), so the same
+  // markup serves any set of enabled indicators without per-frame DOM creation.
+  type TooltipRow = {
     text: Sel<SVGTextElement>;
     title: Sel<SVGTSpanElement>;
     pairs: { label: Sel<SVGTSpanElement>; value: Sel<SVGTSpanElement> }[];
   };
-  const highsRowRef = useRef<HighsRow | null>(null);
-  type RsRow = {
-    text: Sel<SVGTextElement>;
-    title: Sel<SVGTSpanElement>;
-    pairs: { label: Sel<SVGTSpanElement>; value: Sel<SVGTSpanElement> }[];
-  };
-  const rsRowRef = useRef<RsRow | null>(null);
+  const tooltipRowsRef = useRef<TooltipRow[]>([]);
   type ChevronGroup = {
     group: Sel<SVGGElement>;
     icon: Sel<SVGTextElement>;
@@ -833,6 +848,12 @@ const Chart = ({
       .style('color', 'var(--chart-axis-label)')
       .style('display', 'none') as Sel<SVGGElement>;
 
+    // Full-width dashed guide/zero lines for the subpanes (unpanned, like the
+    // separators). Populated per-pane in Effect B.
+    subGuidesGroupRef.current = g
+      .append('g')
+      .style('display', 'none') as Sel<SVGGElement>;
+
     sepGroupRef.current = g.append('g') as Sel<SVGGElement>;
 
     rightBorderRef.current = g
@@ -898,70 +919,31 @@ const Chart = ({
       );
     }
 
-    const emaText = g
-      .append('text')
-      .attr('x', 8)
-      .style('font-size', 'var(--text-sm)')
-      .style('font-family', CHART_FONT)
-      .style('font-weight', '500')
-      .style('pointer-events', 'none')
-      .attr('fill', 'currentColor')
-      .style('display', 'none') as Sel<SVGTextElement>;
-    const emaPairs: {
-      label: Sel<SVGTSpanElement>;
-      value: Sel<SVGTSpanElement>;
-    }[] = [];
-    for (let i = 0; i < TOOLTIP_CELL_SLOTS; i++) {
-      emaPairs.push({
-        label: emaText.append('tspan') as Sel<SVGTSpanElement>,
-        value: emaText.append('tspan') as Sel<SVGTSpanElement>,
-      });
+    // Pool of reusable tooltip rows (title tspan + N label/value cell pairs).
+    tooltipRowsRef.current = [];
+    for (let r = 0; r < MAX_TOOLTIP_ROWS; r++) {
+      const rowText = g
+        .append('text')
+        .attr('x', 8)
+        .style('font-size', 'var(--text-sm)')
+        .style('font-family', CHART_FONT)
+        .style('font-weight', '500')
+        .style('pointer-events', 'none')
+        .attr('fill', 'currentColor')
+        .style('display', 'none') as Sel<SVGTextElement>;
+      const title = rowText.append('tspan') as Sel<SVGTSpanElement>;
+      const pairs: {
+        label: Sel<SVGTSpanElement>;
+        value: Sel<SVGTSpanElement>;
+      }[] = [];
+      for (let i = 0; i < TOOLTIP_CELL_SLOTS; i++) {
+        pairs.push({
+          label: rowText.append('tspan') as Sel<SVGTSpanElement>,
+          value: rowText.append('tspan') as Sel<SVGTSpanElement>,
+        });
+      }
+      tooltipRowsRef.current.push({ text: rowText, title, pairs });
     }
-    emaRowRef.current = { text: emaText, pairs: emaPairs };
-
-    const highsText = g
-      .append('text')
-      .attr('x', 8)
-      .style('font-size', 'var(--text-sm)')
-      .style('font-family', CHART_FONT)
-      .style('font-weight', '500')
-      .style('pointer-events', 'none')
-      .attr('fill', 'currentColor')
-      .style('display', 'none') as Sel<SVGTextElement>;
-    const highsTitle = highsText.append('tspan') as Sel<SVGTSpanElement>;
-    const highsPairs: {
-      label: Sel<SVGTSpanElement>;
-      value: Sel<SVGTSpanElement>;
-    }[] = [];
-    for (let i = 0; i < TOOLTIP_CELL_SLOTS; i++) {
-      highsPairs.push({
-        label: highsText.append('tspan') as Sel<SVGTSpanElement>,
-        value: highsText.append('tspan') as Sel<SVGTSpanElement>,
-      });
-    }
-    highsRowRef.current = { text: highsText, title: highsTitle, pairs: highsPairs };
-
-    const rsText = g
-      .append('text')
-      .attr('x', 8)
-      .style('font-size', 'var(--text-sm)')
-      .style('font-family', CHART_FONT)
-      .style('font-weight', '500')
-      .style('pointer-events', 'none')
-      .attr('fill', 'currentColor')
-      .style('display', 'none') as Sel<SVGTextElement>;
-    const rsTitle = rsText.append('tspan') as Sel<SVGTSpanElement>;
-    const rsPairs: {
-      label: Sel<SVGTSpanElement>;
-      value: Sel<SVGTSpanElement>;
-    }[] = [];
-    for (let i = 0; i < TOOLTIP_CELL_SLOTS; i++) {
-      rsPairs.push({
-        label: rsText.append('tspan') as Sel<SVGTSpanElement>,
-        value: rsText.append('tspan') as Sel<SVGTSpanElement>,
-      });
-    }
-    rsRowRef.current = { text: rsText, title: rsTitle, pairs: rsPairs };
 
     const priceLabelG = g.append('g').style('visibility', 'hidden');
     priceLabelGroupRef.current = priceLabelG as Sel<SVGGElement>;
@@ -1053,6 +1035,7 @@ const Chart = ({
       yPriceAxisGRef.current = null;
       yVolAxisGRef.current = null;
       ySubAxisGRef.current = null;
+      subGuidesGroupRef.current = null;
       sepGroupRef.current = null;
       rightBorderRef.current = null;
       chartGroupSelRef.current = null;
@@ -1063,9 +1046,7 @@ const Chart = ({
       crosshairHRef.current = null;
       infoTextRef.current = null;
       infoSpansRef.current = [];
-      emaRowRef.current = null;
-      highsRowRef.current = null;
-      rsRowRef.current = null;
+      tooltipRowsRef.current = [];
       chevronGroupRef.current = null;
       priceLabelGroupRef.current = null;
       priceLabelTextRef.current = null;
@@ -1097,9 +1078,8 @@ const Chart = ({
       gap,
       priceHeight,
       fullHeight,
-      subpaneGap,
-      subpaneTop,
-      subpaneBottom,
+      subpanes,
+      subGap,
       width,
       baseTranslateX,
       xScale,
@@ -1167,11 +1147,11 @@ const Chart = ({
     }
 
     // Separators, built additively so each present band gets its divider:
-    // price/volume split, the divider above the RS band, and the bottom border.
+    // price/volume split, a divider above EACH subpane band, and the bottom border.
     const sepValues: number[] = [];
     if (hasVolume) sepValues.push(priceHeight + gap / 2);
-    if (hasSubpane) sepValues.push(subpaneTop - subpaneGap / 2);
-    if (hasVolume || hasSubpane) sepValues.push(fullHeight);
+    for (const pane of subpanes) sepValues.push(pane.top - subGap / 2);
+    if (hasVolume || subpanes.length > 0) sepValues.push(fullHeight);
     sepGroupRef
       .current!.selectAll<SVGLineElement, number>('line')
       .data(sepValues)
@@ -1194,7 +1174,7 @@ const Chart = ({
     );
 
     xAxisGRef
-      .current!.attr('transform', `translate(0,${subpaneBottom})`)
+      .current!.attr('transform', `translate(0,${fullHeight})`)
       .call(
         d3
           .axisBottom(xScale)
@@ -1244,7 +1224,7 @@ const Chart = ({
       .attr('y', 0)
       .attr('width', MARGIN.right)
       .attr('height', priceHeight);
-  }, [layout, containerWidth, data, volStats, hasSubpane]);
+  }, [layout, containerWidth, data, volStats, activeSubpanes]);
 
   // Effect B — y-scale draw. Runs on priceZoom changes too. Recomputes yPrice,
   // redraws the price axis, publishes the scale api, and repaints the canvas
@@ -1264,9 +1244,7 @@ const Chart = ({
       gap,
       volumeHeight,
       hasVolume,
-      subpaneHeight,
-      subpaneTop,
-      subpaneBottom,
+      subpanes,
       totalHeight,
       width,
       xScale,
@@ -1290,7 +1268,10 @@ const Chart = ({
           const arr = series[key];
           for (let g = visStart; g < visEnd && g < arr.length; g++) {
             const v = arr[g];
-            if (!Number.isNaN(v)) {
+            // Skip non-positive overlay values (e.g. a BBANDS lower band can dip
+            // ≤0 for volatile/low-priced inputs) — they would poison the log fold
+            // (Math.log(priceMin)) below into NaN/−∞.
+            if (!Number.isNaN(v) && v > 0) {
               if (v < priceMin) priceMin = v;
               if (v > priceMax) priceMax = v;
             }
@@ -1356,66 +1337,97 @@ const Chart = ({
       .attr('stroke', AXIS_STROKE)
       .attr('stroke-opacity', AXIS_OPACITY);
 
-    // Subpane (RS line) linear y-scale. Domain spans the finite RS values across
-    // the visible window with 8% padding; range targets the subpane band (so
-    // axisRight + drawPolyline/drawDots both project into it). Independent of
-    // priceZoom. Null when no subpane band exists or no finite RS values.
-    let ySub: d3.ScaleLinear<number, number> | null = null;
-    if (subpaneHeight > 0) {
-      let lo = Infinity;
-      let hi = -Infinity;
-      for (const { series } of resolvedIndicators) {
-        const arr = series.rs;
-        if (!arr) continue;
-        for (let g = visStart; g < visEnd && g < arr.length; g++) {
-          const v = arr[g];
-          if (!Number.isNaN(v)) {
-            if (v < lo) lo = v;
-            if (v > hi) hi = v;
-          }
+    // Per-subpane linear scales. Each pane's domain is either pinned by its def's
+    // `scaleHint.fixedDomain`, or autofit over the pane's drawn-line series
+    // (excluding width===0 marker lines — e.g. the RS 0/1 `signal`) across the
+    // visible window. Range targets the pane band [bottom, top]. Independent of
+    // priceZoom.
+    const subpaneScales = new Map<string, d3.ScaleLinear<number, number>>();
+    const paneHints = new Map<string, SubpaneScaleHint | undefined>();
+    const paneIndicators = new Map<string, ResolvedIndicator[]>();
+    for (const r of resolvedIndicators) {
+      const pane = getIndicator(r.config.defKey)?.pane;
+      if (!pane || typeof pane !== 'object' || !('subpane' in pane)) continue;
+      if (!paneHints.has(pane.subpane)) paneHints.set(pane.subpane, pane.scaleHint);
+      const list = paneIndicators.get(pane.subpane) ?? [];
+      list.push(r);
+      paneIndicators.set(pane.subpane, list);
+    }
+    for (const pane of subpanes) {
+      const hint = paneHints.get(pane.key);
+      // Marker lines (width 0, e.g. the RS 0/1 signal) are excluded from autofit.
+      const lines: { values: Float64Array; isMarker: boolean }[] = [];
+      for (const r of paneIndicators.get(pane.key) ?? []) {
+        for (const line of r.config.style.lines) {
+          const arr = r.series[line.seriesKey];
+          if (!arr) continue;
+          lines.push({ values: arr, isMarker: line.width === 0 });
         }
       }
-      if (Number.isFinite(lo) && hi > lo) {
-        const pad = (hi - lo) * 0.08;
-        ySub = d3
-          .scaleLinear()
-          .domain([lo - pad, hi + pad])
-          .range([subpaneBottom, subpaneTop]);
-      } else if (Number.isFinite(lo)) {
-        // Single distinct RS value across the window: pad proportionally so the
-        // axis never shows negative ticks for a strictly-positive ratio.
-        const spread = lo !== 0 ? Math.abs(lo) * 0.1 : 1;
-        ySub = d3
-          .scaleLinear()
-          .domain([lo - spread, lo + spread])
-          .range([subpaneBottom, subpaneTop]);
+      const domain = computeSubpaneDomain({
+        hint,
+        lines,
+        visStart,
+        visEnd,
+        defaultPad: DEFAULT_SUBPANE_PAD,
+      });
+      if (domain) {
+        subpaneScales.set(
+          pane.key,
+          d3.scaleLinear().domain(domain).range([pane.bottom, pane.top]),
+        );
       }
     }
 
-    if (ySub) {
-      ySubAxisGRef.current!
-        .style('display', null)
-        .attr('transform', `translate(${width},0)`)
-        .call(
+    // Per-pane right-axes + guide/zero lines. Rebuilt each rescale (cheap; not on
+    // the pan path). Axes translate to the right gutter; guides span full width.
+    ySubAxisGRef.current!.selectAll('*').remove();
+    subGuidesGroupRef.current!.selectAll('*').remove();
+    if (subpaneScales.size > 0) {
+      ySubAxisGRef.current!.style('display', null);
+      subGuidesGroupRef.current!.style('display', null);
+      const subTickFormat = d3.format('.2~f');
+      for (const pane of subpanes) {
+        const scale = subpaneScales.get(pane.key);
+        if (!scale) continue;
+        const hint = paneHints.get(pane.key);
+        const axisG = ySubAxisGRef.current!
+          .append('g')
+          .attr('transform', `translate(${width},0)`) as Sel<SVGGElement>;
+        axisG.call(
           d3
-            .axisRight<d3.NumberValue>(ySub)
+            .axisRight<d3.NumberValue>(scale)
             .ticks(3)
             .tickSize(TICK_SIZE)
-            .tickFormat((d) => d3.format('.2f')(Number(d))),
+            .tickFormat((d) => subTickFormat(Number(d))),
         );
-      ySubAxisGRef.current!.select('.domain').remove();
-      ySubAxisGRef
-        .current!.selectAll('line')
-        .attr('stroke', AXIS_STROKE)
-        .attr('stroke-opacity', AXIS_OPACITY);
+        axisG.select('.domain').remove();
+        axisG
+          .selectAll('line')
+          .attr('stroke', AXIS_STROKE)
+          .attr('stroke-opacity', AXIS_OPACITY);
+        const levels = [...(hint?.guideLines ?? [])];
+        if (hint?.zeroLine) levels.push(0);
+        for (const level of levels) {
+          subGuidesGroupRef.current!
+            .append('line')
+            .attr('x1', 0)
+            .attr('x2', width)
+            .attr('y1', scale(level))
+            .attr('y2', scale(level))
+            .attr('stroke', 'var(--subpane-guide)')
+            .attr('stroke-opacity', 0.4)
+            .attr('stroke-dasharray', '3,3');
+        }
+      }
     } else {
-      ySubAxisGRef.current!.selectAll('*').remove();
       ySubAxisGRef.current!.style('display', 'none');
+      subGuidesGroupRef.current!.style('display', 'none');
     }
 
     // Publish geometry to the scale api (in place) + notify subscribers.
     scaleApi.data = data;
-    scaleApi.ySub = ySub;
+    scaleApi.subpaneScales = subpaneScales;
     scaleApi.xScale = xScale;
     scaleApi.yPrice = yPrice;
     scaleApi.step = step;
@@ -1632,9 +1644,7 @@ const Chart = ({
     if (!overlay) return;
 
     const hideTooltipRows = () => {
-      emaRowRef.current?.text.style('display', 'none');
-      highsRowRef.current?.text.style('display', 'none');
-      rsRowRef.current?.text.style('display', 'none');
+      for (const row of tooltipRowsRef.current) row.text.style('display', 'none');
       chevronGroupRef.current?.group.style('display', 'none');
     };
 
@@ -1734,140 +1744,95 @@ const Chart = ({
       const ROW_PITCH = 18;
       let rowIdx = 1;
 
-      // Gather tooltip cells from the resolved indicator configs, bucketed by
-      // their `tooltipGroup`. The pre-built ema/highs rows source their content
-      // (label + value + color) from these — values read off `series[realIdx]`.
-      type Cell = { label: string; value: number; fill: string };
-      const cellsForGroup = (group: string): { cells: Cell[]; title?: string } => {
-        const cells: Cell[] = [];
-        let title: string | undefined;
-        for (const r of stateIndicators) {
-          if (r.config.style.tooltipGroup !== group) continue;
-          if (r.config.style.tooltipTitle) title = r.config.style.tooltipTitle;
-          for (const line of r.config.style.lines) {
-            const arr = r.series[line.seriesKey];
-            const value = arr ? arr[realIdx] : NaN;
-            cells.push({ label: line.label, value, fill: line.labelColorVar });
-          }
-        }
-        return { cells, title };
+      // Bucket tooltip cells from the resolved indicator configs by their
+      // `tooltipGroup`, preserving first-appearance order. Each active group maps
+      // to one pooled row. Marker-only lines without a series array (e.g. the
+      // MACD HistDown color carrier) contribute no cell.
+      type Cell = {
+        label: string;
+        value: number;
+        fill: string;
+        isPrice: boolean;
+        isSignal: boolean;
       };
-
-      const emaGroup = cellsForGroup('ema');
-      const highsGroup = cellsForGroup('highs');
-      const rsGroup = cellsForGroup('rs');
-      const emaAnyActive = emaGroup.cells.some((c) => !Number.isNaN(c.value));
-      const highsActive = highsGroup.cells.some((c) => !Number.isNaN(c.value));
-      // The signal cell is always 0/1 (never NaN), so gate the RS row on the RS
-      // line value being finite (benchmark-covered) rather than `.some(...)`.
-      const rsLineCell = rsGroup.cells.find((c) => c.label === 'RS');
-      const rsActive = !!rsLineCell && !Number.isNaN(rsLineCell.value);
-      const totalActive =
-        (emaAnyActive ? 1 : 0) + (highsActive ? 1 : 0) + (rsActive ? 1 : 0);
-
-      const emaRow = emaRowRef.current;
-      if (emaRow) {
-        if (expanded && emaAnyActive) {
-          for (let i = 0; i < emaRow.pairs.length; i++) {
-            const pair = emaRow.pairs[i];
-            const cell = emaGroup.cells[i];
-            if (cell && !Number.isNaN(cell.value)) {
-              pair.label
-                .text(`${cell.label}: `)
-                .attr('fill', MUTED_COLOR)
-                .style('display', null);
-              pair.value
-                .text(`${formatPrice(cell.value)}  `)
-                .attr('fill', cell.fill)
-                .style('display', null);
-            } else {
-              pair.label.style('display', 'none').text('');
-              pair.value.style('display', 'none').text('');
-            }
-          }
-          emaRow.text
-            .attr('y', 14 + rowIdx * ROW_PITCH)
-            .style('display', null);
-          rowIdx++;
-        } else {
-          emaRow.text.style('display', 'none');
+      type Group = { title?: string; cells: Cell[] };
+      const groups: Group[] = [];
+      const groupByKey = new Map<string, Group>();
+      for (const r of stateIndicators) {
+        const key = r.config.style.tooltipGroup;
+        let group = groupByKey.get(key);
+        if (!group) {
+          group = { cells: [] };
+          groupByKey.set(key, group);
+          groups.push(group);
+        }
+        if (r.config.style.tooltipTitle) group.title = r.config.style.tooltipTitle;
+        const isPrice = getIndicator(r.config.defKey)?.pane === 'price';
+        for (const line of r.config.style.lines) {
+          const arr = r.series[line.seriesKey];
+          if (!arr) continue; // marker-only carrier line (no data)
+          group.cells.push({
+            label: line.label,
+            value: arr[realIdx],
+            fill: line.labelColorVar,
+            isPrice,
+            // A 0/1 signal flag is always finite — it must not gate row activity.
+            isSignal: line.label === 'Signal',
+          });
         }
       }
 
-      const highsRow = highsRowRef.current;
-      if (highsRow) {
-        if (expanded && highsActive) {
-          highsRow.title
-            .text(`${highsGroup.title ?? 'Highs'}  `)
-            .attr('fill', MUTED_COLOR);
-          for (let i = 0; i < highsRow.pairs.length; i++) {
-            const pair = highsRow.pairs[i];
-            const cell = highsGroup.cells[i];
-            if (cell && !Number.isNaN(cell.value)) {
-              pair.label
-                .text(`${cell.label} `)
-                .attr('fill', MUTED_COLOR)
-                .style('display', null);
-              pair.value
-                .text(`${formatPrice(cell.value)}  `)
-                .attr('fill', cell.fill)
-                .style('display', null);
-            } else {
-              pair.label.style('display', 'none').text('');
-              pair.value.style('display', 'none').text('');
-            }
+      const rows = tooltipRowsRef.current;
+      const fmtSub = d3.format(',.2f');
+      let activeCount = 0;
+      let usedRow = 0;
+      for (const group of groups) {
+        const active = group.cells.some(
+          (c) => !c.isSignal && !Number.isNaN(c.value),
+        );
+        if (!active) continue;
+        activeCount++;
+        if (!expanded) continue;
+        const row = rows[usedRow];
+        if (!row) break; // pool exhausted (more groups than MAX_TOOLTIP_ROWS)
+        usedRow++;
+        row.title
+          .text(group.title ? `${group.title}  ` : '')
+          .attr('fill', MUTED_COLOR);
+        for (let i = 0; i < row.pairs.length; i++) {
+          const pair = row.pairs[i];
+          const cell = group.cells[i];
+          if (cell && (cell.isSignal || !Number.isNaN(cell.value))) {
+            const valueText = cell.isSignal
+              ? cell.value === 1
+                ? 'Yes'
+                : 'No'
+              : cell.isPrice
+                ? fmtPriceRef.current(cell.value)
+                : fmtSub(cell.value);
+            pair.label
+              .text(`${cell.label}: `)
+              .attr('fill', MUTED_COLOR)
+              .style('display', null);
+            pair.value
+              .text(`${valueText}  `)
+              .attr('fill', cell.fill)
+              .style('display', null);
+          } else {
+            pair.label.style('display', 'none').text('');
+            pair.value.style('display', 'none').text('');
           }
-          highsRow.text
-            .attr('y', 14 + rowIdx * ROW_PITCH)
-            .style('display', null);
-          rowIdx++;
-        } else {
-          highsRow.text.style('display', 'none');
         }
+        row.text.attr('y', 14 + rowIdx * ROW_PITCH).style('display', null);
+        rowIdx++;
       }
-
-      const rsRow = rsRowRef.current;
-      if (rsRow) {
-        if (expanded && rsActive) {
-          rsRow.title
-            .text(`${rsGroup.title ?? 'RS'}  `)
-            .attr('fill', MUTED_COLOR);
-          for (let i = 0; i < rsRow.pairs.length; i++) {
-            const pair = rsRow.pairs[i];
-            const cell = rsGroup.cells[i];
-            if (cell && !Number.isNaN(cell.value)) {
-              // RS is a ratio (format .2f); the signal cell is a 0/1 flag → Yes/No.
-              const isSignal = cell.label === 'Signal';
-              const valueText = isSignal
-                ? cell.value === 1
-                  ? 'Yes'
-                  : 'No'
-                : d3.format('.2f')(cell.value);
-              pair.label
-                .text(`${cell.label}: `)
-                .attr('fill', MUTED_COLOR)
-                .style('display', null);
-              pair.value
-                .text(`${valueText}  `)
-                .attr('fill', cell.fill)
-                .style('display', null);
-            } else {
-              pair.label.style('display', 'none').text('');
-              pair.value.style('display', 'none').text('');
-            }
-          }
-          rsRow.text
-            .attr('y', 14 + rowIdx * ROW_PITCH)
-            .style('display', null);
-          rowIdx++;
-        } else {
-          rsRow.text.style('display', 'none');
-        }
-      }
+      // Hide any pooled rows not used this frame.
+      for (let i = usedRow; i < rows.length; i++)
+        rows[i].text.style('display', 'none');
 
       const chev = chevronGroupRef.current;
       if (chev) {
-        if (totalActive === 0) {
+        if (activeCount === 0) {
           chev.group.style('display', 'none');
         } else {
           const chevY = 14 + rowIdx * ROW_PITCH;

@@ -36,6 +36,34 @@
   --rs-line: var(--chart-rs-label);
   --rs-signal: var(--chart-rs-signal-label);
 
+  /* TA-Lib library — price-pane overlays. */
+  --ti-sma: #3b82f6;
+  --ti-ema: #ef4444;
+  --ti-wma: #a855f7;
+  --ti-dema: #f59e0b;
+  --ti-tema: #14b8a6;
+  --bb-upper: #60a5fa;
+  --bb-mid: #9ca3af;
+  --bb-lower: #60a5fa;
+
+  /* TA-Lib library — momentum/volatility subpanes. */
+  --rsi-line: #8b5cf6;
+  --macd-line: #3b82f6;
+  --macd-signal: #f59e0b;
+  --macd-hist-up: #16a34a;
+  --macd-hist-down: #dc2626;
+  --stoch-k: #3b82f6;
+  --stoch-d: #f59e0b;
+  --willr-line: #ec4899;
+  --adx-line: #14b8a6;
+  --dx-line: #a855f7;
+  --atr-line: #06b6d4;
+  --natr-line: #0ea5e9;
+  --trange-line: #22c55e;
+
+  /* Dashed guide / zero lines drawn in the subpanes. */
+  --subpane-guide: #888888;
+
   --bg-card: #ffffff;
 
   /* Axis / tooltip font-size tokens. */

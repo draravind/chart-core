@@ -32,9 +32,9 @@ export type DrawSeriesParams = {
   chartType: ChartType;
   xScale: d3.ScaleBand<number>;
   yPrice: d3.ScaleLogarithmic<number, number>;
-  // Subpane (RS line) linear y-scale; null/absent when no subpane indicator is
-  // active or there are no finite RS values to scale.
-  ySub?: d3.ScaleLinear<number, number> | null;
+  // Per-subpane linear y-scales keyed by subpane name. A subpane indicator draws
+  // only when its pane's scale is present.
+  subpaneScales: Map<string, d3.ScaleLinear<number, number>>;
   data: readonly Candle[];
   colors: SeriesColors;
   indicators: { config: IndicatorConfig; series: IndicatorSeries }[];
@@ -206,8 +206,15 @@ function drawIndicators(ctx: CanvasRenderingContext2D, p: DrawSeriesParams): voi
     const def = getIndicator(config.defKey);
     if (!def) continue;
     const isSubpane = typeof def.pane === 'object' && 'subpane' in def.pane;
-    if (isSubpane && !p.ySub) continue; // benchmark absent / no finite RS values
-    const y = isSubpane ? p.ySub! : p.yPrice;
+    let y: (value: number) => number;
+    if (isSubpane) {
+      const key = (def.pane as { subpane: string }).subpane;
+      const scale = p.subpaneScales.get(key);
+      if (!scale) continue; // pane inactive / no finite values to scale
+      y = scale;
+    } else {
+      y = p.yPrice;
+    }
     const scale = {
       xScale: p.xScale,
       yPrice: p.yPrice,

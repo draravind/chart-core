@@ -9,3 +9,6 @@ temp/
 .venv/
 __pycache__/
 *.pyc
+
+.claude/
+markdown/
