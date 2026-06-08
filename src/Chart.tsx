@@ -1800,6 +1800,7 @@ const Chart = ({
               onExpandedChange={onInfoBarExpandedChange}
               subscribeHoverIndex={subscribeHoverIndex}
               priceFormatter={fmtPrice}
+              resolveColor={(v) => colorResolverRef.current?.resolve(v) ?? '#888888'}
             />
           )}
           {priceBottomPx > 0 && (

@@ -52,6 +52,7 @@ export type {
   IndicatorInput,
   ResolvedIndicator,
   ParamSpec,
+  ColorOverrides,
 } from './indicators/types';
 export type { RsParams } from './indicators/builtins/rsLine';
 export type { Stage2Params } from './indicators/builtins/stage2';

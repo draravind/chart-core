@@ -387,3 +387,78 @@
   background-size: 10px;
   cursor: pointer;
 }
+
+/* Per-line color editor in the param popover. Dedicated classes (not
+ * .legendPopoverField) so the global `input { width:98px }` rule above doesn't
+ * squash the native swatch. Mirrors the popover field's row layout + control
+ * styling. */
+.legendColorField {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+}
+
+.legendColorField > span {
+  white-space: nowrap;
+}
+
+.legendColorControls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.legendColorControls input[type='color'] {
+  width: 28px;
+  height: 28px;
+  padding: 2px;
+  border: 1px solid color-mix(in srgb, var(--text-muted) 26%, transparent);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--surface-panel-header) 70%, #000);
+  cursor: pointer;
+  outline: none;
+  transition: border-color 120ms ease, box-shadow 120ms ease;
+}
+
+.legendColorControls input[type='color']::-webkit-color-swatch-wrapper {
+  padding: 0;
+}
+
+.legendColorControls input[type='color']::-webkit-color-swatch {
+  border: none;
+  border-radius: 3px;
+}
+
+.legendColorControls input[type='color']::-moz-color-swatch {
+  border: none;
+  border-radius: 3px;
+}
+
+.legendColorHex {
+  width: 76px;
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid color-mix(in srgb, var(--text-muted) 26%, transparent);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--surface-panel-header) 70%, #000);
+  color: var(--text-primary);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+  font-family: inherit;
+  outline: none;
+  transition: border-color 120ms ease, box-shadow 120ms ease;
+}
+
+.legendColorControls input[type='color']:hover,
+.legendColorHex:hover {
+  border-color: color-mix(in srgb, var(--text-muted) 42%, transparent);
+}
+
+.legendColorControls input[type='color']:focus-visible,
+.legendColorHex:focus-visible {
+  border-color: #5b8def;
+  box-shadow: 0 0 0 2px color-mix(in srgb, #5b8def 28%, transparent);
+}

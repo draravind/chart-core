@@ -1,4 +1,4 @@
-import type { IndicatorConfig, IndicatorDef } from './types';
+import type { ColorOverrides, IndicatorConfig, IndicatorDef } from './types';
 import { highsDef } from './builtins/rollingHigh';
 import { rsLineDef } from './builtins/rsLine';
 import { stage2Def } from './builtins/stage2';
@@ -43,20 +43,42 @@ export function listIndicators(): IndicatorDef[] {
  * Build a default `IndicatorConfig` for a registry key from the def's
  * `defaultParams` + `defaultStyle`. Hosts call this to surface an indicator in
  * `ChartControls` with one line. Returns `undefined` for an unknown key.
+ *
+ * Per-line colors are resolved in layers (`generic → factory → user override`):
+ * the `defaultStyle` color is the generic fallback, the def's params-aware
+ * `defaultLineColor` hook (when present) supplies the factory color, and any
+ * `colorOverrides[seriesKey]` user hex wins. Clones style + lines + each line so
+ * the shared `def.defaultStyle` singleton is never mutated.
  */
 export function defaultConfigFor(
   defKey: string,
-  overrides?: Partial<Pick<IndicatorConfig, 'id' | 'enabled' | 'params'>>,
+  overrides?: Partial<Pick<IndicatorConfig, 'id' | 'enabled' | 'params'>> & {
+    colorOverrides?: ColorOverrides;
+  },
 ): IndicatorConfig | undefined {
   const def = getIndicator(defKey);
   if (!def) return undefined;
+  const params = { ...def.defaultParams, ...overrides?.params };
+  const colorOverrides = overrides?.colorOverrides ?? {};
+  const lines = def.defaultStyle.lines.map((line) => {
+    const factory = def.defaultLineColor?.(params, line.seriesKey);
+    let colorVar = factory?.colorVar ?? line.colorVar;
+    let labelColorVar = factory?.labelColorVar ?? line.labelColorVar;
+    const userHex = colorOverrides[line.seriesKey];
+    if (userHex) {
+      colorVar = userHex;
+      labelColorVar = userHex;
+    }
+    return { ...line, colorVar, labelColorVar };
+  });
   return {
     id: overrides?.id ?? defKey,
     defKey,
-    params: { ...def.defaultParams, ...overrides?.params },
+    params,
     label: def.label,
     enabled: overrides?.enabled ?? false,
-    style: def.defaultStyle,
+    style: { ...def.defaultStyle, lines },
+    colorOverrides,
   };
 }
 

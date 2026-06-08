@@ -36,6 +36,9 @@ export type IndicatorPane =
 /** One Float64Array per drawn line. NaN marks a gap (no value at that bar). */
 export type IndicatorSeries = Record<string, Float64Array>;
 
+/** Sparse per-line color override: seriesKey → raw hex. Persisted source of truth. */
+export type ColorOverrides = Record<string, string>;
+
 /** OHLCV columns + the source bars, fed to `compute`. */
 export type IndicatorInput = {
   o: Float64Array;
@@ -141,6 +144,14 @@ export type IndicatorDef<P = Record<string, unknown>> = {
     style: ResolvedLineStyle[],
   ): void;
   defaultStyle: IndicatorStyle;
+  /** Optional params-aware factory color for a line. Returns only the colors it
+   *  wants to vary (e.g. EMA bands its one `ema` line by period); width/dash/label
+   *  stay in `defaultStyle`. `undefined` → fall through to `defaultStyle` colors.
+   *  Layered under any user override in `defaultConfigFor`. */
+  defaultLineColor?(
+    params: P,
+    seriesKey: string,
+  ): { colorVar: string; labelColorVar: string } | undefined;
   /** Short legend summary, e.g. "50" for EMA, "12,26,9" for MACD. Declared as a
    *  method (not an arrow property) so `IndicatorDef<P>` stays assignable to the
    *  erased `IndicatorDef` — matching `compute`/`warmupBars`. */
@@ -163,6 +174,9 @@ export type IndicatorConfig = {
   label: string;
   enabled: boolean;
   style: IndicatorStyle;
+  /** Sparse per-line color overrides (seriesKey → raw hex). The persisted source
+   *  of truth; `style.lines[].colorVar/labelColorVar` are recomputed from it. */
+  colorOverrides?: ColorOverrides;
 };
 
 /** What Chart publishes on `scaleApi.indicators` for the crosshair/autofit. */
