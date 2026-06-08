@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { ChevronDown, ChevronUp } from 'lucide-react';
 import type {
   IndicatorConfig,
   IndicatorDef,
@@ -423,7 +424,11 @@ function LegendBlock({
           onMouseDown={(e) => e.stopPropagation()}
           onClick={toggle.onToggle}
         >
-          {toggle.expanded ? '▾' : '▸'}
+          {toggle.expanded ? (
+            <ChevronUp size={14} strokeWidth={3} />
+          ) : (
+            <ChevronDown size={14} strokeWidth={3} />
+          )}
         </button>
       )}
     </div>
@@ -452,31 +457,21 @@ export default function IndicatorLegend({
   resolveColor,
 }: Props) {
   const [openId, setOpenId] = useState<string | null>(null);
-  // Per-subpane collapse state (price pane uses the persisted `expanded` prop).
-  // A subpane key present here is collapsed; absent = expanded (default).
-  const [collapsedSubpanes, setCollapsedSubpanes] = useState<Set<string>>(
-    () => new Set(),
-  );
-  const toggleSubpane = (key: string) =>
-    setCollapsedSubpanes((prev) => {
-      const next = new Set(prev);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      return next;
-    });
+  // Expand/collapse is a single shared state across the price pane and every
+  // subpane — the persisted `expanded` prop drives them all, so toggling any
+  // one legend toggles all of them in sync.
+  const toggleExpanded = () => onExpandedChange((v) => !v);
 
-  // Hovered bar index; only tracked while at least one pane is expanded (no
-  // point re-rendering the legend on crosshair moves when nothing shows values).
+  // Hovered bar index; only tracked while the panes are expanded (no point
+  // re-rendering the legend on crosshair moves when nothing shows values).
   const [hoverIdx, setHoverIdx] = useState<number | null>(null);
-  const anyExpanded =
-    expanded || subpanes.some((sp) => !collapsedSubpanes.has(sp.key));
   useEffect(() => {
-    if (!anyExpanded) {
+    if (!expanded) {
       setHoverIdx(null);
       return;
     }
     return subscribeHoverIndex(setHoverIdx);
-  }, [anyExpanded, subscribeHoverIndex]);
+  }, [expanded, subscribeHoverIndex]);
 
   // Recompute the whole config via `defaultConfigFor` (not a shallow params
   // spread) so changing a param re-derives style — e.g. an EMA period 10→100
@@ -571,30 +566,27 @@ export default function IndicatorLegend({
         valuesFor={valuesFor}
         toggle={
           priceConfigs.length > 0
-            ? { expanded, onToggle: () => onExpandedChange((v) => !v) }
+            ? { expanded, onToggle: toggleExpanded }
             : undefined
         }
       />
-      {subpanes.map((sp) => {
-        const subExpanded = !collapsedSubpanes.has(sp.key);
-        return (
-          <LegendBlock
-            key={sp.key}
-            configs={subExpanded ? subpaneConfigs(sp.key) : []}
-            top={marginTop + sp.top + 8}
-            left={marginLeft + 8}
-            openId={openId}
-            setOpenId={setOpenId}
-            onCommit={commitParam}
-            onColorCommit={commitColor}
-            onColorReset={resetColor}
-            resolveColor={resolveColor}
-            onRemove={removeConfig}
-            valuesFor={valuesFor}
-            toggle={{ expanded: subExpanded, onToggle: () => toggleSubpane(sp.key) }}
-          />
-        );
-      })}
+      {subpanes.map((sp) => (
+        <LegendBlock
+          key={sp.key}
+          configs={expanded ? subpaneConfigs(sp.key) : []}
+          top={marginTop + sp.top + 8}
+          left={marginLeft + 8}
+          openId={openId}
+          setOpenId={setOpenId}
+          onCommit={commitParam}
+          onColorCommit={commitColor}
+          onColorReset={resetColor}
+          resolveColor={resolveColor}
+          onRemove={removeConfig}
+          valuesFor={valuesFor}
+          toggle={{ expanded, onToggle: toggleExpanded }}
+        />
+      ))}
     </div>
   );
 }

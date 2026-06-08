@@ -462,6 +462,10 @@ const Chart = ({
   const crosshairHRef = useRef<Sel<SVGLineElement> | null>(null);
   const infoTextRef = useRef<Sel<SVGTextElement> | null>(null);
   const infoSpansRef = useRef<Sel<SVGTSpanElement>[]>([]);
+  // Set inside the crosshair effect; lets the data-update effect refresh the
+  // top-left readout to the latest candle (that effect re-runs on data change,
+  // the crosshair effect only runs once on mount).
+  const showLatestInfoRef = useRef<(() => void) | null>(null);
   const priceLabelGroupRef = useRef<Sel<SVGGElement> | null>(null);
   const priceLabelTextRef = useRef<Sel<SVGTextElement> | null>(null);
   const overlayRectRef = useRef<Sel<SVGRectElement> | null>(null);
@@ -1415,6 +1419,12 @@ const Chart = ({
       indicators: resolvedIndicators,
     };
     redrawSeries();
+
+    // Keep the top-left readout on the latest candle across data/symbol changes
+    // when the user isn't actively hovering. `scaleApi.data` was just updated
+    // above, so this renders the new latest bar (the crosshair effect's own seed
+    // only fires on mount).
+    if (!crosshairLastPosRef.current) showLatestInfoRef.current?.();
   }, [
     layout,
     resolvedIndicators,
@@ -1578,10 +1588,55 @@ const Chart = ({
       for (const cb of hoverIndexSubsRef.current) cb(idx);
     };
 
+    // Populate the top-left OHLC/volume readout for one bar. Out-of-range
+    // indices clamp to the latest bar so the readout is never blank while
+    // there's data — this is the fallback used whenever the crosshair is
+    // inactive (mouse off-chart, or to the right of the latest bar).
+    const renderInfoAt = (idx: number) => {
+      const stateData = scaleApi.data;
+      if (stateData.length === 0) {
+        infoTextRef.current?.style('visibility', 'hidden');
+        return;
+      }
+      const i =
+        idx < 0 || idx >= stateData.length ? stateData.length - 1 : idx;
+      const d = stateData[i];
+      const prevClose = i > 0 ? stateData[i - 1].close : d.open;
+      const chg = d.close - prevClose;
+      const chgPct = ((chg / prevClose) * 100).toFixed(2);
+      const sign = chg >= 0 ? '+' : '';
+      const chgColor =
+        chg >= 0 ? 'var(--chart-positive)' : 'var(--chart-negative)';
+
+      const spans = [
+        { text: `${d.date}  `, fill: chgColor },
+        { text: 'O: ', fill: MUTED_COLOR },
+        { text: `${formatPrice(d.open)}  `, fill: chgColor },
+        { text: 'H: ', fill: MUTED_COLOR },
+        { text: `${formatPrice(d.high)}  `, fill: chgColor },
+        { text: 'L: ', fill: MUTED_COLOR },
+        { text: `${formatPrice(d.low)}  `, fill: chgColor },
+        { text: 'C: ', fill: MUTED_COLOR },
+        { text: `${formatPrice(d.close)}  `, fill: chgColor },
+        { text: `${sign}${chgPct}%  `, fill: chgColor },
+        { text: 'Vol: ', fill: MUTED_COLOR },
+        { text: formatVolume(d.volume), fill: chgColor },
+      ];
+      const infoSpans = infoSpansRef.current;
+      for (let k = 0; k < infoSpans.length; k++) {
+        infoSpans[k].text(spans[k].text).attr('fill', spans[k].fill);
+      }
+      infoTextRef.current!.style('visibility', 'visible');
+    };
+
+    const showLatestInfo = () => renderInfoAt(scaleApi.data.length - 1);
+    showLatestInfoRef.current = showLatestInfo;
+
     const hideOverlays = () => {
       crosshairVRef.current?.style('visibility', 'hidden');
       crosshairHRef.current?.style('visibility', 'hidden');
-      infoTextRef.current?.style('visibility', 'hidden');
+      // Keep the readout populated with the latest candle rather than blanking it.
+      showLatestInfo();
       notifyHover(null);
       priceLabelGroupRef.current?.style('visibility', 'hidden');
       patternOverlayHandleRef.current?.setPointer(null, null);
@@ -1625,7 +1680,8 @@ const Chart = ({
           .current!.attr('x1', mx)
           .attr('x2', mx)
           .style('visibility', 'visible');
-        infoTextRef.current!.style('visibility', 'hidden');
+        // Off the bar range (e.g. right of the latest bar): show the latest candle.
+        showLatestInfo();
         notifyHover(null);
         return;
       }
@@ -1638,38 +1694,12 @@ const Chart = ({
 
       const realIdx = visibleStartIdx + slot;
       if (realIdx < 0 || realIdx >= stateData.length) {
-        infoTextRef.current!.style('visibility', 'hidden');
+        showLatestInfo();
         notifyHover(null);
         return;
       }
 
-      const d = stateData[realIdx];
-      const prevClose = realIdx > 0 ? stateData[realIdx - 1].close : d.open;
-      const chg = d.close - prevClose;
-      const chgPct = ((chg / prevClose) * 100).toFixed(2);
-      const sign = chg >= 0 ? '+' : '';
-      const chgColor =
-        chg >= 0 ? 'var(--chart-positive)' : 'var(--chart-negative)';
-
-      const spans = [
-        { text: `${d.date}  `, fill: chgColor },
-        { text: 'O: ', fill: MUTED_COLOR },
-        { text: `${formatPrice(d.open)}  `, fill: chgColor },
-        { text: 'H: ', fill: MUTED_COLOR },
-        { text: `${formatPrice(d.high)}  `, fill: chgColor },
-        { text: 'L: ', fill: MUTED_COLOR },
-        { text: `${formatPrice(d.low)}  `, fill: chgColor },
-        { text: 'C: ', fill: MUTED_COLOR },
-        { text: `${formatPrice(d.close)}  `, fill: chgColor },
-        { text: `${sign}${chgPct}%  `, fill: chgColor },
-        { text: 'Vol: ', fill: MUTED_COLOR },
-        { text: formatVolume(d.volume), fill: chgColor },
-      ];
-      const infoSpans = infoSpansRef.current;
-      for (let i = 0; i < infoSpans.length; i++) {
-        infoSpans[i].text(spans[i].text).attr('fill', spans[i].fill);
-      }
-      infoTextRef.current!.style('visibility', 'visible');
+      renderInfoAt(realIdx);
 
       // Publish the hovered bar; the React indicator legend reads each config's
       // series at this index to show live values per row.
@@ -1739,6 +1769,10 @@ const Chart = ({
         crosshairLastPosRef.current = null;
         hideOverlays();
       });
+
+    // Seed the readout on mount and after every data/scale change: unless the
+    // user is actively hovering, show the latest candle so it's never blank.
+    if (!crosshairLastPosRef.current) showLatestInfo();
 
     return () => {
       overlay.on('mousedown', null);
