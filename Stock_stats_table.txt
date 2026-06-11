@@ -1,0 +1,154 @@
+// This Pine Script® code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © jeswinjoy
+
+//@version=6
+indicator('Price stats', overlay = true, max_bars_back = 1500)
+
+var string GRP1 = '════════ Modes ═════════'
+var string theme = input.string('light', 'Theme', inline = '20', options = ['light', 'dark'])
+var toggleDarkColors = input(title = 'Dark Mode', defval = true, group = GRP1, tooltip = 'Select this if you use a dark color theme')
+var toggleMiniMode = input(title = 'Mini Mode', defval = false, group = GRP1, tooltip = 'Select this to get the Mini mode where the values are replaced by traffic lights for a quick visual')
+
+var string GRP2 = '════════ Table Options ═════════'
+var string tablesize = input.string('small', 'Size', inline = '21', group = GRP2, options = ['tiny', 'small', 'normal', 'large', 'huge', 'auto'])
+var string tableposY = input.string('middle', '↕', inline = '21', group = GRP2, options = ['top', 'middle', 'bottom'])
+var string tableposX = input.string('right', '↔', inline = '21', group = GRP2, options = ['left', 'center', 'right'])
+
+var string GRP3 = '════════ Parameters ═════════'
+var n_days = input(title = 'Days', defval = 132, group = GRP3)
+var risk = input.int(title = 'Risk Amount', defval = 500, group = GRP3)
+var ATR_multiplier = input.float(title="ATR multiplier", defval=2.25)
+var market = input.string('India', 'Market', group = GRP3, options = ['India', 'US'], tooltip = 'Option to choose which market')
+
+var FrameCol = toggleDarkColors ? color.new(#999999, 50) : color.rgb(241, 241, 241)
+var BorderCol = toggleDarkColors ? color.new(#999999, 50) : color.rgb(241, 241, 241)
+
+var TextColor = toggleDarkColors ? color.new(color.white, 10) : color.new(color.black, 0)
+var BGColor = toggleDarkColors ? color.new(color.white, 100) : color.new(color.black, 100)
+var HeadColor = toggleDarkColors ? color.new(color.white, 100) : color.new(color.black, 100)
+var BodyColor = toggleDarkColors ? color.new(color.white, 100) : color.new(color.black, 100)
+var UpColor = toggleDarkColors ? color.new(color.green, 0) : color.new(color.rgb(31, 12, 239, 16), 0)
+var DownColor = toggleDarkColors ? color.new(color.red, 0) : color.new(color.rgb(213, 27, 182), 10)
+var UnchangedColor = toggleDarkColors ? color.new(color.yellow, 0) : color.new(color.orange, 30)
+
+if theme == 'light'
+    BGColor := color.new(#252525, 0)
+
+var set_variables = false
+var int high_start_ix = bar_index
+var int high_end_ix = bar_index
+var int low_start_ix = bar_index
+var int low_end_ix = bar_index
+var int high_ix = bar_index
+var int low_ix = bar_index
+
+var int highest_end_ix = bar_index
+var float highest_high = 0
+
+f_formatNumber(val) =>
+    val < 10 ? str.format("{0,number,#.0}", val) : str.tostring(math.round(val))
+
+// [Close, ATR_1, ATR_2, ATR_3] = request.security(syminfo.tickerid, "D", [close, ta.sma(ta.atr(1) / close, 125) * 100, ta.sma(ta.atr(1) / close, 63) * 100, ta.sma(ta.atr(1) / close, 21) * 100]) 
+
+// high_ = ta.highest(high, 132)
+// low_ = ta.lowest(low, 132)
+
+[High, Low, Close, TR] = request.security(syminfo.tickerid, "D", [high, low, close, ta.atr(1) / close], calc_bars_count=1000)
+
+ATR_1 = ta.sma(TR, 125) * 100
+ATR_2 = ta.sma(TR, 63) * 100
+ATR_3 = ta.sma(TR, 21) * 100
+
+
+// high_ = ta.highest(High, 132)
+// low_ = ta.lowest(Low, 132)
+
+// range_6m = (high_ - low_) / low_ * 100
+// _range_6m = str.tostring(math.round(range_6m)) + ' %'
+// range_6m_color = range_6m > 60 ? UpColor : range_6m > 30 ? UnchangedColor : DownColor
+
+// high_ := ta.highest(High, 264)
+// low_ := ta.lowest(Low, 264)
+
+// range_12m = (high_ - low_) / low_ * 100
+// _range_12m = str.tostring(math.round(range_12m)) + ' %'
+// range_12m_color = range_12m > 90 ? UpColor : range_12m > 45 ? UnchangedColor : DownColor
+
+// barsSince = nz(math.max(ta.barssince(time == chart.left_visible_bar_time), 1), 1)
+// high_ := ta.highest(High, barsSince)
+// low_ := ta.lowest(Low, barsSince)
+
+// range_visible = (high_ - low_) / low_ * 100
+// _range_visible = str.tostring(math.round(range_visible)) + ' %'
+// range_visible_color = range_visible > 250 ? UpColor : range_visible > 150 ? UnchangedColor : DownColor
+
+populate_cell(table_, column_, row_, text_, text_halign_, text_color_, text_size_) =>
+    table.cell(table_id = table_, column = column_, row = row_, text = text_, text_halign = text_halign_, text_color = text_color_, text_size = text_size_)
+
+var table table1 = table.new(tableposY + '_' + tableposX, columns = 4, rows = 14, bgcolor = BGColor, frame_color = FrameCol, frame_width = 1, border_color = BorderCol, border_width = 1)
+
+current_bar_ix = bar_index
+
+if current_bar_ix == last_bar_index
+    // populate_cell(table1, 1, 3, '6 Month', text.align_center, TextColor, tablesize)
+    // populate_cell(table1, 2, 3, '12 Month', text.align_center, TextColor, tablesize)
+    // populate_cell(table1, 3, 3, 'Visible', text.align_center, TextColor, tablesize)
+
+    // populate_cell(table1, 1, 4, _range_6m, text.align_center, range_6m_color, tablesize)
+    // populate_cell(table1, 2, 4, _range_12m, text.align_center, range_12m_color, tablesize)
+    // populate_cell(table1, 3, 4, _range_visible, text.align_center, range_visible_color, tablesize)
+    
+    table1.merge_cells(1,1,3,1)
+    populate_cell(table1, 1, 1, syminfo.sector, text.align_center, TextColor, tablesize)
+    table1.merge_cells(1,2,3,2)
+    populate_cell(table1, 1, 2, syminfo.industry, text.align_center, TextColor, tablesize)
+
+    free_float = nz(request.financial(syminfo.tickerid, 'FLOAT_SHARES_OUTSTANDING', 'FY'))
+    outstanding = request.financial(syminfo.tickerid, 'TOTAL_SHARES_OUTSTANDING', 'FQ')
+
+    ff = free_float * Close[1] / 10000000000
+    validated_ff = na(ff) or nz(ff) == 0 ? '' : f_formatNumber(ff) + ' Cr'
+    mc = outstanding * Close[1] / 10000000000
+    validated_mc = na(mc) or nz(mc) == 0 ? '' : f_formatNumber(mc) + ' K'
+    mc_color = mc >= 5 ? UpColor : mc >= 1 ? UnchangedColor : DownColor
+
+    if market == 'US'
+        ff := free_float * Close[1] / 1000000
+        mc := outstanding * Close[1] / 1000000
+        validated_mc := na(mc) or nz(mc) == 0 ? '' : mc > 1000 ? f_formatNumber(mc / 1000) + ' B' : f_formatNumber(mc) + ' M'
+        mc_color := mc >= 2000 ? UpColor : mc >= 250 ? UnchangedColor : DownColor
+
+    ff_perc = ff / mc * 100
+    ff_perc_str = f_formatNumber(ff_perc) + ' %'
+    ff_color = ff_perc >= 60 ? UnchangedColor : ff_perc >= 30 ? UpColor : ff_perc >= 20 ? UnchangedColor : DownColor
+    
+    PE_ratio_str = str.tostring(math.round(Close / math.round(request.financial(syminfo.tickerid, 'EARNINGS_PER_SHARE_BASIC', 'TTM', barmerge.gaps_off, ignore_invalid_symbol = true), 2), 1))
+
+    populate_cell(table1, 1, 3, 'Mkt Cap', text.align_center, TextColor, tablesize)
+    populate_cell(table1, 2, 3, 'Free Float', text.align_center, TextColor, tablesize)
+    populate_cell(table1, 3, 3, 'PE Ratio', text.align_center, TextColor, tablesize)
+
+    populate_cell(table1, 1, 4, validated_mc, text.align_center, mc_color, tablesize)
+    populate_cell(table1, 2, 4, ff_perc_str, text.align_center, ff_color, tablesize)
+    populate_cell(table1, 3, 4, PE_ratio_str, text.align_center, TextColor, tablesize)
+
+
+    ATR_1_color = ATR_1 > 5 ? color.new(color.lime, 0) : ATR_1 > 4 ? UpColor : ATR_1 > 3 ? UnchangedColor : DownColor
+    ATR_2_color = ATR_2 > 5 ? color.new(color.lime, 0) : ATR_2 > 4 ? UpColor : ATR_2 > 3 ? UnchangedColor : DownColor
+    ATR_3_color = ATR_3 > 5 ? color.new(color.lime, 0) : ATR_3 > 4 ? UpColor : ATR_3 > 3 ? UnchangedColor : DownColor
+
+    populate_cell(table1, 1, 5, 'ATR 6M', text.align_center, TextColor, tablesize)
+    populate_cell(table1, 2, 5, 'ATR 3M', text.align_center, TextColor, tablesize)
+    populate_cell(table1, 3, 5, 'ATR 1M', text.align_center, TextColor, tablesize)
+    
+    populate_cell(table1, 1, 6, f_formatNumber(ATR_1 * 0.5)+' %', text.align_center, ATR_1_color, tablesize)
+    populate_cell(table1, 2, 6, f_formatNumber(ATR_2 * 0.5)+' %', text.align_center, ATR_2_color, tablesize)
+    populate_cell(table1, 3, 6, f_formatNumber(ATR_3 * 0.5)+' %', text.align_center, ATR_3_color, tablesize)
+    
+    quantity = int(risk / (Close * math.avg(ATR_1, ATR_2) * 0.5 / 100))
+
+    table1.merge_cells(1,8,3,8)
+    table1.merge_cells(1,9,3,9)
+    
+    populate_cell(table1, 1, 8, 'Quantity', text.align_center, TextColor, tablesize)
+    populate_cell(table1, 1, 9, str.tostring(quantity), text.align_center, ATR_1_color, tablesize)

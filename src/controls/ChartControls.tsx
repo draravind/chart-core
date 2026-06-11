@@ -24,6 +24,9 @@ type Props = {
   // Patterns is Pillar 2, not an indicator — wired as a standalone toggle.
   patternsEnabled: boolean;
   onPatternsToggle: () => void;
+  // Price-stats panel — like Patterns, a standalone toggle (not an indicator).
+  statsEnabled: boolean;
+  onStatsToggle: () => void;
   className?: string;
 };
 
@@ -48,6 +51,8 @@ export default function ChartControls({
   onIndicatorsChange,
   patternsEnabled,
   onPatternsToggle,
+  statsEnabled,
+  onStatsToggle,
   className,
 }: Props) {
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -181,6 +186,16 @@ export default function ChartControls({
           onClick={onPatternsToggle}
         >
           Patterns
+        </button>
+        <button
+          className={cn(
+            'pill-toggle-btn',
+            'pill-toggle-btn-sm',
+            statsEnabled && 'is-active',
+          )}
+          onClick={onStatsToggle}
+        >
+          Stats
         </button>
       </div>
     </div>

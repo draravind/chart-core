@@ -65,6 +65,26 @@
   /* Dashed guide / zero lines drawn in the subpanes. */
   --subpane-guide: #888888;
 
+  /* Price-stats panel — threshold bands + chrome. Consumed directly in CSS
+   * (the panel is HTML, not canvas). `up`/`down` reuse the price-change colors;
+   * `strong` is lime, `neutral` amber. */
+  --stats-strong: #84cc16;
+  /* up/down do NOT reuse --chart-positive/--chart-negative: those are the
+   * candlestick fills tuned for the dark CANVAS (#16a34a / #dc2626) and read
+   * dim as text on --stats-bg's raised panel. Brighter 500-shade green/red
+   * (still distinct from the lime `strong` + amber `neutral`) restore contrast. */
+  --stats-up: #22c55e;
+  --stats-neutral: #f59e0b;
+  --stats-down: #ef4444;
+  --stats-text: var(--text-primary);
+  /* Dim header/label rows. Uses --text-muted (readable secondary text on a
+   * RAISED surface), NOT --chart-tooltip-label — that token is tuned for the
+   * dark canvas and is near-invisible against --stats-bg's raised panel. */
+  --stats-muted: var(--text-muted);
+  --stats-bg: var(--surface-panel-raised);
+  --stats-border: var(--chart-separator);
+  --stats-radius: var(--radius-sm);
+
   --bg-card: #ffffff;
 
   /* Axis / tooltip font-size tokens. */

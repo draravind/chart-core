@@ -45,6 +45,7 @@ The split is intentional: the routing table + glossary here are **pay-always**
 | Fix subpane height/layout                                | `src/indicators/subpaneLayout.ts`; `tests/subpaneLayout.test.ts`                                                                                   |
 | Add/adjust a chart control                               | `src/controls/ChartControls.tsx`                                                                                                                   |
 | Fix a legend entry / live values                         | `src/controls/IndicatorLegend.tsx`                                                                                                                 |
+| Adjust the price-stats panel                             | `src/stats/` (`computeStats.ts` math, `StatsPanel.tsx` panel, `stats.module.css`); `--stats-*` tokens in `src/styles/chart-core.css`; `tests/stats.test.ts` |
 | Add an overlay/annotation plugin                         | `src/context.tsx` hooks (`useChartScale`, `useChartOverlayHost`) + `src/patterns/mountChartPatternOverlay.ts`                                      |
 | Add a new pattern shape                                  | `src/patterns/renderers/` (new renderer) + register in `renderers/index.ts`                                                                        |
 | Fix candle/bar/volume rendering                          | `src/Chart.tsx`, `src/utils/drawSeries.ts`                                                                                                         |
@@ -80,5 +81,7 @@ The split is intentional: the routing table + glossary here are **pay-always**
   `src/patterns/types.ts`; rendered by `src/patterns/renderers/`.
 - **Stage 2** — the advancing-trend band indicator: `src/indicators/builtins/stage2.ts`.
 - **RS line** — relative-strength vs. benchmark: `src/indicators/builtins/rsLine.ts`.
+- **Price stats panel** — floating latest-bar fundamentals/ATR table (standalone
+  toggle, not an indicator): `src/stats/`.
 - **Dist branch** — the CI-built, consumer-installed output branch (see dist-branch
   gotcha above and README).

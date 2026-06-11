@@ -30,6 +30,8 @@ Public barrel — the only import surface for consumers (never deep-import). Re-
 - From `utils/chartCalculations`: `RANGE_DAYS`, `formatPrice`, `formatVolume`,
   `formatVolumeTick`, `computeVolumeStats`, types `VolumeLabel`, `VolumeStats`.
 - From `patterns/types`: `PatternMarker`.
+- From `stats/types`: `StatsTableData`, `StatsMarket`, `StatsPosition`, `StatsSize`
+  (the price-stats panel's public props; compute/component stay internal).
 - From `utils/dateBarIndex`: `barIndexForDate`, `dateForBarIndex`.
 - `panButtonClass: string` — hashed CSS class of the reset-pan button (from
   `Chart.module.css`), re-exported so overlay plugins reuse the bundled styling.
@@ -291,6 +293,50 @@ Record<string, unknown>}`. Structural mirror of the app's API marker shape.
 
 ---
 
+## Price stats
+
+### `src/stats/types.ts`
+
+- `StatsMarket` = `'India' | 'US'` — drives Mkt-Cap units/thresholds.
+- `StatsTableData` — app-supplied raw financials: `{sector?, industry?,
+  sharesOutstanding?, freeFloatPercent?, eps?}` (all optional; absent → blanked).
+- `StatsPosition` = `{x, y}` — free-drag placement in pixels from the
+  chart-wrapper top-left. `null` prop → default top-right placement.
+- `StatsSize` = `'tiny' | 'small' | 'normal' | 'large'` (default `'small'`).
+
+### `src/stats/computeStats.ts`
+
+- `computeStats(combinedBars, statsTable, market) → StatsViewModel` — pure, React-
+  free port of the "Price stats" Pine math. Reads the LAST index of the
+  caller-built warmup+data history; mc uses the PRIOR close, PE the LAST close.
+- `StatsViewModel` = `{rows: StatsRow[]}`; `StatsRow` = merged (colSpan-3) or cells
+  (≤3); `StatsCell` = `{text, level}`; `StatsLevel` =
+  `'strong'|'up'|'neutral'|'down'|'text'|'muted'`.
+- ATR rows: `sma(trueRange/close, {125,63,21})*100`; display halves the value,
+  color bands on the full value; blank when the last index is non-finite
+  (<~126 bars, or ±Infinity from a zero close).
+
+### `src/stats/position.ts`
+
+- `clampStatsPosition(pos, hostW, hostH, panelW, panelH)` — keeps the panel fully
+  inside the host bounds (pins to 0 when the panel exceeds the host).
+- `defaultStatsPosition(hostW, panelW, marginRight)` — top-right placement, left
+  of the price-axis gutter: `{x: max(0, hostW − panelW − marginRight − 8), y: 8}`.
+
+### `src/stats/StatsPanel.tsx`
+
+- `StatsPanel` (default) — floating HTML table over `.chartWrapper`, free-draggable
+  (whole panel = drag handle, pointer capture; host stays `pointer-events:none`,
+  panel is `auto`). Props: `model`, `size`, `marginRight` (default-placement
+  gutter), `position: StatsPosition | null`, `onPositionChange?` (fired on drag
+  end with the clamped drop). Null position → measured default placement (local
+  only, never persisted); a ResizeObserver on host + panel re-clamps on resize.
+- `src/stats/stats.module.css` — panel chrome (grab/grabbing cursors,
+  `touch-action:none`) + 4 size presets + one color class per level (reads
+  `--stats-*` tokens directly); panel geometry is inline `left`/`top`.
+
+---
+
 ## Utils
 
 ### `src/utils/chartCalculations.ts`
@@ -364,7 +410,8 @@ Record<string, unknown>}`. Structural mirror of the app's API marker shape.
   production indicators, the rest are reference.
 - **`src/styles/chart-core.css`** — the public CSS token contract under
   `:where(:root)`: chart colors, SVG stroke aliases, TA-Lib overlay vars, subpane
-  vars, layout/surface/spacing/typography tokens. Bundled into `dist/style.css`.
+  vars, price-stats panel vars (`--stats-*`), layout/surface/spacing/typography
+  tokens. Bundled into `dist/style.css`.
 - **`.github/workflows/build.yml`** — on push to `main`, runs `pnpm build`, rewrites
   package.json to be root-relative, and force-publishes `index.js` + `index.d.ts` +
   `style.css` + `package.json` to an orphan **`dist` branch**. Consumers install
@@ -376,3 +423,7 @@ Record<string, unknown>}`. Structural mirror of the app's API marker shape.
   - `indicatorColors.test.ts` — EMA period-band colors, override precedence, no
     shared mutation of def singletons.
   - `toHex6.test.ts` — color-format normalization.
+  - `stats.test.ts` — price-stats math: ATR parity + bands, short-history blank,
+    fundamentals (FF%/PE/Mkt-Cap India·US), PE/guard edge cases, collapse.
+  - `statsPosition.test.ts` — stats-panel drag geometry: clamp bounds + default
+    top-right placement.

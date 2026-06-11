@@ -1,0 +1,75 @@
+/* Floating "Price Stats" panel. The host spans the wrapper and ignores pointer
+ * events; the panel itself is interactive — the whole panel is a drag handle
+ * (free placement anywhere over the wrapper). Geometry is inline left/top set
+ * by StatsPanel from the live drag position, clamped to the host bounds. */
+.statsHost {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+}
+
+.statsPanel {
+  position: absolute;
+  pointer-events: auto;
+  cursor: grab;
+  user-select: none;
+  touch-action: none;
+  background: var(--stats-bg);
+  border: 1px solid var(--stats-border);
+  border-radius: var(--stats-radius);
+  padding: 4px 6px;
+  box-shadow: var(--shadow-card);
+  font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+  font-variant-numeric: tabular-nums;
+}
+
+.statsTable {
+  border-collapse: collapse;
+}
+
+.statsTable td {
+  padding: 1px 8px;
+  text-align: center;
+  white-space: nowrap;
+  line-height: 1.45;
+}
+
+/* ---- Threshold / text color levels ---------------------------------- */
+.lvlStrong {
+  color: var(--stats-strong);
+}
+.lvlUp {
+  color: var(--stats-up);
+}
+.lvlNeutral {
+  color: var(--stats-neutral);
+}
+.lvlDown {
+  color: var(--stats-down);
+}
+.lvlText {
+  color: var(--stats-text);
+}
+.lvlMuted {
+  color: var(--stats-muted);
+}
+
+/* ---- Size presets (font-size) --------------------------------------- */
+.sizeTiny {
+  font-size: 9px;
+}
+.sizeSmall {
+  font-size: 11px;
+}
+.sizeNormal {
+  font-size: 13px;
+}
+.sizeLarge {
+  font-size: 16px;
+}
+
+/* ---- Drag state ------------------------------------------------------ */
+.dragging {
+  cursor: grabbing;
+}

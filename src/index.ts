@@ -11,6 +11,12 @@ export {
 } from './utils/chartCalculations';
 export type { VolumeLabel, VolumeStats } from './utils/chartCalculations';
 export type { PatternMarker } from './patterns/types';
+export type {
+  StatsTableData,
+  StatsMarket,
+  StatsPosition,
+  StatsSize,
+} from './stats/types';
 
 // Date <-> bar-index helpers. Trade/trigger overlay hooks need these to map
 // between a calendar date and a positional bar index; exported here so

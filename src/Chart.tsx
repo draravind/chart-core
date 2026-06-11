@@ -17,6 +17,14 @@ import type {
 } from './indicators/types';
 import { getIndicator, SUBPANE_ORDER } from './indicators/registry';
 import IndicatorLegend from './controls/IndicatorLegend';
+import StatsPanel from './stats/StatsPanel';
+import { computeStats } from './stats/computeStats';
+import type {
+  StatsMarket,
+  StatsPosition,
+  StatsSize,
+  StatsTableData,
+} from './stats/types';
 import type { SubpaneScaleHint } from './indicators/types';
 import {
   computeSubpaneBands,
@@ -112,6 +120,17 @@ type Props = {
   // them and passes them down; core owns mount/update internally).
   patterns?: PatternMarker[];
   patternsEnabled?: boolean;
+  // Floating "Price Stats" panel — a latest-bar snapshot of app-supplied
+  // fundamentals + price-derived ATR rows. Standalone toggle (not an indicator);
+  // the app wires both `statsEnabled` here and the "Stats" pill on ChartControls.
+  statsTable?: StatsTableData;
+  statsEnabled?: boolean;
+  statsMarket?: StatsMarket;
+  // Persisted free-drag position ({x,y} wrapper pixels) or null for the
+  // default top-right placement; the app persists drops via the callback.
+  statsPosition?: StatsPosition | null;
+  onStatsPositionChange?: (p: StatsPosition) => void;
+  statsSize?: StatsSize;
   // App overlay plugins; they portal D3 overlays into the published hosts.
   children?: React.ReactNode;
 };
@@ -145,6 +164,12 @@ const Chart = ({
   priceFormatter,
   patterns,
   patternsEnabled,
+  statsTable,
+  statsEnabled,
+  statsMarket = 'India',
+  statsPosition = null,
+  onStatsPositionChange,
+  statsSize = 'small',
   children,
 }: Props) => {
   const wrapperRef = useRef<HTMLDivElement | null>(null);
@@ -329,6 +354,16 @@ const Chart = ({
       return { config, series };
     });
   }, [data, warmupSeed, indicators, benchmarkClose]);
+
+  // Price-stats view-model — latest-bar snapshot. Separate from
+  // `resolvedIndicators` (which early-returns [] when no indicator is enabled):
+  // the ATR rows need the warmup+data history regardless of indicator state.
+  const statsModel = useMemo(() => {
+    if (!data || data.length === 0) return null;
+    const combined =
+      warmupSeed && warmupSeed.length ? warmupSeed.concat(data) : data;
+    return computeStats(combined, statsTable, statsMarket);
+  }, [data, warmupSeed, statsTable, statsMarket]);
 
   // Everything the canvas redraw needs that is NOT a live scale field. Rebuilt
   // in Effect B (after the y-scale exists); the pan path reuses it with only a
@@ -1755,12 +1790,16 @@ const Chart = ({
           cancelAnimationFrame(crosshairRafRef.current);
           crosshairRafRef.current = null;
         }
-        // Moving onto the on-chart indicator legend (HTML overlay above the SVG)
-        // fires this mouseleave. Don't blank the readout/values — hide only the
-        // crosshair lines + price tag (the legend shows its own hand cursor) and
-        // leave the OHLC readout + indicator values frozen at the last bar.
+        // Moving onto the on-chart indicator legend or the floating stats panel
+        // (HTML overlays above the SVG) fires this mouseleave. Don't blank the
+        // readout/values — hide only the crosshair lines + price tag and leave
+        // the OHLC readout + indicator values frozen at the last bar.
         const rt = event.relatedTarget as Element | null;
-        if (rt && typeof rt.closest === 'function' && rt.closest('[data-chart-legend]')) {
+        if (
+          rt &&
+          typeof rt.closest === 'function' &&
+          (rt.closest('[data-chart-legend]') || rt.closest('[data-chart-stats]'))
+        ) {
           crosshairVRef.current?.style('visibility', 'hidden');
           crosshairHRef.current?.style('visibility', 'hidden');
           priceLabelGroupRef.current?.style('visibility', 'hidden');
@@ -1835,6 +1874,15 @@ const Chart = ({
               subscribeHoverIndex={subscribeHoverIndex}
               priceFormatter={fmtPrice}
               resolveColor={(v) => colorResolverRef.current?.resolve(v) ?? '#888888'}
+            />
+          )}
+          {statsEnabled !== false && statsModel && dataLength > 0 && (
+            <StatsPanel
+              model={statsModel}
+              size={statsSize}
+              marginRight={MARGIN.right}
+              position={statsPosition ?? null}
+              onPositionChange={onStatsPositionChange}
             />
           )}
           {priceBottomPx > 0 && (

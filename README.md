@@ -78,6 +78,52 @@ type Candle = {
 };
 ```
 
+### Price-stats panel
+
+An optional floating panel showing a **latest-bar snapshot** of the symbol's
+fundamentals + average daily true-range (ATR). It is a standalone toggle (not an
+indicator) and a static snapshot — it does not update on hover/pan.
+
+```tsx
+<Chart
+  data={data}
+  warmupSeed={warmupSeed}          // ≥125 prior bars, or the ATR-6M cell stays blank
+  statsEnabled={showStats}         // gate (defaults on when omitted)
+  statsTable={{                    // app-supplied raw financials (all optional)
+    sector: 'Information Technology',
+    industry: 'Software',
+    sharesOutstanding: 5_000_000_000,
+    freeFloatPercent: 45.09,         // pre-computed free-float % (library formats it)
+    eps: 42.5,
+  }}
+  statsMarket="India"              // 'India' | 'US' — Mkt-Cap units/thresholds (default 'India')
+  statsPosition={statsPos}         // {x,y} px from wrapper top-left, or null → default top-right
+  onStatsPositionChange={setStatsPos} // fired on drag end with the clamped drop position
+  statsSize="small"                // 'tiny' | 'small' | 'normal' | 'large' (default 'small')
+/>
+```
+
+**Integration notes:**
+
+- **Wire both ends.** `Chart` does not render `ChartControls`, so the toggle is
+  two-sided (same split as Patterns): pass `statsEnabled` to `Chart` **and** wire
+  the **"Stats"** pill on `ChartControls` (`statsEnabled` + `onStatsToggle`) to the
+  same state.
+- **Free-draggable.** The whole panel is a drag handle; it clamps to stay fully
+  inside the chart wrapper. Persist drops via `onStatsPositionChange` (fired on
+  drag end) and feed the saved `{ x, y }` back through `statsPosition`; pass
+  `null` (or omit) for the default top-right placement.
+- **Lazy fetch on enable.** The library never fetches — pass raw financials via
+  `statsTable`. Watch `statsEnabled` and only fetch fundamentals when the panel is
+  turned on.
+- **History for ATR.** The ATR rows need **~125+ bars of history** (supply them via
+  `warmupSeed`); with fewer bars the ATR-6M cell renders blank. The fundamental
+  rows need none of this — absent fundamentals collapse to an ATR-only panel.
+- **Library-owned math.** You pass raw financials; the library does the
+  close-dependent math (market cap on the prior close, PE on the last close) and
+  the India/US formatting. PE blanks on a zero/near-zero EPS but keeps a negative
+  PE for loss-making symbols.
+
 ## Theming — CSS variable contract
 
 The chart reads its colors, spacing, radii, shadows, and type sizes from CSS
@@ -107,6 +153,24 @@ styled out of the box. To re-theme, declare any of these on your own `:root`
 
 (The `--ema-*` / `--high-*` aliases the SVG strokes read default to the matching
 `--chart-*-label` token.)
+
+### Price-stats panel
+
+The floating stats panel (see below) is plain HTML and reads these directly. The
+four threshold bands color the Mkt-Cap / Free-Float / ATR cells; `text`/`muted`
+are the default value and header-label colors.
+
+| Token | Default |
+| --- | --- |
+| `--stats-strong` | `#84cc16` |
+| `--stats-up` | `#22c55e` |
+| `--stats-neutral` | `#f59e0b` |
+| `--stats-down` | `#ef4444` |
+| `--stats-text` | `var(--text-primary)` |
+| `--stats-muted` | `var(--text-muted)` |
+| `--stats-bg` | `var(--surface-panel-raised)` |
+| `--stats-border` | `var(--chart-separator)` |
+| `--stats-radius` | `var(--radius-sm)` |
 
 ### Layout / shadow / spacing / text
 
@@ -149,6 +213,8 @@ Everything is exported from the package root — never deep-import. Highlights:
   `computeVolumeStats`, `RANGE_DAYS`, `barIndexForDate`, `dateForBarIndex`.
 - `panButtonClass` — the hashed class name of the reset-pan button, for overlay
   plugins that render their own reset control.
+- Price-stats panel props: `StatsTableData`, `StatsMarket`, `StatsPosition`,
+  `StatsSize` (the panel renders inside `Chart`; only its prop types are exported).
 - Types: `Candle`, `ChartType`, `RangeKey`, `PatternMarker`, etc.
 
 ## Develop
