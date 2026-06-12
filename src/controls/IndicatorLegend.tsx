@@ -75,7 +75,8 @@ function rowValues(
   if (idx < 0) return [];
   const r = resolved.find((x) => x.config.id === config.id);
   if (!r) return [];
-  const isPrice = getIndicator(config.defKey)?.pane === 'price';
+  const def = getIndicator(config.defKey);
+  const isPrice = def?.pane === 'price';
   const out: ValueCell[] = [];
   for (const line of config.style.lines) {
     if (line.width === 0) continue;
@@ -83,7 +84,10 @@ function rowValues(
     if (!arr || idx >= arr.length) continue;
     const v = arr[idx];
     if (Number.isNaN(v)) continue;
-    out.push({ text: isPrice ? priceFmt(v) : fmt2(v), color: line.labelColorVar });
+    // A def-level formatter (e.g. Volume's K/M/B) wins; else price/2dp default.
+    const text =
+      def?.formatValue?.(v, line.seriesKey) ?? (isPrice ? priceFmt(v) : fmt2(v));
+    out.push({ text, color: line.labelColorVar });
   }
   return out;
 }

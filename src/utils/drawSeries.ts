@@ -3,9 +3,6 @@ import type { Candle, ChartType } from '../types';
 import type { IndicatorConfig, IndicatorSeries } from '../indicators/types';
 import { getIndicator } from '../indicators/registry';
 
-const VOL_OPACITY_STANDARD = 0.35;
-const VOL_OPACITY_FADED = 0.12;
-
 export type SeriesColors = { positive: string; negative: string };
 
 export type DrawSeriesParams = {
@@ -19,11 +16,6 @@ export type DrawSeriesParams = {
   width: number;
   fullHeight: number;
   priceHeight: number;
-  gap: number;
-  volumeHeight: number;
-  hasVolume: boolean;
-  volMax: number;
-  volSma: (number | undefined)[];
   bandwidth: number;
   baseTranslateX: number;
   renderStart: number;
@@ -42,10 +34,11 @@ export type DrawSeriesParams = {
 };
 
 /**
- * Paint the high-count read-only series (volume bars, candles/bars, indicator
- * lines) onto the single canvas. Mirrors the engine's SVG joins exactly: same
- * xScale/yPrice instances, same `#chart-viewport` clip, same pan translate, so
- * the canvas overlays the (flag-gated) SVG within ±1px.
+ * Paint the high-count read-only series (candles/bars, indicator lines — volume
+ * is now a registered subpane indicator painted via `drawIndicators`) onto the
+ * single canvas. Mirrors the engine's SVG joins exactly: same xScale/yPrice
+ * instances, same `#chart-viewport` clip, same pan translate, so the canvas
+ * overlays the (flag-gated) SVG within ±1px.
  */
 export function drawSeries(ctx: CanvasRenderingContext2D, p: DrawSeriesParams): void {
   const { dpr } = p;
@@ -84,51 +77,11 @@ export function drawSeries(ctx: CanvasRenderingContext2D, p: DrawSeriesParams): 
   ctx.clip();
   ctx.translate(p.baseTranslateX, 0);
 
-  drawVolume(ctx, p);
   if (p.chartType === 'bar') drawBars(ctx, p);
   else drawCandles(ctx, p);
   drawIndicators(ctx, p);
 
   ctx.restore();
-}
-
-function drawVolume(ctx: CanvasRenderingContext2D, p: DrawSeriesParams): void {
-  if (!p.hasVolume) return;
-  const { xScale, bandwidth, renderStart, renderSlice, volSma, colors } = p;
-  const volMax = p.volMax || 1;
-  const yBase = p.priceHeight + p.gap;
-  const volH = p.volumeHeight;
-  // yVol(v) = volH - (v/volMax)*volH ; bar height = volH - yVol = (v/volMax)*volH
-  const buckets: Record<string, { x: number; y: number; w: number; h: number }[]> = {
-    posStd: [],
-    posFaded: [],
-    negStd: [],
-    negFaded: [],
-  };
-  for (let i = 0; i < renderSlice.length; i++) {
-    const g = i + renderStart;
-    const d = renderSlice[i];
-    if (d.volume <= 0) continue;
-    const x = xScale(g)!;
-    const h = (d.volume / volMax) * volH;
-    const y = yBase + (volH - h);
-    const sma = volSma[g];
-    const faded = sma !== undefined && d.volume < sma;
-    const up = d.close >= d.open;
-    const key = up ? (faded ? 'posFaded' : 'posStd') : faded ? 'negFaded' : 'negStd';
-    buckets[key].push({ x, y, w: bandwidth, h });
-  }
-  const paint = (rects: { x: number; y: number; w: number; h: number }[], color: string, alpha: number) => {
-    if (rects.length === 0) return;
-    ctx.globalAlpha = alpha;
-    ctx.fillStyle = color;
-    for (const r of rects) ctx.fillRect(r.x, r.y, r.w, r.h);
-  };
-  paint(buckets.posStd, colors.positive, VOL_OPACITY_STANDARD);
-  paint(buckets.posFaded, colors.positive, VOL_OPACITY_FADED);
-  paint(buckets.negStd, colors.negative, VOL_OPACITY_STANDARD);
-  paint(buckets.negFaded, colors.negative, VOL_OPACITY_FADED);
-  ctx.globalAlpha = 1;
 }
 
 function drawCandles(ctx: CanvasRenderingContext2D, p: DrawSeriesParams): void {
@@ -236,6 +189,6 @@ function drawIndicators(ctx: CanvasRenderingContext2D, p: DrawSeriesParams): voi
       dash: l.dash,
       opacity: l.opacity,
     }));
-    def.draw(ctx, series, scale, resolved);
+    def.draw(ctx, series, scale, resolved, config.params);
   }
 }

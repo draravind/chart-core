@@ -8,50 +8,46 @@ import {
 const RATIOS = { heightRatio: 0.13, floorRatio: 0.45 };
 
 describe('computeSubpaneBands (D1 height policy)', () => {
-  it('no subpanes → price fills the non-volume space, fullHeight == total', () => {
+  it('no subpanes → price fills the whole space, fullHeight == total', () => {
     const r = computeSubpaneBands({
       totalHeight: 1000,
-      volumeHeight: 150,
-      gap: 0,
       subpaneKeys: [],
       ...RATIOS,
     });
     expect(r.subpanes).toHaveLength(0);
-    expect(r.priceHeight).toBe(850);
+    expect(r.priceHeight).toBe(1000);
     expect(r.fullHeight).toBe(1000);
   });
 
   it('few panes use the fixed per-pane height; price stays above the floor', () => {
+    // Volume is an ordinary subpane now; model it as a `'volume'` band.
     const r = computeSubpaneBands({
       totalHeight: 1000,
-      volumeHeight: 150,
-      gap: 0,
-      subpaneKeys: ['rsi', 'macd'],
+      subpaneKeys: ['volume', 'rsi', 'macd'],
       ...RATIOS,
     });
-    // Fixed height = 13% each; price = 1000 - 150 - 2*130 = 590 ≥ floor 450.
-    expect(r.subpanes.map((p) => p.height)).toEqual([130, 130]);
-    expect(r.priceHeight).toBeCloseTo(590, 6);
-    // Panes stack flush below the volume area (no gap).
-    expect(r.subpanes[0].top).toBeCloseTo(590 + 150, 6);
+    // Fixed height = 13% each; price = 1000 - 3*130 = 610 ≥ floor 450.
+    expect(r.subpanes.map((p) => p.height)).toEqual([130, 130, 130]);
+    expect(r.priceHeight).toBeCloseTo(610, 6);
+    // Panes stack flush below the price pane (no gap).
+    expect(r.subpanes[0].top).toBeCloseTo(610, 6);
     expect(r.subpanes[1].top).toBeCloseTo(r.subpanes[0].bottom, 6);
+    expect(r.subpanes[2].top).toBeCloseTo(r.subpanes[1].bottom, 6);
     // fullHeight is the lowest pane bottom and equals the total height.
     expect(r.fullHeight).toBeCloseTo(1000, 6);
     expect(r.subpanes[r.subpanes.length - 1].bottom).toBeCloseTo(r.fullHeight, 6);
   });
 
   it('many panes pin the price floor and split the leftover zone equally', () => {
-    const keys = ['rsi', 'macd', 'stoch', 'willr', 'adx', 'atr'];
+    const keys = ['volume', 'rsi', 'macd', 'stoch', 'willr', 'adx', 'atr'];
     const r = computeSubpaneBands({
       totalHeight: 1000,
-      volumeHeight: 150,
-      gap: 0,
       subpaneKeys: keys,
       ...RATIOS,
     });
-    // 6 panes at fixed 130 would drop price below the 450 floor → floor pins.
+    // 7 panes at fixed 130 would drop price below the 450 floor → floor pins.
     expect(r.priceHeight).toBeCloseTo(450, 6);
-    const leftover = 1000 - 450 - 150;
+    const leftover = 1000 - 450;
     const expected = leftover / keys.length;
     for (const p of r.subpanes) expect(p.height).toBeCloseTo(expected, 6);
     expect(r.fullHeight).toBeCloseTo(1000, 6);
@@ -172,23 +168,31 @@ describe('computeSubpaneBands — heightFactors / userHeights', () => {
   it('a factor-1.7 pane gets 1.7× the flat height', () => {
     const r = computeSubpaneBands({
       totalHeight: 1000,
-      volumeHeight: 150,
-      gap: 0,
       subpaneKeys: ['results'],
       ...RATIOS,
       heightFactors: { results: 1.7 },
     });
     // flat = 1000*0.13 = 130 → ×1.7 = 221.
     expect(r.subpanes[0].height).toBeCloseTo(221, 6);
-    // priceHeight = 1000 - 150 - 221 = 629.
-    expect(r.priceHeight).toBeCloseTo(629, 6);
+    // priceHeight = 1000 - 221 = 779.
+    expect(r.priceHeight).toBeCloseTo(779, 6);
+  });
+
+  it('the volume factor (1.154) reproduces ~15% of chart height', () => {
+    const r = computeSubpaneBands({
+      totalHeight: 1000,
+      subpaneKeys: ['volume'],
+      ...RATIOS,
+      heightFactors: { volume: 1.154 },
+    });
+    // flat = 130 → ×1.154 = 150.02 ≈ the legacy 15% volume zone.
+    expect(r.subpanes[0].height).toBeCloseTo(150.02, 6);
+    expect(r.priceHeight).toBeCloseTo(849.98, 6);
   });
 
   it('omitting heightFactors is byte-identical to the flat policy', () => {
     const args = {
       totalHeight: 1000,
-      volumeHeight: 150,
-      gap: 0,
       subpaneKeys: ['rsi', 'macd'],
       ...RATIOS,
     };
@@ -203,14 +207,12 @@ describe('computeSubpaneBands — heightFactors / userHeights', () => {
   it('floor redistribution scales proportionally (bigger pane stays bigger)', () => {
     const r = computeSubpaneBands({
       totalHeight: 1000,
-      volumeHeight: 150,
-      gap: 0,
-      subpaneKeys: ['a', 'b'],
+      subpaneKeys: ['a', 'b', 'c'],
       ...RATIOS,
-      heightFactors: { a: 1, b: 3 },
+      heightFactors: { a: 1, b: 3, c: 3 },
     });
-    // desired a=130, b=390 → price would be 290 < floor 450 → floor pins,
-    // both scaled by leftover/sumDesired; the 3:1 ratio is preserved.
+    // desired a=130, b=390, c=390 → price would be 90 < floor 450 → floor pins,
+    // all scaled by leftover/sumDesired; the 3:1 ratio is preserved.
     expect(r.priceHeight).toBeCloseTo(450, 6);
     expect(r.subpanes[1].height / r.subpanes[0].height).toBeCloseTo(3, 6);
   });
@@ -218,8 +220,6 @@ describe('computeSubpaneBands — heightFactors / userHeights', () => {
   it('userHeights override the factor default; other panes keep defaults', () => {
     const r = computeSubpaneBands({
       totalHeight: 1000,
-      volumeHeight: 150,
-      gap: 0,
       subpaneKeys: ['results', 'rsi'],
       ...RATIOS,
       heightFactors: { results: 1.7 },
@@ -235,8 +235,6 @@ describe('applySubpaneDrag', () => {
   // standalone clamp-logic fixture, independent of the computed band layout.
   const bands = computeSubpaneBands({
     totalHeight: 1000,
-    volumeHeight: 150,
-    gap: 0,
     subpaneKeys: ['a', 'b'],
     ...RATIOS,
   }).subpanes;

@@ -37,13 +37,7 @@ import {
   computeSubpaneDomain,
   type SubpaneBand,
 } from './indicators/subpaneLayout';
-import {
-  computeVolumeStats,
-  formatPrice,
-  formatVolume,
-  formatVolumeTick,
-  type VolumeLabel,
-} from './utils/chartCalculations';
+import { formatPrice, formatVolume } from './utils/chartCalculations';
 import { toColumns } from './utils/toColumns';
 import { drawSeries } from './utils/drawSeries';
 import {
@@ -69,11 +63,10 @@ import {
 const MARGIN = { top: 4, right: 60, bottom: 30, left: 0 };
 const CHART_FONT = "'Helvetica Neue', Helvetica, Arial, sans-serif";
 
-const VOLUME_HEIGHT_RATIO = 0.15;
 // Subpane stacking (D1 policy): each oscillator pane gets a fixed share of the
 // chart height (panes stack flush, separated only by the 1px divider line); the
 // price pane shrinks toward a floor as panes stack, after which the remaining
-// zone splits equally among panes.
+// zone splits equally among panes. Volume is now an ordinary subpane.
 const SUBPANE_HEIGHT_RATIO = 0.13;
 const PRICE_FLOOR_RATIO = 0.45;
 // Minimum height (px) any subpane may be dragged down to.
@@ -81,11 +74,6 @@ const SUBPANE_MIN_PX = 24;
 // Minimum padding applied to an autofit subpane domain when the def's scaleHint
 // does not override it.
 const DEFAULT_SUBPANE_PAD = 0.08;
-// No empty gap between the price area and the volume divider — the price
-// chart's drawing region extends right down to the divider line. Visual
-// breathing room between the lowest visible price and the divider comes
-// from the y-domain padding (`logPad`) below.
-const PRICE_VOLUME_GAP_RATIO = 0;
 const RIGHT_BUFFER = 18;
 const INFO_SPAN_COUNT = 12;
 const AXIS_STROKE = 'currentColor';
@@ -307,14 +295,10 @@ const Chart = ({
     const renderStart = Math.max(0, visStart - bufferBars);
     const renderEnd = Math.min(data.length, visEnd + bufferBars);
     const renderSlice = data.slice(renderStart, renderEnd);
-    const hasVolume = (d3.max(visibleSlice, (d) => d.volume) ?? 0) > 0;
-    const volumeHeight = hasVolume ? totalHeight * VOLUME_HEIGHT_RATIO : 0;
-    const gap = hasVolume ? totalHeight * PRICE_VOLUME_GAP_RATIO : 0;
-    // Subpane zone sizing (D1) — see computeSubpaneBands.
+    // Subpane zone sizing (D1) — see computeSubpaneBands. Volume is an ordinary
+    // subpane now (a member of `activeSubpanes`), so no reserved volume band.
     const { priceHeight, subpanes, fullHeight } = computeSubpaneBands({
       totalHeight,
-      volumeHeight,
-      gap,
       subpaneKeys: activeSubpanes,
       heightRatio: SUBPANE_HEIGHT_RATIO,
       floorRatio: PRICE_FLOOR_RATIO,
@@ -343,9 +327,6 @@ const Chart = ({
       renderStart,
       renderEnd,
       renderSlice,
-      hasVolume,
-      volumeHeight,
-      gap,
       priceHeight,
       fullHeight,
       subpanes,
@@ -370,10 +351,6 @@ const Chart = ({
     paneHeightsState,
   ]);
 
-  // Volume SMA + HVE/HVY milestone labels. Keyed on `data` only — independent
-  // of pan/zoom, so it recomputes only when the dataset changes.
-  const volStats = useMemo(() => computeVolumeStats(data ?? []), [data]);
-
   // Resolve each enabled indicator over concat(warmupSeed, data), then slice
   // the computed series back to the display window so they align with `data`
   // (warm-up bars are seeding-only and never rendered/pannable).
@@ -396,6 +373,9 @@ const Chart = ({
     if (quarterlyResults) input.quarterlyResults = quarterlyResults;
     input.market = statsMarket;
     const seedLen = seed.length;
+    // Display window begins after the warmup prefix. Volume scopes its HVE/HVY +
+    // cold-start SMA to the display window via this; other defs ignore it.
+    input.displayStart = seedLen;
     return enabled.map((config) => {
       const def = getIndicator(config.defKey);
       if (!def) return { config, series: {} as IndicatorSeries };
@@ -434,11 +414,6 @@ const Chart = ({
     width: number;
     fullHeight: number;
     priceHeight: number;
-    gap: number;
-    volumeHeight: number;
-    hasVolume: boolean;
-    volMax: number;
-    volSma: (number | undefined)[];
     bandwidth: number;
     renderStart: number;
     renderEnd: number;
@@ -466,11 +441,6 @@ const Chart = ({
       width: st.width,
       fullHeight: st.fullHeight,
       priceHeight: st.priceHeight,
-      gap: st.gap,
-      volumeHeight: st.volumeHeight,
-      hasVolume: st.hasVolume,
-      volMax: st.volMax,
-      volSma: st.volSma,
       bandwidth: st.bandwidth,
       baseTranslateX: scaleApi.baseTranslateX,
       renderStart: st.renderStart,
@@ -491,7 +461,7 @@ const Chart = ({
   }, [scaleApi]);
 
   const priceBottomPx = useMemo(
-    () => (layout ? MARGIN.top + layout.priceHeight + layout.gap / 2 : 0),
+    () => (layout ? MARGIN.top + layout.priceHeight : 0),
     [layout],
   );
 
@@ -605,16 +575,12 @@ const Chart = ({
   const bgRectRef = useRef<Sel<SVGRectElement> | null>(null);
   const clipRectRef = useRef<Sel<SVGRectElement> | null>(null);
   const yPriceAxisGRef = useRef<Sel<SVGGElement> | null>(null);
-  const yVolAxisGRef = useRef<Sel<SVGGElement> | null>(null);
   const ySubAxisGRef = useRef<Sel<SVGGElement> | null>(null);
   const subGuidesGroupRef = useRef<Sel<SVGGElement> | null>(null);
   const sepGroupRef = useRef<Sel<SVGGElement> | null>(null);
   const rightBorderRef = useRef<Sel<SVGLineElement> | null>(null);
   const chartGroupSelRef = useRef<Sel<SVGGElement> | null>(null);
   const xAxisGRef = useRef<Sel<SVGGElement> | null>(null);
-  // Volume milestone text labels stay SVG (low node count). The high-count
-  // series (volume bars, candles, indicator lines) paint on the canvas layer.
-  const volLabelsGroupRef = useRef<Sel<SVGGElement> | null>(null);
   const crosshairVRef = useRef<Sel<SVGLineElement> | null>(null);
   const crosshairHRef = useRef<Sel<SVGLineElement> | null>(null);
   const infoTextRef = useRef<Sel<SVGTextElement> | null>(null);
@@ -981,13 +947,6 @@ const Chart = ({
       .style('font-weight', '500')
       .style('color', 'var(--chart-axis-label)') as Sel<SVGGElement>;
 
-    yVolAxisGRef.current = g
-      .append('g')
-      .style('font-size', 'var(--text-2hxs)')
-      .style('font-family', CHART_FONT)
-      .style('font-weight', '500')
-      .style('color', 'var(--chart-axis-label)') as Sel<SVGGElement>;
-
     ySubAxisGRef.current = g
       .append('g')
       .style('font-size', 'var(--text-2hxs)')
@@ -1031,8 +990,6 @@ const Chart = ({
       .style('font-family', CHART_FONT)
       .style('font-weight', '500')
       .style('color', 'var(--chart-axis-label)') as Sel<SVGGElement>;
-
-    volLabelsGroupRef.current = chartGroup.append('g') as Sel<SVGGElement>;
 
     crosshairVRef.current = g
       .append('line')
@@ -1121,7 +1078,6 @@ const Chart = ({
       bgRectRef.current = null;
       clipRectRef.current = null;
       yPriceAxisGRef.current = null;
-      yVolAxisGRef.current = null;
       ySubAxisGRef.current = null;
       subGuidesGroupRef.current = null;
       sepGroupRef.current = null;
@@ -1129,7 +1085,6 @@ const Chart = ({
       chartGroupSelRef.current = null;
       chartGroupRef.current = null;
       xAxisGRef.current = null;
-      volLabelsGroupRef.current = null;
       crosshairVRef.current = null;
       crosshairHRef.current = null;
       infoTextRef.current = null;
@@ -1156,19 +1111,14 @@ const Chart = ({
     if (!rootGRef.current || !chartGroupSelRef.current) return;
 
     const {
-      visibleSlice,
       renderStart,
       renderEnd,
-      hasVolume,
-      volumeHeight,
-      gap,
       priceHeight,
       fullHeight,
       subpanes,
       width,
       baseTranslateX,
       xScale,
-      bandwidth,
       totalHeight,
     } = layout;
 
@@ -1198,9 +1148,6 @@ const Chart = ({
       .current!.attr('width', width - RIGHT_BUFFER)
       .attr('height', MARGIN.top + priceHeight);
 
-    const volMax = d3.max(visibleSlice, (d) => d.volume) || 1;
-    const yVol = d3.scaleLinear().domain([0, volMax]).range([volumeHeight, 0]);
-
     const tickValues: number[] = [];
     for (let i = Math.max(1, renderStart); i < renderEnd; i++) {
       if (data[i].date.slice(0, 7) !== data[i - 1].date.slice(0, 7)) {
@@ -1210,37 +1157,16 @@ const Chart = ({
 
     yPriceAxisGRef.current!.attr('transform', `translate(${width},0)`);
 
-    if (hasVolume) {
-      yVolAxisGRef
-        .current!.style('display', null)
-        .attr('transform', `translate(${width},${priceHeight + gap})`)
-        .call(
-          d3
-            .axisRight<d3.NumberValue>(yVol)
-            .ticks(3)
-            .tickSize(TICK_SIZE)
-            .tickFormat((d) => formatVolumeTick(Number(d))),
-        );
-      yVolAxisGRef.current!.select('.domain').remove();
-      yVolAxisGRef
-        .current!.selectAll('line')
-        .attr('stroke', AXIS_STROKE)
-        .attr('stroke-opacity', AXIS_OPACITY);
-    } else {
-      yVolAxisGRef.current!.selectAll('*').remove();
-      yVolAxisGRef.current!.style('display', 'none');
-    }
-
-    // Separators, built additively so each present band gets its divider:
-    // price/volume split, a divider above EACH subpane band, and the bottom border.
-    // Subpanes stack flush, so each subpane's top divider sits exactly on the
-    // boundary it shares with the content above it (`pane.top`): the pane above's
-    // bottom content and this pane's top content both rest against the one line —
-    // matching the bottom border (which hugs the last pane's bottom at `fullHeight`).
+    // Separators, built additively so each present band gets its divider: a
+    // divider above EACH subpane band (the topmost subpane's — e.g. volume's —
+    // sits on the price/subpane boundary), and the bottom border. Subpanes stack
+    // flush, so each subpane's top divider sits exactly on the boundary it shares
+    // with the content above it (`pane.top`): the pane above's bottom content and
+    // this pane's top content both rest against the one line — matching the
+    // bottom border (which hugs the last pane's bottom at `fullHeight`).
     const sepValues: number[] = [];
-    if (hasVolume) sepValues.push(priceHeight + gap / 2);
     for (const pane of subpanes) sepValues.push(pane.top);
-    if (hasVolume || subpanes.length > 0) sepValues.push(fullHeight);
+    if (subpanes.length > 0) sepValues.push(fullHeight);
     sepGroupRef
       .current!.selectAll<SVGLineElement, number>('line')
       .data(sepValues)
@@ -1282,27 +1208,6 @@ const Chart = ({
       .attr('stroke', AXIS_STROKE)
       .attr('stroke-opacity', AXIS_OPACITY);
 
-    const LABEL_GAP = 2; // px above bar top
-    const LABEL_MIN_Y = 9; // keep tallest bar's label inside the volume pane
-    const visibleLabels = volStats.labels.filter(
-      (m) => m.index >= renderStart && m.index < renderEnd,
-    );
-    volLabelsGroupRef
-      .current!.attr('transform', `translate(0,${priceHeight + gap})`)
-      .selectAll<SVGTextElement, VolumeLabel>('text')
-      .data(hasVolume ? visibleLabels : [], (m) => m.text)
-      .join('text')
-      .attr('x', (m) => xScale(m.index)! + bandwidth / 2)
-      .attr('y', (m) =>
-        Math.max(yVol(data[m.index].volume) - LABEL_GAP, LABEL_MIN_Y),
-      )
-      .attr('text-anchor', 'middle')
-      .style('font-size', 'var(--text-2hxs)')
-      .style('font-family', CHART_FONT)
-      .style('font-weight', '600')
-      .attr('fill', 'var(--chart-axis-label)')
-      .text((m) => m.text);
-
     crosshairVRef.current!.attr('y2', fullHeight);
     crosshairHRef.current!.attr('x2', width);
 
@@ -1313,7 +1218,7 @@ const Chart = ({
       .attr('y', 0)
       .attr('width', MARGIN.right)
       .attr('height', priceHeight);
-  }, [layout, containerWidth, data, volStats, activeSubpanes]);
+  }, [layout, containerWidth, data, activeSubpanes]);
 
   // Effect B — y-scale draw. Runs on priceZoom changes too. Recomputes yPrice,
   // redraws the price axis, publishes the scale api, and repaints the canvas
@@ -1330,9 +1235,6 @@ const Chart = ({
       renderEnd,
       priceHeight,
       fullHeight,
-      gap,
-      volumeHeight,
-      hasVolume,
       subpanes,
       totalHeight,
       width,
@@ -1512,6 +1414,8 @@ const Chart = ({
         // Text-mode panes (Results) suppress their axis — the scale carries no
         // value semantics. Guide/zero lines below stay gated independently.
         if (!hint?.hideAxis) {
+          // Pane-specific tick format (e.g. Volume's K/M/B) overrides the default.
+          const tickFmt = hint?.tickFormat ?? subTickFormat;
           const axisG = ySubAxisGRef.current!
             .append('g')
             .attr('transform', `translate(${width},0)`) as Sel<SVGGElement>;
@@ -1520,7 +1424,7 @@ const Chart = ({
               .axisRight<d3.NumberValue>(scale)
               .ticks(3)
               .tickSize(TICK_SIZE)
-              .tickFormat((d) => subTickFormat(Number(d))),
+              .tickFormat((d) => tickFmt(Number(d))),
           );
           axisG.select('.domain').remove();
           axisG
@@ -1581,18 +1485,12 @@ const Chart = ({
     // this with only a fresh baseTranslateX).
     const resolveColor = (v: string) =>
       colorResolverRef.current?.resolve(v) ?? '#888888';
-    const volMax = d3.max(visibleSlice, (d) => d.volume) || 1;
     drawStateRef.current = {
       cssWidth: containerWidth,
       cssHeight: totalHeight + MARGIN.top + MARGIN.bottom,
       width,
       fullHeight,
       priceHeight,
-      gap,
-      volumeHeight,
-      hasVolume,
-      volMax,
-      volSma: volStats.sma,
       bandwidth,
       renderStart,
       renderEnd,
@@ -1622,7 +1520,6 @@ const Chart = ({
     autoFitMode,
     overlayPriceBounds,
     containerWidth,
-    volStats,
     redrawSeries,
     scaleApi,
     notifyScale,

@@ -45,12 +45,13 @@ The split is intentional: the routing table + glossary here are **pay-always**
 | Fix subpane height/layout                                | `src/indicators/subpaneLayout.ts` (per-pane `heightFactors`/`userHeights`); `tests/subpaneLayout.test.ts`                                          |
 | Resize/persist subpane heights (drag dividers)           | `src/Chart.tsx` (`subpaneHeights`/`onSubpaneHeightsChange`, divider handles) + `applySubpaneDrag` in `src/indicators/subpaneLayout.ts`             |
 | Add/adjust the Quarterly Results pane                    | `src/indicators/builtins/quarterlyResults.ts`; `quarterlyResults` Chart prop; `--qr-*` tokens; `tests/quarterlyResults.test.ts`                    |
+| Adjust volume (bars/HVE-HVY/K-M-B axis)                  | `src/indicators/builtins/volume.ts` (registered subpane indicator, key `volume`); `tests/volume.test.ts`; math in `src/utils/chartCalculations.ts` (`computeVolumeStats`) |
 | Add/adjust a chart control                               | `src/controls/ChartControls.tsx`                                                                                                                   |
 | Fix a legend entry / live values                         | `src/controls/IndicatorLegend.tsx`                                                                                                                 |
 | Adjust the price-stats panel                             | `src/stats/` (`computeStats.ts` math, `StatsPanel.tsx` panel, `stats.module.css`); `--stats-*` tokens in `src/styles/chart-core.css`; `tests/stats.test.ts` |
 | Add an overlay/annotation plugin                         | `src/context.tsx` hooks (`useChartScale`, `useChartOverlayHost`) + `src/patterns/mountChartPatternOverlay.ts`                                      |
 | Add a new pattern shape                                  | `src/patterns/renderers/` (new renderer) + register in `renderers/index.ts`                                                                        |
-| Fix candle/bar/volume rendering                          | `src/Chart.tsx`, `src/utils/drawSeries.ts`                                                                                                         |
+| Fix candle/bar rendering                                 | `src/Chart.tsx`, `src/utils/drawSeries.ts` (volume is now the `volume` indicator, not here)                                                        |
 | Map a date ↔ bar index                                   | `src/utils/dateBarIndex.ts`                                                                                                                        |
 | Change price/volume formatting or range presets          | `src/utils/chartCalculations.ts`                                                                                                                   |
 | Fix theming / a CSS variable not applying                | `src/styles/chart-core.css` (token contract) + README token tables                                                                                 |
@@ -79,6 +80,11 @@ The split is intentional: the routing table + glossary here are **pay-always**
 - **Quarterly results pane** — the `results` fundamentals subpane (RPS+EPS, core-
   computed YoY growth; Text/Bars modes): `src/indicators/builtins/quarterlyResults.ts`;
   fed by the `quarterlyResults` Chart prop (`QuarterlyResult[]` in `src/types.ts`).
+- **Volume** — the `volume` subpane indicator, ported from the old hardcoded volume
+  zone: `src/indicators/builtins/volume.ts`. Opt-in/toggleable like any oscillator
+  (stacks first in `SUBPANE_ORDER`, directly below price); preserves the 4-bucket
+  coloring, HVE/HVY labels, and K/M/B axis as user-toggleable params. Consumers seed
+  `defaultConfigFor('volume', { enabled: true })` to keep it on by default.
 - **TA-Lib parity** — primitives matching TA-Lib exactly (seeding, lookback, Wilder
   smoothing, rounding): `src/indicators/talibMath.ts`.
 - **Expanding max / rolling high** — all-history and windowed running maxima:

@@ -3,6 +3,7 @@ import { highsDef } from './builtins/rollingHigh';
 import { rsLineDef } from './builtins/rsLine';
 import { stage2Def } from './builtins/stage2';
 import { quarterlyResultsDef } from './builtins/quarterlyResults';
+import { volumeDef } from './builtins/volume';
 // TA-Lib library — price-pane overlays.
 import { smaDef } from './builtins/sma';
 import { emaTalibDef } from './builtins/emaTalib';
@@ -90,6 +91,7 @@ registerIndicator(highsDef);
 registerIndicator(rsLineDef);
 registerIndicator(stage2Def);
 registerIndicator(quarterlyResultsDef);
+registerIndicator(volumeDef);
 
 const TI_DEFS: IndicatorDef[] = [
   smaDef,
@@ -134,8 +136,11 @@ export const OVERLAY_ORDER: string[] = [
   'stage2',
 ];
 
-/** Canonical top-to-bottom subpane stacking order (stable across toggles). */
+/** Canonical top-to-bottom subpane stacking order (stable across toggles).
+ *  `volume` stacks directly below price, exactly where the legacy volume zone
+ *  sat. `results` and the oscillators follow. */
 export const SUBPANE_ORDER: string[] = [
+  'volume',
   'results',
   'rs',
   'rsi',

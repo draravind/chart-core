@@ -24,16 +24,16 @@ export type SubpaneBandsResult = {
  * (fraction of `totalHeight`) overrides that default. The price pane shrinks
  * toward `floorRatio` as panes stack, after which every pane's desired height is
  * scaled DOWN proportionally so the floor is honored (per-pane height clamped ≥
- * 4px). Panes stack flush top→bottom below the volume area (separated only by the
+ * 4px). Panes stack flush top→bottom below the price pane (separated only by the
  * 1px divider line); `fullHeight` is the lowest pane's bottom (== `totalHeight`).
+ * Volume is now an ordinary subpane (a `'volume'` key in `subpaneKeys`), so it
+ * participates in this policy like any oscillator — no reserved volume band.
  *
  * With neither `heightFactors` nor `userHeights` supplied (all factors 1) this
  * is byte-identical to the original flat policy.
  */
 export function computeSubpaneBands(params: {
   totalHeight: number;
-  volumeHeight: number;
-  gap: number;
   subpaneKeys: string[];
   heightRatio: number;
   floorRatio: number;
@@ -44,7 +44,7 @@ export function computeSubpaneBands(params: {
    *  default for that key. */
   userHeights?: Record<string, number>;
 }): SubpaneBandsResult {
-  const { totalHeight, volumeHeight, gap, subpaneKeys } = params;
+  const { totalHeight, subpaneKeys } = params;
   const nSub = subpaneKeys.length;
 
   // Per-pane desired heights (user override > factor default).
@@ -56,28 +56,28 @@ export function computeSubpaneBands(params: {
   });
   const sumDesired = desired.reduce((a, b) => a + b, 0);
 
-  let priceHeight = totalHeight - volumeHeight - gap - sumDesired;
+  let priceHeight = totalHeight - sumDesired;
   let heights = desired;
   const floor = totalHeight * params.floorRatio;
   if (nSub > 0 && priceHeight < floor) {
     priceHeight = floor;
-    const leftover = totalHeight - floor - volumeHeight - gap;
+    const leftover = totalHeight - floor;
     // Scale every pane's desired height proportionally so the bigger pane stays
     // proportionally bigger (per-pane clamp ≥ 4px).
     const scale = sumDesired > 0 ? leftover / sumDesired : 0;
     heights = desired.map((h) => Math.max(4, h * scale));
   }
-  if (nSub === 0) priceHeight = totalHeight - volumeHeight - gap;
+  if (nSub === 0) priceHeight = totalHeight;
 
   const subpanes: SubpaneBand[] = [];
-  let cursor = priceHeight + gap + volumeHeight;
+  let cursor = priceHeight;
   for (let i = 0; i < subpaneKeys.length; i++) {
     const top = cursor;
     const bottom = top + heights[i];
     subpanes.push({ key: subpaneKeys[i], top, bottom, height: heights[i] });
     cursor = bottom;
   }
-  const fullHeight = nSub > 0 ? cursor : priceHeight + gap + volumeHeight;
+  const fullHeight = nSub > 0 ? cursor : priceHeight;
   return { priceHeight, subpanes, fullHeight };
 }
 

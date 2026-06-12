@@ -234,6 +234,12 @@ Everything is exported from the package root — never deep-import. Highlights:
 - Quarterly Results pane: pass `quarterlyResults: QuarterlyResult[]` to `Chart` and
   enable the `results` indicator. Drag subpane dividers to resize; persist via
   `subpaneHeights` / `onSubpaneHeightsChange`.
+- Volume pane: volume is a registered subpane indicator (key `volume`), no longer
+  hardcoded — it is **opt-in** like any oscillator. To keep it on by default, seed
+  your initial indicator set with `defaultConfigFor('volume', { enabled: true })`.
+  It stacks directly below price; users can restyle (Vol Up / Vol Down colors),
+  toggle the below-average fade, the HVE/HVY labels, and the averaging length via
+  its legend popover. The OHLC info bar still shows `Vol:` regardless of the pane.
 - Types: `Candle`, `QuarterlyResult`, `ChartType`, `RangeKey`, `PatternMarker`, etc.
 
 ## Develop

@@ -137,18 +137,25 @@ Scoped styles for the chart shell: `.chartWrapper`/`.chartWrapperBare`,
 
 - `IndicatorDef<P>` — the unit of modularity. Fields: `key`, `label`,
   `longLabel?`, `pane`, `defaultParams`, `warmupBars(params) → number`,
-  `compute(input, params) → IndicatorSeries`, `draw(ctx, series, scale, style)`,
-  `defaultStyle`, `defaultLineColor?(params, seriesKey)`, `formatParams?(params)`,
-  `scaleHintFor?(params)` (params-aware `scaleHint` override; method syntax —
+  `compute(input, params) → IndicatorSeries`,
+  `draw(ctx, series, scale, style, params)` (5th arg = the def's user `params`,
+  so appearance-only settings are read directly instead of smuggled through the
+  series; impls may omit it), `defaultStyle`,
+  `defaultLineColor?(params, seriesKey)`, `formatParams?(params)`,
+  `formatValue?(value, seriesKey)` (def-level legend value formatter, e.g. Volume's
+  K/M/B), `scaleHintFor?(params)` (params-aware `scaleHint` override; method syntax —
   bivariance), `paneHeightFactor?` (default subpane height multiplier),
   `paramSpecs?`.
 - `IndicatorPane` = `'price' | {subpane: string; scaleHint?: SubpaneScaleHint}`.
 - `SubpaneScaleHint` — `{fixedDomain?, guideLines?, zeroLine?, autofitPadding?,
-  hideAxis?, includeZero?, topPadPx?}` (`topPadPx` = fixed-pixel headroom above the
-  autofit max, applied at scale build in `Chart`).
+  hideAxis?, includeZero?, topPadPx?, tickFormat?}` (`topPadPx` = fixed-pixel
+  headroom above the autofit max, applied at scale build in `Chart`; `tickFormat`
+  = pane right-axis tick formatter, e.g. Volume's K/M/B).
 - `IndicatorSeries` = `Record<string, Float64Array>` (one line per key; NaN = gap).
 - `IndicatorInput` — `{o,h,l,c,v: Float64Array; bars: readonly Candle[];
-  benchmarkClose?; quarterlyResults?; market?}`.
+  benchmarkClose?; quarterlyResults?; market?; displayStart?}` (`displayStart` =
+  index where the display window begins, i.e. `warmupSeed.length`; lets a def scope
+  display-only stats to the rendered bars — Volume's HVE/HVY + cold-start SMA).
 - `IndicatorDrawScale` — adds `paneTop?/paneBottom?` (pixel band bounds for draw
   layout + clipping).
 - `IndicatorConfig` — resolved user instance: `{id, defKey, params, label, enabled,
@@ -236,7 +243,7 @@ rounding in primitives (builtins round once on the final value).
 
 ## Built-in indicators
 
-`src/indicators/builtins/*.ts` — 21 files. **Shared shape:** each exports a `*Params`
+`src/indicators/builtins/*.ts` — 22 files. **Shared shape:** each exports a `*Params`
 type **and** a `*Def: IndicatorDef<*Params>` const that self-registers via the
 registry import. Two exceptions noted below. Each is a thin wrapper over
 `talibMath` primitives (compute) + `draw` helpers (render).
@@ -264,6 +271,7 @@ registry import. Two exceptions noted below. Each is a thin wrapper over
 | `rsLine.ts`      | `RsParams {lookback}`                                           | RS line (stock/benchmark, rebased to 100) + signal dots; uses `input.benchmarkClose`  |
 | `stage2.ts`      | `Stage2Params {smaPeriod, slopeLookback, slopeMin, minPeriods}` | Stage-2 advancing band (green price-pane band; width=0 marker, excluded from autofit) |
 | `quarterlyResults.ts` | `QuarterlyResultsParams {display}`                        | Quarterly Results fundamentals subpane (RPS+EPS, core-computed YoY growth); Text/Bars modes; reads `input.quarterlyResults`/`market`; baked strings ride a `WeakMap` keyed on `anchor.buffer`; `paneHeightFactor 1.7` |
+| `volume.ts`      | `VolumeParams {smaPeriod, smaFade, milestones, standardOpacity, fadeOpacity}` | Volume subpane indicator (ported from the old hardcoded volume zone). Custom 4-bucket draw (up/down × above/below SMA, faded opacity); `volumeUp`/`volumeDown` split = 2 editable data-backed lines; `volSma`/`volLabel` are style-less data channels; HVE/HVY labels + K/M/B axis (`VOL_HINT.tickFormat`); scopes stats to `input.displayStart`; reads `params.fadeOpacity` in `draw`; `paneHeightFactor 1.154`; reuses `computeVolumeStats` |
 
 ---
 
@@ -374,9 +382,11 @@ Record<string, unknown>}`. Structural mirror of the app's API marker shape.
 
 ### `src/utils/drawSeries.ts`
 
-- `drawSeries(ctx, p: DrawSeriesParams) → void` — single-canvas painter for volume
-  bars + candles/bars + indicator lines; applies background gradient,
-  `#chart-viewport` clip, and pan transform; clears the backing store each call.
+- `drawSeries(ctx, p: DrawSeriesParams) → void` — single-canvas painter for
+  candles/bars + indicator lines (volume is now the `volume` subpane indicator,
+  painted via `drawIndicators`); applies background gradient, `#chart-viewport`
+  clip, and pan transform; clears the backing store each call. Passes each
+  indicator's `config.params` to `def.draw` as the 5th arg.
 - `SeriesColors` = `{positive, negative}`; `DrawSeriesParams` — dpr, dimensions,
   scales (`xScale`, `yPrice`, `subpaneScales`), render slice bounds, chart type,
   colors, indicators, color resolver.

@@ -35,6 +35,9 @@ export type SubpaneScaleHint = {
    *  number of pixels regardless of pane size. Applied where the scale is built
    *  (pane pixel height is known there). Ignored when `fixedDomain` wins. */
   topPadPx?: number;
+  /** Pane right-axis tick formatter. Replaces the default 2-sig-fig format for
+   *  this pane's ticks (e.g. Volume's K/M/B). Absent → the default format. */
+  tickFormat?: (value: number) => string;
 };
 
 /**
@@ -71,6 +74,11 @@ export type IndicatorInput = {
   /** Symbol market — drives currency formatting in defs that bake display
    *  strings at compute time (Results). Absent ⇒ def falls back to a default. */
   market?: StatsMarket;
+  /** Index (into the warmup-prefixed arrays) at which the display window begins
+   *  — i.e. `warmupSeed.length`. Lets a def scope display-only stats (Volume's
+   *  HVE/HVY + cold-start SMA) to the rendered bars rather than the seeded
+   *  prefix. Absent ⇒ defs treat the whole input as the display region. */
+  displayStart?: number;
 };
 
 /**
@@ -161,11 +169,17 @@ export type IndicatorDef<P = Record<string, unknown>> = {
   /** Older bars needed to seed the computation (drives the warm-up fetch). */
   warmupBars(params: P): number;
   compute(input: IndicatorInput, params: P): IndicatorSeries;
+  /** Paint the indicator. Receives the indicator's user `params` as a 5th arg so
+   *  a setting that changes ONLY appearance (opacity, a decorative toggle) can be
+   *  read directly here instead of being smuggled through the series. Settings
+   *  that change the NUMBERS belong in `compute`. An implementation may declare
+   *  fewer parameters (TS allows it) and simply ignore `params`. */
   draw(
     ctx: CanvasRenderingContext2D,
     series: IndicatorSeries,
     scale: IndicatorDrawScale,
     style: ResolvedLineStyle[],
+    params: P,
   ): void;
   defaultStyle: IndicatorStyle;
   /** Params-aware override of the static `pane.scaleHint` — used when the hint
@@ -193,6 +207,12 @@ export type IndicatorDef<P = Record<string, unknown>> = {
    *  method (not an arrow property) so `IndicatorDef<P>` stays assignable to the
    *  erased `IndicatorDef` — matching `compute`/`warmupBars`. */
   formatParams?(params: P): string;
+  /** Optional legend value formatter for one of this def's lines (e.g. Volume's
+   *  K/M/B). Declared as a method (not a field on `IndicatorLineStyle`, which is
+   *  plain serializable data) so it survives the `colorOverrides` rebuild and the
+   *  `IndicatorDef<P>` → erased-`IndicatorDef` assignment. Absent ⇒ the legend
+   *  uses its default price/2dp formatting. */
+  formatValue?(value: number, seriesKey: string): string;
   /** Ordered editable params. The popover renders one control per entry (kind →
    *  control type). Params absent here are not user-editable (stay at default,
    *  never shown) — this subsumes any need for a `hiddenParams` field. */

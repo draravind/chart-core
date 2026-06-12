@@ -238,9 +238,11 @@ describe('filterColumnsBySpacing', () => {
 });
 
 describe('quarterlyResults registration + colors', () => {
-  it('is registered and stacks first in SUBPANE_ORDER', () => {
+  it('is registered and stacks just below volume in SUBPANE_ORDER', () => {
     expect(getIndicator('results')).toBeDefined();
-    expect(SUBPANE_ORDER[0]).toBe('results');
+    // `volume` is prepended to the stack; `results` follows it.
+    expect(SUBPANE_ORDER[0]).toBe('volume');
+    expect(SUBPANE_ORDER[1]).toBe('results');
   });
 
   it('paneHeightFactor is 1.7', () => {
