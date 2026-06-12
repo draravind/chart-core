@@ -8,7 +8,12 @@ import React, {
 } from 'react';
 import { BarChart3, MousePointerClick, RotateCcw } from 'lucide-react';
 import * as d3 from 'd3';
-import type { AutoFitMode, Candle, ChartType } from './types';
+import type {
+  AutoFitMode,
+  Candle,
+  ChartType,
+  QuarterlyResult,
+} from './types';
 import type {
   IndicatorConfig,
   IndicatorInput,
@@ -27,8 +32,10 @@ import type {
 } from './stats/types';
 import type { SubpaneScaleHint } from './indicators/types';
 import {
+  applySubpaneDrag,
   computeSubpaneBands,
   computeSubpaneDomain,
+  type SubpaneBand,
 } from './indicators/subpaneLayout';
 import {
   computeVolumeStats,
@@ -64,11 +71,13 @@ const CHART_FONT = "'Helvetica Neue', Helvetica, Arial, sans-serif";
 
 const VOLUME_HEIGHT_RATIO = 0.15;
 // Subpane stacking (D1 policy): each oscillator pane gets a fixed share of the
-// chart height with a small gap above it; the price pane shrinks toward a floor
-// as panes stack, after which the remaining zone splits equally among panes.
+// chart height (panes stack flush, separated only by the 1px divider line); the
+// price pane shrinks toward a floor as panes stack, after which the remaining
+// zone splits equally among panes.
 const SUBPANE_HEIGHT_RATIO = 0.13;
-const SUBPANE_GAP_RATIO = 0.02;
 const PRICE_FLOOR_RATIO = 0.45;
+// Minimum height (px) any subpane may be dragged down to.
+const SUBPANE_MIN_PX = 24;
 // Minimum padding applied to an autofit subpane domain when the def's scaleHint
 // does not override it.
 const DEFAULT_SUBPANE_PAD = 0.08;
@@ -97,6 +106,14 @@ type Props = {
   // Benchmark close keyed by Candle.date ('YYYY-MM-DD'). Supplied by the app ONLY
   // when the RS indicator is enabled; absent otherwise (RS then yields NaN/no-op).
   benchmarkClose?: Record<string, number>;
+  // Sparse reported-period rows (quarterly/annual) for the Results subpane
+  // indicator. Raw passthrough — the def aligns each row to a bar itself.
+  quarterlyResults?: QuarterlyResult[];
+  // Persisted per-subpane heights (key → fraction of totalHeight), or null for
+  // defaults (heightRatio × def.paneHeightFactor). The app persists drags via
+  // the callback — same contract as statsPosition/onStatsPositionChange.
+  subpaneHeights?: Record<string, number> | null;
+  onSubpaneHeightsChange?: (h: Record<string, number>) => void;
   visibleBars: number;
   onVisibleBarsChange?: (n: number | ((prev: number) => number)) => void;
   panOffset: number;
@@ -148,6 +165,9 @@ const Chart = ({
   data,
   warmupSeed,
   benchmarkClose,
+  quarterlyResults,
+  subpaneHeights = null,
+  onSubpaneHeightsChange,
   visibleBars,
   onVisibleBarsChange,
   panOffset,
@@ -232,6 +252,35 @@ const Chart = ({
     return ordered.concat(extras);
   }, [indicators]);
 
+  // User-dragged subpane heights (key → fraction of totalHeight). Seeded from
+  // the `subpaneHeights` prop; the divider drag mutates this live for instant
+  // re-layout, and fires `onSubpaneHeightsChange` on release so the host
+  // persists it. Prop changes (e.g. symbol switch loading saved heights)
+  // re-seed via the effect below.
+  const [paneHeightsState, setPaneHeightsState] = useState<Record<
+    string,
+    number
+  > | null>(subpaneHeights);
+  useEffect(() => {
+    setPaneHeightsState(subpaneHeights);
+  }, [subpaneHeights]);
+
+  // Per-active-pane default height multiplier: max `paneHeightFactor` over the
+  // enabled defs targeting that pane (1 when none declare one). Drives the
+  // `heightFactors` map handed to `computeSubpaneBands`.
+  const heightFactors = useMemo(() => {
+    const out: Record<string, number> = {};
+    for (const c of indicators) {
+      if (!c.enabled) continue;
+      const def = getIndicator(c.defKey);
+      const pane = def?.pane;
+      if (!pane || typeof pane !== 'object' || !('subpane' in pane)) continue;
+      const factor = def?.paneHeightFactor ?? 1;
+      out[pane.subpane] = Math.max(out[pane.subpane] ?? 1, factor);
+    }
+    return out;
+  }, [indicators]);
+
   // Geometry that depends on data + viewport but NOT on priceZoom. Hoisted
   // out of the draw effect so the y-zoom path skips re-running x-scale,
   // candle data joins, volume bars, x-axis, separators, etc.
@@ -262,14 +311,15 @@ const Chart = ({
     const volumeHeight = hasVolume ? totalHeight * VOLUME_HEIGHT_RATIO : 0;
     const gap = hasVolume ? totalHeight * PRICE_VOLUME_GAP_RATIO : 0;
     // Subpane zone sizing (D1) — see computeSubpaneBands.
-    const { priceHeight, subpanes, fullHeight, subGap } = computeSubpaneBands({
+    const { priceHeight, subpanes, fullHeight } = computeSubpaneBands({
       totalHeight,
       volumeHeight,
       gap,
       subpaneKeys: activeSubpanes,
       heightRatio: SUBPANE_HEIGHT_RATIO,
-      gapRatio: SUBPANE_GAP_RATIO,
       floorRatio: PRICE_FLOOR_RATIO,
+      heightFactors,
+      userHeights: paneHeightsState ?? undefined,
     });
     const width = containerWidth - MARGIN.left - MARGIN.right;
     const step = (width - RIGHT_BUFFER) / visibleBars;
@@ -299,7 +349,6 @@ const Chart = ({
       priceHeight,
       fullHeight,
       subpanes,
-      subGap,
       width,
       step,
       baseTranslateX,
@@ -317,6 +366,8 @@ const Chart = ({
     containerHeight,
     xDomain,
     activeSubpanes,
+    heightFactors,
+    paneHeightsState,
   ]);
 
   // Volume SMA + HVE/HVY milestone labels. Keyed on `data` only — independent
@@ -342,6 +393,8 @@ const Chart = ({
       }
       input.benchmarkClose = bc;
     }
+    if (quarterlyResults) input.quarterlyResults = quarterlyResults;
+    input.market = statsMarket;
     const seedLen = seed.length;
     return enabled.map((config) => {
       const def = getIndicator(config.defKey);
@@ -353,7 +406,14 @@ const Chart = ({
       }
       return { config, series };
     });
-  }, [data, warmupSeed, indicators, benchmarkClose]);
+  }, [
+    data,
+    warmupSeed,
+    indicators,
+    benchmarkClose,
+    quarterlyResults,
+    statsMarket,
+  ]);
 
   // Price-stats view-model — latest-bar snapshot. Separate from
   // `resolvedIndicators` (which early-returns [] when no indicator is enabled):
@@ -433,6 +493,68 @@ const Chart = ({
   const priceBottomPx = useMemo(
     () => (layout ? MARGIN.top + layout.priceHeight + layout.gap / 2 : 0),
     [layout],
+  );
+
+  // Subpane divider drag. Each handle straddles the gap strip above its pane;
+  // `dividerIndex` i trades space between pane i and what's above it (the price
+  // pane for i=0). The snapshot is taken at pointerdown so cumulative `dy` is
+  // always measured from the bands as they were when the drag began (matching
+  // `applySubpaneDrag`'s pure signature).
+  const subpaneDragRef = useRef<{
+    index: number;
+    startY: number;
+    bands: SubpaneBand[];
+    priceHeight: number;
+    totalHeight: number;
+    latest: Record<string, number> | null;
+  } | null>(null);
+
+  const onDividerPointerDown = useCallback(
+    (index: number) => (e: React.PointerEvent<HTMLDivElement>) => {
+      if (!layout) return;
+      e.preventDefault();
+      e.stopPropagation();
+      e.currentTarget.setPointerCapture(e.pointerId);
+      subpaneDragRef.current = {
+        index,
+        startY: e.clientY,
+        bands: layout.subpanes,
+        priceHeight: layout.priceHeight,
+        totalHeight: layout.totalHeight,
+        latest: null,
+      };
+    },
+    [layout],
+  );
+
+  const onDividerPointerMove = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      const s = subpaneDragRef.current;
+      if (!s) return;
+      const next = applySubpaneDrag({
+        bands: s.bands,
+        priceHeight: s.priceHeight,
+        totalHeight: s.totalHeight,
+        dividerIndex: s.index,
+        dy: e.clientY - s.startY,
+        minPanePx: SUBPANE_MIN_PX,
+        floorRatio: PRICE_FLOOR_RATIO,
+      });
+      s.latest = next;
+      setPaneHeightsState(next);
+    },
+    [],
+  );
+
+  const onDividerPointerUp = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      const s = subpaneDragRef.current;
+      if (!s) return;
+      e.currentTarget.releasePointerCapture?.(e.pointerId);
+      subpaneDragRef.current = null;
+      if (s.latest) onSubpaneHeightsChange?.(s.latest);
+    },
+    [onSubpaneHeightsChange],
   );
 
   // Multiplicative price-axis zoom. >1 = compressed log-domain (zoom in),
@@ -1043,7 +1165,6 @@ const Chart = ({
       priceHeight,
       fullHeight,
       subpanes,
-      subGap,
       width,
       baseTranslateX,
       xScale,
@@ -1112,9 +1233,13 @@ const Chart = ({
 
     // Separators, built additively so each present band gets its divider:
     // price/volume split, a divider above EACH subpane band, and the bottom border.
+    // Subpanes stack flush, so each subpane's top divider sits exactly on the
+    // boundary it shares with the content above it (`pane.top`): the pane above's
+    // bottom content and this pane's top content both rest against the one line —
+    // matching the bottom border (which hugs the last pane's bottom at `fullHeight`).
     const sepValues: number[] = [];
     if (hasVolume) sepValues.push(priceHeight + gap / 2);
-    for (const pane of subpanes) sepValues.push(pane.top - subGap / 2);
+    for (const pane of subpanes) sepValues.push(pane.top);
     if (hasVolume || subpanes.length > 0) sepValues.push(fullHeight);
     sepGroupRef
       .current!.selectAll<SVGLineElement, number>('line')
@@ -1316,9 +1441,15 @@ const Chart = ({
     const paneHints = new Map<string, SubpaneScaleHint | undefined>();
     const paneIndicators = new Map<string, ResolvedIndicator[]>();
     for (const r of resolvedIndicators) {
-      const pane = getIndicator(r.config.defKey)?.pane;
+      const def = getIndicator(r.config.defKey);
+      const pane = def?.pane;
       if (!pane || typeof pane !== 'object' || !('subpane' in pane)) continue;
-      if (!paneHints.has(pane.subpane)) paneHints.set(pane.subpane, pane.scaleHint);
+      // Params-aware override (e.g. Results' display enum) wins over the static
+      // pane.scaleHint; first def per pane sets the hint.
+      if (!paneHints.has(pane.subpane)) {
+        const hint = def?.scaleHintFor?.(r.config.params) ?? pane.scaleHint;
+        paneHints.set(pane.subpane, hint);
+      }
       const list = paneIndicators.get(pane.subpane) ?? [];
       list.push(r);
       paneIndicators.set(pane.subpane, list);
@@ -1342,9 +1473,26 @@ const Chart = ({
         defaultPad: DEFAULT_SUBPANE_PAD,
       });
       if (domain) {
+        let [lo, hi] = domain;
+        // Fixed-pixel top headroom (e.g. Results bars' growth labels): extend the
+        // domain top so the autofit max maps `topPadPx` pixels below the pane top
+        // — a constant gap independent of pane height (range stays the full band,
+        // so the clip + zero baseline are unchanged). `lo` is untouched, so a
+        // zero baseline stays flush at the bottom.
+        //
+        // This pad is measured from `pane.top` and MUST cover the full label
+        // height: the indicator draw clips to `[pane.top, pane.bottom]`, so any
+        // part of the label pushed above `pane.top` is sliced off. With subpanes
+        // now flush (divider sits on `pane.top`), this seats the label directly
+        // under the divider with no wasted band above it.
+        const padPx = hint?.topPadPx ?? 0;
+        const H = pane.bottom - pane.top;
+        if (padPx > 0 && H > padPx && hi > lo) {
+          hi = lo + (hi - lo) * (H / (H - padPx));
+        }
         subpaneScales.set(
           pane.key,
-          d3.scaleLinear().domain(domain).range([pane.bottom, pane.top]),
+          d3.scaleLinear().domain([lo, hi]).range([pane.bottom, pane.top]),
         );
       }
     }
@@ -1361,21 +1509,25 @@ const Chart = ({
         const scale = subpaneScales.get(pane.key);
         if (!scale) continue;
         const hint = paneHints.get(pane.key);
-        const axisG = ySubAxisGRef.current!
-          .append('g')
-          .attr('transform', `translate(${width},0)`) as Sel<SVGGElement>;
-        axisG.call(
-          d3
-            .axisRight<d3.NumberValue>(scale)
-            .ticks(3)
-            .tickSize(TICK_SIZE)
-            .tickFormat((d) => subTickFormat(Number(d))),
-        );
-        axisG.select('.domain').remove();
-        axisG
-          .selectAll('line')
-          .attr('stroke', AXIS_STROKE)
-          .attr('stroke-opacity', AXIS_OPACITY);
+        // Text-mode panes (Results) suppress their axis — the scale carries no
+        // value semantics. Guide/zero lines below stay gated independently.
+        if (!hint?.hideAxis) {
+          const axisG = ySubAxisGRef.current!
+            .append('g')
+            .attr('transform', `translate(${width},0)`) as Sel<SVGGElement>;
+          axisG.call(
+            d3
+              .axisRight<d3.NumberValue>(scale)
+              .ticks(3)
+              .tickSize(TICK_SIZE)
+              .tickFormat((d) => subTickFormat(Number(d))),
+          );
+          axisG.select('.domain').remove();
+          axisG
+            .selectAll('line')
+            .attr('stroke', AXIS_STROKE)
+            .attr('stroke-opacity', AXIS_OPACITY);
+        }
         const levels = [...(hint?.guideLines ?? [])];
         if (hint?.zeroLine) levels.push(0);
         for (const level of levels) {
@@ -1876,6 +2028,27 @@ const Chart = ({
               resolveColor={(v) => colorResolverRef.current?.resolve(v) ?? '#888888'}
             />
           )}
+          {layout != null &&
+            layout.subpanes.map((band, i) => {
+              // Center the drag handle ON the static separator line for this
+              // boundary (drawn flush at `band.top`) so the grab strip + its hover
+              // highlight coincide with the one visible divider — not a second,
+              // offset one. Fixed grab height straddles the line on both panes.
+              const handleH = 8;
+              const lineY = MARGIN.top + band.top;
+              return (
+                <div
+                  key={band.key}
+                  className={styles.subpaneDivider}
+                  style={{ top: lineY - handleH / 2, height: handleH }}
+                  onPointerDown={onDividerPointerDown(i)}
+                  onPointerMove={onDividerPointerMove}
+                  onPointerUp={onDividerPointerUp}
+                >
+                  <span className={styles.subpaneDividerLine} />
+                </div>
+              );
+            })}
           {statsEnabled !== false && statsModel && dataLength > 0 && (
             <StatsPanel
               model={statsModel}

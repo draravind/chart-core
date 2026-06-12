@@ -1,10 +1,11 @@
 import { describe, it, expect } from 'vitest';
 import {
+  applySubpaneDrag,
   computeSubpaneBands,
   computeSubpaneDomain,
 } from '../src/indicators/subpaneLayout';
 
-const RATIOS = { heightRatio: 0.13, gapRatio: 0.02, floorRatio: 0.45 };
+const RATIOS = { heightRatio: 0.13, floorRatio: 0.45 };
 
 describe('computeSubpaneBands (D1 height policy)', () => {
   it('no subpanes → price fills the non-volume space, fullHeight == total', () => {
@@ -28,12 +29,12 @@ describe('computeSubpaneBands (D1 height policy)', () => {
       subpaneKeys: ['rsi', 'macd'],
       ...RATIOS,
     });
-    // Fixed height = 13% each; price = 1000 - 150 - 2*130 - 2*20 = 550 ≥ floor 450.
+    // Fixed height = 13% each; price = 1000 - 150 - 2*130 = 590 ≥ floor 450.
     expect(r.subpanes.map((p) => p.height)).toEqual([130, 130]);
-    expect(r.priceHeight).toBeCloseTo(550, 6);
-    // Panes stack contiguously below the volume area, each below a gap.
-    expect(r.subpanes[0].top).toBeCloseTo(550 + 150 + 20, 6);
-    expect(r.subpanes[1].top).toBeCloseTo(r.subpanes[0].bottom + 20, 6);
+    expect(r.priceHeight).toBeCloseTo(590, 6);
+    // Panes stack flush below the volume area (no gap).
+    expect(r.subpanes[0].top).toBeCloseTo(590 + 150, 6);
+    expect(r.subpanes[1].top).toBeCloseTo(r.subpanes[0].bottom, 6);
     // fullHeight is the lowest pane bottom and equals the total height.
     expect(r.fullHeight).toBeCloseTo(1000, 6);
     expect(r.subpanes[r.subpanes.length - 1].bottom).toBeCloseTo(r.fullHeight, 6);
@@ -50,7 +51,7 @@ describe('computeSubpaneBands (D1 height policy)', () => {
     });
     // 6 panes at fixed 130 would drop price below the 450 floor → floor pins.
     expect(r.priceHeight).toBeCloseTo(450, 6);
-    const leftover = 1000 - 450 - 150 - 0 - keys.length * 20;
+    const leftover = 1000 - 450 - 150;
     const expected = leftover / keys.length;
     for (const p of r.subpanes) expect(p.height).toBeCloseTo(expected, 6);
     expect(r.fullHeight).toBeCloseTo(1000, 6);
@@ -130,5 +131,148 @@ describe('computeSubpaneDomain', () => {
     });
     // spread = |50| * 0.1 = 5 → [45, 55].
     expect(d).toEqual([45, 55]);
+  });
+
+  it('includeZero spans zero for all-positive series', () => {
+    const d = computeSubpaneDomain({
+      hint: { includeZero: true, autofitPadding: 0 },
+      lines: [lineOf([10, 20, 30])],
+      visStart: 0,
+      visEnd: 3,
+      defaultPad: 0.08,
+    });
+    // lo clamped to 0, hi 30, pad 0 → [0, 30].
+    expect(d).toEqual([0, 30]);
+  });
+
+  it('includeZero spans below zero for negative series', () => {
+    const d = computeSubpaneDomain({
+      hint: { includeZero: true, autofitPadding: 0 },
+      lines: [lineOf([-5, -2, 8])],
+      visStart: 0,
+      visEnd: 3,
+      defaultPad: 0.08,
+    });
+    expect(d).toEqual([-5, 8]); // already spans zero; unchanged
+  });
+
+  it('fixedDomain still wins over includeZero', () => {
+    const d = computeSubpaneDomain({
+      hint: { includeZero: true, fixedDomain: [0, 1] },
+      lines: [lineOf([10, 20])],
+      visStart: 0,
+      visEnd: 2,
+      defaultPad: 0.08,
+    });
+    expect(d).toEqual([0, 1]);
+  });
+});
+
+describe('computeSubpaneBands — heightFactors / userHeights', () => {
+  it('a factor-1.7 pane gets 1.7× the flat height', () => {
+    const r = computeSubpaneBands({
+      totalHeight: 1000,
+      volumeHeight: 150,
+      gap: 0,
+      subpaneKeys: ['results'],
+      ...RATIOS,
+      heightFactors: { results: 1.7 },
+    });
+    // flat = 1000*0.13 = 130 → ×1.7 = 221.
+    expect(r.subpanes[0].height).toBeCloseTo(221, 6);
+    // priceHeight = 1000 - 150 - 221 = 629.
+    expect(r.priceHeight).toBeCloseTo(629, 6);
+  });
+
+  it('omitting heightFactors is byte-identical to the flat policy', () => {
+    const args = {
+      totalHeight: 1000,
+      volumeHeight: 150,
+      gap: 0,
+      subpaneKeys: ['rsi', 'macd'],
+      ...RATIOS,
+    };
+    const flat = computeSubpaneBands(args);
+    const withAllOnes = computeSubpaneBands({
+      ...args,
+      heightFactors: { rsi: 1, macd: 1 },
+    });
+    expect(withAllOnes).toEqual(flat);
+  });
+
+  it('floor redistribution scales proportionally (bigger pane stays bigger)', () => {
+    const r = computeSubpaneBands({
+      totalHeight: 1000,
+      volumeHeight: 150,
+      gap: 0,
+      subpaneKeys: ['a', 'b'],
+      ...RATIOS,
+      heightFactors: { a: 1, b: 3 },
+    });
+    // desired a=130, b=390 → price would be 290 < floor 450 → floor pins,
+    // both scaled by leftover/sumDesired; the 3:1 ratio is preserved.
+    expect(r.priceHeight).toBeCloseTo(450, 6);
+    expect(r.subpanes[1].height / r.subpanes[0].height).toBeCloseTo(3, 6);
+  });
+
+  it('userHeights override the factor default; other panes keep defaults', () => {
+    const r = computeSubpaneBands({
+      totalHeight: 1000,
+      volumeHeight: 150,
+      gap: 0,
+      subpaneKeys: ['results', 'rsi'],
+      ...RATIOS,
+      heightFactors: { results: 1.7 },
+      userHeights: { results: 0.2 }, // 200px, overriding the 1.7 factor
+    });
+    expect(r.subpanes[0].height).toBeCloseTo(200, 6);
+    expect(r.subpanes[1].height).toBeCloseTo(130, 6); // rsi keeps the flat default
+  });
+});
+
+describe('applySubpaneDrag', () => {
+  // Two panes, flat 130 each. priceHeight is passed explicitly below (550) as a
+  // standalone clamp-logic fixture, independent of the computed band layout.
+  const bands = computeSubpaneBands({
+    totalHeight: 1000,
+    volumeHeight: 150,
+    gap: 0,
+    subpaneKeys: ['a', 'b'],
+    ...RATIOS,
+  }).subpanes;
+  const common = {
+    bands,
+    priceHeight: 550,
+    totalHeight: 1000,
+    minPanePx: 24,
+    floorRatio: 0.45,
+  };
+
+  it('divider 0 dragged down shrinks subpane 0 and grows price', () => {
+    const m = applySubpaneDrag({ ...common, dividerIndex: 0, dy: 40 });
+    expect(m.a).toBeCloseTo(0.09, 6); // (130-40)/1000
+    expect(m.b).toBeCloseTo(0.13, 6); // unchanged
+  });
+
+  it('divider 0 dragged up clamps at the price floor', () => {
+    // maxUp = priceHeight - floor = 550 - 450 = 100 → dy clamped to -100.
+    const m = applySubpaneDrag({ ...common, dividerIndex: 0, dy: -200 });
+    expect(m.a).toBeCloseTo(0.23, 6); // (130 + 100)/1000
+  });
+
+  it('a divider between two panes trades only those two', () => {
+    const m = applySubpaneDrag({ ...common, dividerIndex: 1, dy: 30 });
+    expect(m.a).toBeCloseTo(0.16, 6); // 130+30
+    expect(m.b).toBeCloseTo(0.1, 6); // 130-30
+  });
+
+  it('enforces the 24px subpane minimum', () => {
+    const m = applySubpaneDrag({ ...common, dividerIndex: 0, dy: 999 });
+    expect(m.a).toBeCloseTo(0.024, 6); // clamped to 24px
+  });
+
+  it('returns a fraction for every pane key', () => {
+    const m = applySubpaneDrag({ ...common, dividerIndex: 0, dy: 10 });
+    expect(Object.keys(m).sort()).toEqual(['a', 'b']);
   });
 });

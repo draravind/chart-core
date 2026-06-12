@@ -62,6 +62,7 @@ export type {
 } from './indicators/types';
 export type { RsParams } from './indicators/builtins/rsLine';
 export type { Stage2Params } from './indicators/builtins/stage2';
+export type { QuarterlyResultsParams } from './indicators/builtins/quarterlyResults';
 
 // TA-Lib indicator library — pure compute primitives + per-indicator param types.
 export {

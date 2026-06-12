@@ -26,6 +26,14 @@ export type Candle = {
   highAll?: number;
 };
 
+/** One reported fiscal period (quarterly or annual cadence). */
+export type QuarterlyResult = {
+  label: string; // e.g. "Q3 FY25" / "FY25"
+  date: string; // 'YYYY-MM-DD' period end
+  eps?: number; // earnings per share, ccy/share
+  rps?: number; // revenue per share, ccy/share
+};
+
 export type ChartType = 'candlestick' | 'bar';
 
 export type AutoFitMode = 'price' | 'priceAndOverlays';

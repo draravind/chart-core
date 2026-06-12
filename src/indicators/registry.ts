@@ -2,6 +2,7 @@ import type { ColorOverrides, IndicatorConfig, IndicatorDef } from './types';
 import { highsDef } from './builtins/rollingHigh';
 import { rsLineDef } from './builtins/rsLine';
 import { stage2Def } from './builtins/stage2';
+import { quarterlyResultsDef } from './builtins/quarterlyResults';
 // TA-Lib library — price-pane overlays.
 import { smaDef } from './builtins/sma';
 import { emaTalibDef } from './builtins/emaTalib';
@@ -88,6 +89,7 @@ export function defaultConfigFor(
 registerIndicator(highsDef);
 registerIndicator(rsLineDef);
 registerIndicator(stage2Def);
+registerIndicator(quarterlyResultsDef);
 
 const TI_DEFS: IndicatorDef[] = [
   smaDef,
@@ -134,6 +136,7 @@ export const OVERLAY_ORDER: string[] = [
 
 /** Canonical top-to-bottom subpane stacking order (stable across toggles). */
 export const SUBPANE_ORDER: string[] = [
+  'results',
   'rs',
   'rsi',
   'macd',

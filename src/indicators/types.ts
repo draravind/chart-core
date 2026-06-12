@@ -1,5 +1,6 @@
 import type * as d3 from 'd3';
-import type { Candle } from '../types';
+import type { Candle, QuarterlyResult } from '../types';
+import type { StatsMarket } from '../stats/types';
 
 // ---------------------------------------------------------------------------
 // Pillar 3 — modular in-browser indicator framework.
@@ -22,6 +23,18 @@ export type SubpaneScaleHint = {
   guideLines?: number[];
   zeroLine?: boolean;
   autofitPadding?: number;
+  /** Suppress the pane's right axis (a meaningless scale, e.g. the Results
+   *  text-mode pane whose `fixedDomain` [0,1] carries no value semantics). */
+  hideAxis?: boolean;
+  /** Force the autofit domain to span zero (bars-from-zero panes), so bars
+   *  always rest on a visible zero crossing. Ignored when `fixedDomain` wins. */
+  includeZero?: boolean;
+  /** Fixed pixel headroom reserved above the autofit max (so a label drawn on
+   *  the tallest bar clears the pane's top border). Unlike `autofitPadding` —
+   *  a fraction of the domain that scales with pane height — this is a constant
+   *  number of pixels regardless of pane size. Applied where the scale is built
+   *  (pane pixel height is known there). Ignored when `fixedDomain` wins. */
+  topPadPx?: number;
 };
 
 /**
@@ -51,6 +64,13 @@ export type IndicatorInput = {
   /** Benchmark close, date-aligned to `bars`. Present only when an indicator that
    *  needs it (RS line) is enabled. `ema`/`highs` ignore it. */
   benchmarkClose?: Float64Array;
+  /** Sparse reported-period rows (quarterly/annual). Present only when an
+   *  indicator that needs them (Results) is enabled; the def aligns each row to
+   *  a bar itself. */
+  quarterlyResults?: readonly QuarterlyResult[];
+  /** Symbol market — drives currency formatting in defs that bake display
+   *  strings at compute time (Results). Absent ⇒ def falls back to a default. */
+  market?: StatsMarket;
 };
 
 /**
@@ -101,6 +121,10 @@ export type IndicatorDrawScale = {
   /** Render window into `data` (buffered visible slice). */
   renderStart: number;
   renderEnd: number;
+  /** Pixel bounds of the pane being drawn into (top < bottom). Lets a subpane
+   *  draw lay out text rows + clip to its band. Present for every pane. */
+  paneTop?: number;
+  paneBottom?: number;
 };
 
 /**
@@ -144,6 +168,19 @@ export type IndicatorDef<P = Record<string, unknown>> = {
     style: ResolvedLineStyle[],
   ): void;
   defaultStyle: IndicatorStyle;
+  /** Params-aware override of the static `pane.scaleHint` — used when the hint
+   *  must switch with a param (e.g. Results' `display` enum picks a text vs.
+   *  bars pane). Returns `undefined` to fall through to `pane.scaleHint`.
+   *  MUST be declared with method syntax, not an arrow-typed property: under
+   *  `strictFunctionTypes` an arrow property makes `IndicatorDef<P>` unassignable
+   *  to the erased `IndicatorDef` (TS2322); methods are bivariance-exempt. Same
+   *  constraint as `formatParams` above. */
+  scaleHintFor?(params: P): SubpaneScaleHint | undefined;
+  /** Default subpane height multiplier (1 when absent). A def whose layout needs
+   *  more vertical room (Results' five-row text ≈1.7×) declares it here; the user
+   *  can still override via divider drag. When several defs share a pane, the max
+   *  factor wins. */
+  paneHeightFactor?: number;
   /** Optional params-aware factory color for a line. Returns only the colors it
    *  wants to vary (e.g. EMA bands its one `ema` line by period); width/dash/label
    *  stay in `defaultStyle`. `undefined` → fall through to `defaultStyle` colors.

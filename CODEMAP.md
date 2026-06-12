@@ -25,8 +25,8 @@ Regions: [Entry & types](#entry--types) · [Chart core](#chart-core) ·
 
 Public barrel — the only import surface for consumers (never deep-import). Re-exports:
 
-- `export * from './types'` → `Candle`, `ChartType`, `AutoFitMode`, `RangeKey`,
-  `RANGES`, `ChartScaleReason`, `ChartScaleApi`.
+- `export * from './types'` → `Candle`, `QuarterlyResult`, `ChartType`, `AutoFitMode`,
+  `RangeKey`, `RANGES`, `ChartScaleReason`, `ChartScaleApi`.
 - From `utils/chartCalculations`: `RANGE_DAYS`, `formatPrice`, `formatVolume`,
   `formatVolumeTick`, `computeVolumeStats`, types `VolumeLabel`, `VolumeStats`.
 - From `patterns/types`: `PatternMarker`.
@@ -58,6 +58,8 @@ Public barrel — the only import surface for consumers (never deep-import). Re-
 - `Candle` — OHLCV bar: `{date, open, high, low, close, volume}` + optional
   precomputed historical highs (`high1y?`, `high2y?`, `high3y?`, `highAll?`) and
   deprecated `ema10?…ema200?` fields.
+- `QuarterlyResult` — one reported fiscal period: `{label, date, eps?, rps?}`
+  (consumed by the `results` subpane indicator via the `quarterlyResults` Chart prop).
 - `ChartType` = `'candlestick' | 'bar'`; `AutoFitMode` = `'price' | 'priceAndOverlays'`.
 - `RangeKey` = `'3M' | '6M' | '1Y'`; `RANGES` — the three keys as a const array.
 - `ChartScaleReason` = `'pan' | 'rescale'`.
@@ -77,9 +79,11 @@ Public barrel — the only import surface for consumers (never deep-import). Re-
   `warmupSeed`, `benchmarkClose`, `visibleBars`/`onVisibleBarsChange`,
   `panOffset`/`onPanOffsetChange`, `chartType`, `indicators`/`onIndicatorsChange`,
   `autoFitMode`/`onAutoFitModeChange`, `infoBarExpanded`/`onInfoBarExpandedChange`,
-  `symbol`, `bare`, `priceFormatter`, `patterns`, `patternsEnabled`, `children`.
-  Owns canvas rendering, pan/zoom, the published `ChartScaleApi`, overlay hosts,
-  and the bundled pattern overlay. Only default export.
+  `symbol`, `bare`, `priceFormatter`, `patterns`, `patternsEnabled`,
+  `quarterlyResults` (Results subpane rows), `subpaneHeights`/`onSubpaneHeightsChange`
+  (persisted per-pane drag heights), `children`. Owns canvas rendering, pan/zoom,
+  the published `ChartScaleApi`, overlay hosts, the draggable subpane dividers, and
+  the bundled pattern overlay. Only default export.
 
 ### `src/context.tsx`
 
@@ -135,11 +139,18 @@ Scoped styles for the chart shell: `.chartWrapper`/`.chartWrapperBare`,
   `longLabel?`, `pane`, `defaultParams`, `warmupBars(params) → number`,
   `compute(input, params) → IndicatorSeries`, `draw(ctx, series, scale, style)`,
   `defaultStyle`, `defaultLineColor?(params, seriesKey)`, `formatParams?(params)`,
+  `scaleHintFor?(params)` (params-aware `scaleHint` override; method syntax —
+  bivariance), `paneHeightFactor?` (default subpane height multiplier),
   `paramSpecs?`.
 - `IndicatorPane` = `'price' | {subpane: string; scaleHint?: SubpaneScaleHint}`.
-- `SubpaneScaleHint` — `{fixedDomain?, guideLines?, zeroLine?, autofitPadding?}`.
+- `SubpaneScaleHint` — `{fixedDomain?, guideLines?, zeroLine?, autofitPadding?,
+  hideAxis?, includeZero?, topPadPx?}` (`topPadPx` = fixed-pixel headroom above the
+  autofit max, applied at scale build in `Chart`).
 - `IndicatorSeries` = `Record<string, Float64Array>` (one line per key; NaN = gap).
-- `IndicatorInput` — `{o,h,l,c,v: Float64Array; bars: readonly Candle[]; benchmarkClose?}`.
+- `IndicatorInput` — `{o,h,l,c,v: Float64Array; bars: readonly Candle[];
+  benchmarkClose?; quarterlyResults?; market?}`.
+- `IndicatorDrawScale` — adds `paneTop?/paneBottom?` (pixel band bounds for draw
+  layout + clipping).
 - `IndicatorConfig` — resolved user instance: `{id, defKey, params, label, enabled,
 style, colorOverrides?}`.
 - `ParamSpec` — number/enum control spec driving the legend popover.
@@ -194,11 +205,16 @@ Canvas painters shared by builtin `draw` hooks:
 ### `src/indicators/subpaneLayout.ts`
 
 - `computeSubpaneBands(params) → SubpaneBandsResult` — D1 height policy: each active
-  subpane gets a fixed share with gaps; the price pane shrinks toward `floorRatio`,
-  leftover splits equally (min ~4px each).
+  subpane gets a default share (× per-key `heightFactors`) with gaps, overridable by
+  `userHeights` (drag); the price pane shrinks toward `floorRatio`, leftover scaled
+  proportionally (min ~4px each). All-factors-1 ≡ the original flat policy.
 - `computeSubpaneDomain(params) → [number, number] | null` — autofit domain:
-  `fixedDomain` wins, else scan non-marker lines, optionally force symmetry about
-  zero, apply padding.
+  `fixedDomain` wins, else scan non-marker lines, optionally `includeZero`, force
+  symmetry about zero, apply padding.
+- `applySubpaneDrag(params) → Record<string, number>` — pure divider-drag math:
+  `dividerIndex` 0 trades the price pane with subpane 0, `i>0` trades panes
+  `i-1`/`i`; clamps (subpane ≥ `minPanePx`, price ≥ `floorRatio`); returns the full
+  per-key height map as `totalHeight` fractions (persist as `userHeights`).
 - `SubpaneBand` = `{key, top, bottom, height}` — one subpane's layout rect.
   (Note: `IndicatorLegend` also passes around a lighter `{key, top}` band shape.)
 
@@ -220,7 +236,7 @@ rounding in primitives (builtins round once on the final value).
 
 ## Built-in indicators
 
-`src/indicators/builtins/*.ts` — 20 files. **Shared shape:** each exports a `*Params`
+`src/indicators/builtins/*.ts` — 21 files. **Shared shape:** each exports a `*Params`
 type **and** a `*Def: IndicatorDef<*Params>` const that self-registers via the
 registry import. Two exceptions noted below. Each is a thin wrapper over
 `talibMath` primitives (compute) + `draw` helpers (render).
@@ -247,6 +263,7 @@ registry import. Two exceptions noted below. Each is a thin wrapper over
 | `rollingHigh.ts` | **(no `*Params` type)**                                         | `highsDef` — data-backed 1Y/2Y/3Y/ATH highs read off `bars[].high*` columns           |
 | `rsLine.ts`      | `RsParams {lookback}`                                           | RS line (stock/benchmark, rebased to 100) + signal dots; uses `input.benchmarkClose`  |
 | `stage2.ts`      | `Stage2Params {smaPeriod, slopeLookback, slopeMin, minPeriods}` | Stage-2 advancing band (green price-pane band; width=0 marker, excluded from autofit) |
+| `quarterlyResults.ts` | `QuarterlyResultsParams {display}`                        | Quarterly Results fundamentals subpane (RPS+EPS, core-computed YoY growth); Text/Bars modes; reads `input.quarterlyResults`/`market`; baked strings ride a `WeakMap` keyed on `anchor.buffer`; `paneHeightFactor 1.7` |
 
 ---
 
@@ -419,7 +436,11 @@ Record<string, unknown>}`. Structural mirror of the app's API marker shape.
 - **`tests/`**:
   - `parity.test.ts` — 17 builtins match TA-Lib within 0.01, against
     `src/indicators/__fixtures__/talib_fixtures.json`.
-  - `subpaneLayout.test.ts` — subpane height allocation + domain autofit.
+  - `subpaneLayout.test.ts` — subpane height allocation (factors/userHeights/floor
+    redistribution) + domain autofit (incl. `includeZero`) + `applySubpaneDrag`.
+  - `quarterlyResults.test.ts` — YoY growth matching, row→bar alignment + step fill,
+    meta channel (warmup-slice survival, currency/format), column spacing,
+    registration/colors.
   - `indicatorColors.test.ts` — EMA period-band colors, override precedence, no
     shared mutation of def singletons.
   - `toHex6.test.ts` — color-format normalization.

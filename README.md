@@ -172,6 +172,22 @@ are the default value and header-label colors.
 | `--stats-border` | `var(--chart-separator)` |
 | `--stats-radius` | `var(--radius-sm)` |
 
+### Quarterly Results pane
+
+The `results` subpane indicator (RPS + EPS fundamentals) reads these. `--qr-rps`/
+`--qr-eps` color the value text + bars; the `*-label` tokens color the legend
+values; growth %s use the up/down tokens; `--qr-label` colors the quarter label.
+
+| Token | Default |
+| --- | --- |
+| `--qr-rps` | `#60a5fa` |
+| `--qr-eps` | `#f97316` |
+| `--chart-qr-rps-label` | `var(--qr-rps)` |
+| `--chart-qr-eps-label` | `var(--qr-eps)` |
+| `--qr-growth-up` | `var(--chart-positive)` |
+| `--qr-growth-down` | `var(--chart-negative)` |
+| `--qr-label` | `var(--chart-tooltip-label)` |
+
 ### Layout / shadow / spacing / text
 
 | Token | Default |
@@ -215,7 +231,10 @@ Everything is exported from the package root — never deep-import. Highlights:
   plugins that render their own reset control.
 - Price-stats panel props: `StatsTableData`, `StatsMarket`, `StatsPosition`,
   `StatsSize` (the panel renders inside `Chart`; only its prop types are exported).
-- Types: `Candle`, `ChartType`, `RangeKey`, `PatternMarker`, etc.
+- Quarterly Results pane: pass `quarterlyResults: QuarterlyResult[]` to `Chart` and
+  enable the `results` indicator. Drag subpane dividers to resize; persist via
+  `subpaneHeights` / `onSubpaneHeightsChange`.
+- Types: `Candle`, `QuarterlyResult`, `ChartType`, `RangeKey`, `PatternMarker`, etc.
 
 ## Develop
 

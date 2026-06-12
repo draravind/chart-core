@@ -6,7 +6,7 @@ import type { Candle } from '../types';
 // or newer than the rightmost — callers treat null as "render no overlay
 // this frame" so a stale anchor never silently snaps to bar 0.
 export function barIndexForDate(
-  data: Candle[],
+  data: readonly Candle[],
   isoDate: string,
 ): number | null {
   if (data.length === 0) return null;

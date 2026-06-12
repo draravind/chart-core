@@ -62,6 +62,15 @@
   --natr-line: #0ea5e9;
   --trange-line: #22c55e;
 
+  /* Quarterly Results subpane. */
+  --qr-rps: #60a5fa;
+  --qr-eps: #f97316;
+  --chart-qr-rps-label: var(--qr-rps);
+  --chart-qr-eps-label: var(--qr-eps);
+  --qr-growth-up: var(--chart-positive);
+  --qr-growth-down: var(--chart-negative);
+  --qr-label: var(--chart-tooltip-label);
+
   /* Dashed guide / zero lines drawn in the subpanes. */
   --subpane-guide: #888888;
 

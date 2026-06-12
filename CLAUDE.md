@@ -42,7 +42,9 @@ The split is intentional: the routing table + glossary here are **pay-always**
 | Add a new indicator                                      | `src/indicators/builtins/` (new `*Def`), register via import in `src/indicators/registry.ts`; param UI specs in `src/indicators/paramSpecs.ts`     |
 | Fix indicator math / TA-Lib parity                       | `src/indicators/talibMath.ts`; verify with `tests/parity.test.ts` + `src/indicators/__fixtures__/talib_fixtures.json`                              |
 | Fix a wrong indicator color                              | `src/utils/resolveChartColors.ts`, `src/utils/toHex6.ts`; color-layer logic in `registry.ts` (`defaultConfigFor`); `tests/indicatorColors.test.ts` |
-| Fix subpane height/layout                                | `src/indicators/subpaneLayout.ts`; `tests/subpaneLayout.test.ts`                                                                                   |
+| Fix subpane height/layout                                | `src/indicators/subpaneLayout.ts` (per-pane `heightFactors`/`userHeights`); `tests/subpaneLayout.test.ts`                                          |
+| Resize/persist subpane heights (drag dividers)           | `src/Chart.tsx` (`subpaneHeights`/`onSubpaneHeightsChange`, divider handles) + `applySubpaneDrag` in `src/indicators/subpaneLayout.ts`             |
+| Add/adjust the Quarterly Results pane                    | `src/indicators/builtins/quarterlyResults.ts`; `quarterlyResults` Chart prop; `--qr-*` tokens; `tests/quarterlyResults.test.ts`                    |
 | Add/adjust a chart control                               | `src/controls/ChartControls.tsx`                                                                                                                   |
 | Fix a legend entry / live values                         | `src/controls/IndicatorLegend.tsx`                                                                                                                 |
 | Adjust the price-stats panel                             | `src/stats/` (`computeStats.ts` math, `StatsPanel.tsx` panel, `stats.module.css`); `--stats-*` tokens in `src/styles/chart-core.css`; `tests/stats.test.ts` |
@@ -72,7 +74,11 @@ The split is intentional: the routing table + glossary here are **pay-always**
   (compute+draw+style+params) and its global key→def map: `src/indicators/types.ts`
   - `src/indicators/registry.ts`.
 - **Subpane** — a named oscillator pane below the price pane (RSI, MACD…); layout in
-  `src/indicators/subpaneLayout.ts`.
+  `src/indicators/subpaneLayout.ts`. Heights are user-draggable (divider handles in
+  `Chart.tsx`, math in `applySubpaneDrag`), persisted via `subpaneHeights`.
+- **Quarterly results pane** — the `results` fundamentals subpane (RPS+EPS, core-
+  computed YoY growth; Text/Bars modes): `src/indicators/builtins/quarterlyResults.ts`;
+  fed by the `quarterlyResults` Chart prop (`QuarterlyResult[]` in `src/types.ts`).
 - **TA-Lib parity** — primitives matching TA-Lib exactly (seeding, lookback, Wilder
   smoothing, rounding): `src/indicators/talibMath.ts`.
 - **Expanding max / rolling high** — all-history and windowed running maxima:

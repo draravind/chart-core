@@ -207,13 +207,16 @@ function drawIndicators(ctx: CanvasRenderingContext2D, p: DrawSeriesParams): voi
     if (!def) continue;
     const isSubpane = typeof def.pane === 'object' && 'subpane' in def.pane;
     let y: (value: number) => number;
+    let paneRange: number[];
     if (isSubpane) {
       const key = (def.pane as { subpane: string }).subpane;
-      const scale = p.subpaneScales.get(key);
-      if (!scale) continue; // pane inactive / no finite values to scale
-      y = scale;
+      const subScale = p.subpaneScales.get(key);
+      if (!subScale) continue; // pane inactive / no finite values to scale
+      y = subScale;
+      paneRange = subScale.range();
     } else {
       y = p.yPrice;
+      paneRange = p.yPrice.range();
     }
     const scale = {
       xScale: p.xScale,
@@ -223,6 +226,8 @@ function drawIndicators(ctx: CanvasRenderingContext2D, p: DrawSeriesParams): voi
       data: p.data,
       renderStart: p.renderStart,
       renderEnd: p.renderEnd,
+      paneTop: Math.min(...paneRange),
+      paneBottom: Math.max(...paneRange),
     };
     const resolved = config.style.lines.map((l) => ({
       seriesKey: l.seriesKey,
