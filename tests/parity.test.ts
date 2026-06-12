@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 import { describe, it, expect } from 'vitest';
-import { getIndicator } from '../src/indicators/registry';
+import { getIndicator, effectiveSettings } from '../src/indicators/registry';
 import type { IndicatorInput } from '../src/indicators/types';
 
 // Import side-effect: registers all builtins (the registry module runs its
@@ -75,7 +75,7 @@ describe('TA-Lib parity (17 indicators, 2 dp)', () => {
     it(defKey, () => {
       const def = getIndicator(defKey);
       expect(def, `def ${defKey} registered`).toBeTruthy();
-      const series = def!.compute(input, def!.defaultParams);
+      const series = def!.compute(input, effectiveSettings(def!, {})).series;
       for (const [seriesKey, expectedArr] of Object.entries(outputs)) {
         const got = series[seriesKey];
         expect(got, `${defKey}.${seriesKey} produced`).toBeTruthy();

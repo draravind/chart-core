@@ -39,7 +39,7 @@ The split is intentional: the routing table + glossary here are **pay-always**
 
 | If you need to…                                          | Look in                                                                                                                                            |
 | -------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Add a new indicator                                      | `src/indicators/builtins/` (new `*Def`), register via import in `src/indicators/registry.ts`; param UI specs in `src/indicators/paramSpecs.ts`     |
+| Add a new indicator                                      | `src/indicators/builtins/` (new `*Def` with a `settingsSchema`), register via import in `src/indicators/registry.ts`; shared enum options in `src/indicators/settingsOptions.ts` |
 | Fix indicator math / TA-Lib parity                       | `src/indicators/talibMath.ts`; verify with `tests/parity.test.ts` + `src/indicators/__fixtures__/talib_fixtures.json`                              |
 | Fix a wrong indicator color                              | `src/utils/resolveChartColors.ts`, `src/utils/toHex6.ts`; color-layer logic in `registry.ts` (`defaultConfigFor`); `tests/indicatorColors.test.ts` |
 | Fix subpane height/layout                                | `src/indicators/subpaneLayout.ts` (per-pane `heightFactors`/`userHeights`); `tests/subpaneLayout.test.ts`                                          |
@@ -72,8 +72,12 @@ The split is intentional: the routing table + glossary here are **pay-always**
 - **Overlay host** — the `trade`/`trigger` SVG `<g>` zones plugins mount into,
   accessed via `useChartOverlayHost`: `src/context.tsx`.
 - **IndicatorDef / registry** — the self-contained indicator definition
-  (compute+draw+style+params) and its global key→def map: `src/indicators/types.ts`
-  - `src/indicators/registry.ts`.
+  (compute+draw+legend+domain over a typed `settingsSchema`) and its global
+  key→def map: `src/indicators/types.ts` - `src/indicators/registry.ts`. Each def
+  owns a free-form **settings blob**; the framework persists sparse
+  `settingsOverrides` deltas and resolves the effective merge via
+  `effectiveSettings` (base→derived→overrides). There is no `style.lines` — the
+  old line list, `width`-as-flag, color-carrier lines, and `scaleHintFor` are gone.
 - **Subpane** — a named oscillator pane below the price pane (RSI, MACD…); layout in
   `src/indicators/subpaneLayout.ts`. Heights are user-draggable (divider handles in
   `Chart.tsx`, math in `applySubpaneDrag`), persisted via `subpaneHeights`.
@@ -83,7 +87,7 @@ The split is intentional: the routing table + glossary here are **pay-always**
 - **Volume** — the `volume` subpane indicator, ported from the old hardcoded volume
   zone: `src/indicators/builtins/volume.ts`. Opt-in/toggleable like any oscillator
   (stacks first in `SUBPANE_ORDER`, directly below price); preserves the 4-bucket
-  coloring, HVE/HVY labels, and K/M/B axis as user-toggleable params. Consumers seed
+  coloring, HVE/HVY labels, and K/M/B axis as user-editable settings. Consumers seed
   `defaultConfigFor('volume', { enabled: true })` to keep it on by default.
 - **TA-Lib parity** — primitives matching TA-Lib exactly (seeding, lookback, Wilder
   smoothing, rounding): `src/indicators/talibMath.ts`.

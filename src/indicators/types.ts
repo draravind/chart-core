@@ -5,55 +5,78 @@ import type { StatsMarket } from '../stats/types';
 // ---------------------------------------------------------------------------
 // Pillar 3 — modular in-browser indicator framework.
 //
-// An indicator is a self-contained definition (compute + draw + warm-up + style)
-// registered once on import. The app instantiates `IndicatorConfig`s (one drawn
-// entry = one parametrisation) and Chart resolves each via the registry,
-// computes its series over `concat(warmupSeed, data)`, slices back to the
-// display window, and paints it on the canvas series layer.
+// An indicator is a self-contained definition (compute + draw + warm-up +
+// settings) registered once on import. Each def owns a free-form, typed
+// `settings` blob (declared via `settingsSchema`) and reads its own colors /
+// flags / modes from it in `compute`/`draw`/`domain`/`legend`. The framework
+// persists settings as opaque deltas (`settingsOverrides`) and hands the
+// effective merge back. The app instantiates `IndicatorConfig`s (one drawn
+// entry = one parametrisation); Chart resolves each via the registry, computes
+// its series over `concat(warmupSeed, data)`, slices back to the display
+// window, and paints it on the canvas series layer.
 // ---------------------------------------------------------------------------
 
+/** One typed, user-editable setting. Drives both the popover control (kind →
+ *  control type) and the static defaults (`defaultsFromSchema`). A `color`
+ *  field's `default` is a CSS-var expression (`var(--rsi-line)`); a user
+ *  override is raw hex — the framework resolves either to rgb via `resolveColor`
+ *  at draw/legend time. */
+export type SettingsFieldBase = { key: string; label: string };
+export type SettingsField =
+  | (SettingsFieldBase & { kind: 'color'; default: string })
+  | (SettingsFieldBase & {
+      kind: 'number';
+      default: number;
+      min?: number;
+      max?: number;
+      step?: number;
+    })
+  | (SettingsFieldBase & {
+      kind: 'enum';
+      default: number;
+      options: { label: string; value: number }[];
+    })
+  | (SettingsFieldBase & { kind: 'toggle'; default: boolean });
+
+/** One legend row: a color expr (resolved by the legend), a formatted live
+ *  value (null/'' = no value cell), and an optional per-row label. */
+export type LegendRow = {
+  color: string;
+  value: string | null;
+  label?: string;
+};
+
 /**
- * Per-subpane scale hint. Bounded oscillators pin a `fixedDomain` (+ optional
- * `guideLines` at notable levels); unbounded ones autofit over their drawn
- * series, optionally forced symmetric about a `zeroLine`. `autofitPadding` is a
- * fractional pad applied to an autofit domain (default 8%).
+ * Subpane scale SHAPE (replaces the old `SubpaneScaleHint` + `scaleHintFor`).
+ * Bounded oscillators pin a `fixedDomain` (+ optional `guideLines`); unbounded
+ * ones autofit, optionally forced symmetric about a `zeroLine` or extended to
+ * span zero (`includeZero`). Which series drive the autofit is NOT here — that
+ * is the def's single `autofitKeys`. This carries scale shape only.
  */
-export type SubpaneScaleHint = {
+export type DomainSpec = {
   fixedDomain?: [number, number];
   guideLines?: number[];
   zeroLine?: boolean;
   autofitPadding?: number;
+  /** Force the autofit domain to span zero (bars-from-zero panes). Ignored when
+   *  `fixedDomain` wins. */
+  includeZero?: boolean;
+  /** Fixed pixel headroom reserved above the autofit max (so a label drawn on
+   *  the tallest bar clears the pane's top border). Applied where the scale is
+   *  built (pane pixel height is known there). Ignored when `fixedDomain` wins. */
+  topPadPx?: number;
   /** Suppress the pane's right axis (a meaningless scale, e.g. the Results
    *  text-mode pane whose `fixedDomain` [0,1] carries no value semantics). */
   hideAxis?: boolean;
-  /** Force the autofit domain to span zero (bars-from-zero panes), so bars
-   *  always rest on a visible zero crossing. Ignored when `fixedDomain` wins. */
-  includeZero?: boolean;
-  /** Fixed pixel headroom reserved above the autofit max (so a label drawn on
-   *  the tallest bar clears the pane's top border). Unlike `autofitPadding` —
-   *  a fraction of the domain that scales with pane height — this is a constant
-   *  number of pixels regardless of pane size. Applied where the scale is built
-   *  (pane pixel height is known there). Ignored when `fixedDomain` wins. */
-  topPadPx?: number;
-  /** Pane right-axis tick formatter. Replaces the default 2-sig-fig format for
-   *  this pane's ticks (e.g. Volume's K/M/B). Absent → the default format. */
+  /** Pane right-axis tick formatter (e.g. Volume's K/M/B). Absent → default. */
   tickFormat?: (value: number) => string;
 };
 
-/**
- * Where the indicator draws — the price overlay, or a named subpane. A subpane
- * indicator may carry a `scaleHint` describing how its pane scales (fixed vs.
- * autofit, guide lines, zero line).
- */
-export type IndicatorPane =
-  | 'price'
-  | { subpane: string; scaleHint?: SubpaneScaleHint };
+/** Where the indicator draws — the price overlay, or a named subpane. */
+export type IndicatorPane = 'price' | { subpane: string };
 
 /** One Float64Array per drawn line. NaN marks a gap (no value at that bar). */
 export type IndicatorSeries = Record<string, Float64Array>;
-
-/** Sparse per-line color override: seriesKey → raw hex. Persisted source of truth. */
-export type ColorOverrides = Record<string, string>;
 
 /** OHLCV columns + the source bars, fed to `compute`. */
 export type IndicatorInput = {
@@ -81,42 +104,6 @@ export type IndicatorInput = {
   displayStart?: number;
 };
 
-/**
- * Style for one drawn line. `seriesKey` matches a key in the def's
- * `IndicatorSeries`; `colorVar`/`labelColorVar` are CSS-var expressions resolved
- * to rgb at draw time (canvas cannot consume CSS vars directly).
- */
-export type IndicatorLineStyle = {
-  seriesKey: string;
-  /** Line color, e.g. `var(--ema-50)`. */
-  colorVar: string;
-  /** Tooltip value color, e.g. `var(--chart-ema-50-label)`. */
-  labelColorVar: string;
-  /** Tooltip label for this line, e.g. `EMA 50` or `1Y`. */
-  label: string;
-  width: number;
-  dash?: number[] | null;
-  opacity?: number;
-};
-
-export type IndicatorStyle = {
-  /** Ordered list of drawn lines (one for EMA, four for highs). */
-  lines: IndicatorLineStyle[];
-  /** Configs sharing a `tooltipGroup` render on the same crosshair row. */
-  tooltipGroup: string;
-  /** Optional row title rendered once at the start of the group (e.g. `Highs`). */
-  tooltipTitle?: string;
-};
-
-/** Resolved (rgb) per-line style handed to `IndicatorDef.draw`. */
-export type ResolvedLineStyle = {
-  seriesKey: string;
-  color: string;
-  width: number;
-  dash?: number[] | null;
-  opacity?: number;
-};
-
 /** Geometry + source bars handed to `IndicatorDef.draw`. */
 export type IndicatorDrawScale = {
   xScale: d3.ScaleBand<number>;
@@ -136,108 +123,84 @@ export type IndicatorDrawScale = {
 };
 
 /**
- * One user-editable param, driving a control in the legend popover. `number`
- * renders an `<input type="number">` (optional min/max/step); `enum` renders a
- * `<select>` over `options` (display label + numeric value).
+ * The unit of modularity. Every `S`-typed callback uses METHOD syntax (not an
+ * arrow-typed property): under `strictFunctionTypes` an arrow property makes
+ * `IndicatorDef<S>` unassignable to the erased `IndicatorDef` (TS2322); methods
+ * are bivariance-exempt.
  */
-export type ParamSpec =
-  | {
-      key: string;
-      label: string;
-      kind: 'number';
-      min?: number;
-      max?: number;
-      step?: number;
-    }
-  | {
-      key: string;
-      label: string;
-      kind: 'enum';
-      options: { label: string; value: number }[];
-    };
-
-export type IndicatorDef<P = Record<string, unknown>> = {
-  /** Registry key, e.g. `ema` / `highs`. */
+export type IndicatorDef<S = Record<string, unknown>> = {
+  /** Registry key, e.g. `ti:ema` / `highs`. */
   key: string;
   /** Compact label for the legend row + crosshair tooltips, e.g. `BBANDS`. */
   label: string;
-  /** Full human name for the param popover title, e.g. `Bollinger Bands`.
+  /** Full human name for the settings popover title, e.g. `Bollinger Bands`.
    *  Falls back to `label` when absent. */
   longLabel?: string;
-  pane: IndicatorPane;
-  defaultParams: P;
+  pane: 'price' | { subpane: string };
+  /** Ordered editable settings. Drives the popover + the static defaults. */
+  settingsSchema: SettingsField[];
+  /** Param-dependent defaults layered under user overrides (e.g. EMA bands its
+   *  line color from the period). Replaces the old `defaultLineColor`. */
+  deriveDefaults?(s: S): Partial<S>;
   /** Older bars needed to seed the computation (drives the warm-up fetch). */
-  warmupBars(params: P): number;
-  compute(input: IndicatorInput, params: P): IndicatorSeries;
-  /** Paint the indicator. Receives the indicator's user `params` as a 5th arg so
-   *  a setting that changes ONLY appearance (opacity, a decorative toggle) can be
-   *  read directly here instead of being smuggled through the series. Settings
-   *  that change the NUMBERS belong in `compute`. An implementation may declare
-   *  fewer parameters (TS allows it) and simply ignore `params`. */
+  warmupBars(s: S): number;
+  /** Returns numeric series PLUS an optional non-numeric per-instance payload
+   *  (`meta`) — the explicit lane for computed non-array data (e.g. Quarterly
+   *  Results' formatted row strings). The framework slices only the
+   *  `Float64Array`s back to the display window; `meta` threads through
+   *  untouched to `draw`. A user SETTING never rides `meta`. */
+  compute(input: IndicatorInput, s: S): { series: IndicatorSeries; meta?: unknown };
+  /** Paint the indicator. `resolveColor` resolves a color-field expr (var() or
+   *  raw hex) to rgb; `meta` is the per-instance compute payload. */
   draw(
     ctx: CanvasRenderingContext2D,
     series: IndicatorSeries,
     scale: IndicatorDrawScale,
-    style: ResolvedLineStyle[],
-    params: P,
+    s: S,
+    resolveColor: (expr: string) => string,
+    meta?: unknown,
   ): void;
-  defaultStyle: IndicatorStyle;
-  /** Params-aware override of the static `pane.scaleHint` — used when the hint
-   *  must switch with a param (e.g. Results' `display` enum picks a text vs.
-   *  bars pane). Returns `undefined` to fall through to `pane.scaleHint`.
-   *  MUST be declared with method syntax, not an arrow-typed property: under
-   *  `strictFunctionTypes` an arrow property makes `IndicatorDef<P>` unassignable
-   *  to the erased `IndicatorDef` (TS2322); methods are bivariance-exempt. Same
-   *  constraint as `formatParams` above. */
-  scaleHintFor?(params: P): SubpaneScaleHint | undefined;
-  /** Default subpane height multiplier (1 when absent). A def whose layout needs
-   *  more vertical room (Results' five-row text ≈1.7×) declares it here; the user
-   *  can still override via divider drag. When several defs share a pane, the max
-   *  factor wins. */
+  /** Which of this def's series the scale autofits over — read by BOTH the
+   *  subpane and price-pane scaling loops (replaces the old implicit
+   *  `width !== 0` set). A fixed-domain oscillator may return `[]`. */
+  autofitKeys?(s: S): string[];
+  /** Subpane scale SHAPE only (fixed/guide/zero/pad/…); the framework computes
+   *  lo/hi via `computeSubpaneDomain` + the pixel `topPadPx` math. Optional —
+   *  absent ⇒ plain autofit. Price-pane defs omit it. */
+  domain?(series: IndicatorSeries, s: S): DomainSpec | null;
+  /** Live legend rows at the queried bar. `ctx.priceFmt` formats prices (price-
+   *  pane overlays use it; subpane defs ignore it). Required. */
+  legend(
+    series: IndicatorSeries,
+    idx: number,
+    s: S,
+    ctx: { priceFmt: (v: number) => string },
+  ): LegendRow[];
+  /** Short legend summary, e.g. "50" for EMA, "12,26,9" for MACD. */
+  formatParams?(s: S): string;
+  /** Default subpane height multiplier (1 when absent). */
   paneHeightFactor?: number;
-  /** Optional params-aware factory color for a line. Returns only the colors it
-   *  wants to vary (e.g. EMA bands its one `ema` line by period); width/dash/label
-   *  stay in `defaultStyle`. `undefined` → fall through to `defaultStyle` colors.
-   *  Layered under any user override in `defaultConfigFor`. */
-  defaultLineColor?(
-    params: P,
-    seriesKey: string,
-  ): { colorVar: string; labelColorVar: string } | undefined;
-  /** Short legend summary, e.g. "50" for EMA, "12,26,9" for MACD. Declared as a
-   *  method (not an arrow property) so `IndicatorDef<P>` stays assignable to the
-   *  erased `IndicatorDef` — matching `compute`/`warmupBars`. */
-  formatParams?(params: P): string;
-  /** Optional legend value formatter for one of this def's lines (e.g. Volume's
-   *  K/M/B). Declared as a method (not a field on `IndicatorLineStyle`, which is
-   *  plain serializable data) so it survives the `colorOverrides` rebuild and the
-   *  `IndicatorDef<P>` → erased-`IndicatorDef` assignment. Absent ⇒ the legend
-   *  uses its default price/2dp formatting. */
-  formatValue?(value: number, seriesKey: string): string;
-  /** Ordered editable params. The popover renders one control per entry (kind →
-   *  control type). Params absent here are not user-editable (stay at default,
-   *  never shown) — this subsumes any need for a `hiddenParams` field. */
-  paramSpecs?: ParamSpec[];
 };
 
 /**
- * A resolved, app-supplied indicator instance. One per drawn entry — four EMA
- * configs (one line each) + one highs config (four lines). `useChartSettings`
- * produces these from its persisted per-key booleans.
+ * A resolved, app-supplied indicator instance. One per drawn entry.
+ * `settings` is the effective merge (base → derived → overrides), read by
+ * compute/draw/domain/legend; `settingsOverrides` is the ONLY persisted source
+ * of truth (sparse deltas).
  */
 export type IndicatorConfig = {
   id: string;
   defKey: string;
-  params: Record<string, unknown>;
   label: string;
   enabled: boolean;
-  style: IndicatorStyle;
-  /** Sparse per-line color overrides (seriesKey → raw hex). The persisted source
-   *  of truth; `style.lines[].colorVar/labelColorVar` are recomputed from it. */
-  colorOverrides?: ColorOverrides;
+  settings: Record<string, unknown>;
+  settingsOverrides: Record<string, unknown>;
 };
 
-/** What Chart publishes on `scaleApi.indicators` for the crosshair/autofit. */
+/** What Chart publishes on `scaleApi.indicators` for the crosshair/autofit.
+ *  `meta` is the per-instance compute payload threaded to `draw`. */
 export type ResolvedIndicator = {
   config: IndicatorConfig;
   series: IndicatorSeries;
+  meta?: unknown;
 };

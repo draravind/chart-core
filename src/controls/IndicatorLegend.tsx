@@ -3,9 +3,9 @@ import { ChevronDown, ChevronUp } from 'lucide-react';
 import type {
   IndicatorConfig,
   IndicatorDef,
-  IndicatorLineStyle,
-  ParamSpec,
+  LegendRow,
   ResolvedIndicator,
+  SettingsField,
 } from '../indicators/types';
 import {
   getIndicator,
@@ -49,50 +49,14 @@ type Props = {
   subscribeHoverIndex: (cb: (idx: number | null) => void) => () => void;
   priceFormatter: (value: number) => string;
   // Resolves a CSS-var/color expression to a concrete rgb string (canvas-grade).
-  // Used to paint factory color swatches in the param popover's ColorField.
+  // Used to paint dots/value cells + factory color swatches in the popover.
   resolveColor?: (expr: string) => string;
 };
 
-const fmt2 = (v: number): string =>
-  v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+type NumberFieldSpec = Extract<SettingsField, { kind: 'number' }>;
+type EnumFieldSpec = Extract<SettingsField, { kind: 'enum' }>;
 
-// Dot color: first non-zero-width line's labelColorVar; fall back to lines[0]
-// when every line is width 0 (e.g. Stage 2's sole marker line).
-function dotColor(config: IndicatorConfig): string {
-  const lines = config.style.lines;
-  const first = lines.find((l) => l.width !== 0) ?? lines[0];
-  return first?.labelColorVar ?? 'transparent';
-}
-
-// Per-drawn-line values at `idx` (price-pane lines formatted as prices, subpane
-// lines to 2dp). Skips marker lines (width 0) and gaps (NaN).
-function rowValues(
-  config: IndicatorConfig,
-  resolved: ResolvedIndicator[],
-  idx: number,
-  priceFmt: (v: number) => string,
-): ValueCell[] {
-  if (idx < 0) return [];
-  const r = resolved.find((x) => x.config.id === config.id);
-  if (!r) return [];
-  const def = getIndicator(config.defKey);
-  const isPrice = def?.pane === 'price';
-  const out: ValueCell[] = [];
-  for (const line of config.style.lines) {
-    if (line.width === 0) continue;
-    const arr = r.series[line.seriesKey];
-    if (!arr || idx >= arr.length) continue;
-    const v = arr[idx];
-    if (Number.isNaN(v)) continue;
-    // A def-level formatter (e.g. Volume's K/M/B) wins; else price/2dp default.
-    const text =
-      def?.formatValue?.(v, line.seriesKey) ?? (isPrice ? priceFmt(v) : fmt2(v));
-    out.push({ text, color: line.labelColorVar });
-  }
-  return out;
-}
-
-function clamp(n: number, spec: Extract<ParamSpec, { kind: 'number' }>): number {
+function clamp(n: number, spec: NumberFieldSpec): number {
   let v = n;
   if (spec.min != null) v = Math.max(spec.min, v);
   if (spec.max != null) v = Math.min(spec.max, v);
@@ -107,7 +71,7 @@ function NumberField({
   value,
   onCommit,
 }: {
-  spec: Extract<ParamSpec, { kind: 'number' }>;
+  spec: NumberFieldSpec;
   value: number;
   onCommit: (v: number) => void;
 }) {
@@ -152,7 +116,7 @@ function EnumField({
   value,
   onChange,
 }: {
-  spec: Extract<ParamSpec, { kind: 'enum' }>;
+  spec: EnumFieldSpec;
   value: number;
   onChange: (v: number) => void;
 }) {
@@ -170,25 +134,48 @@ function EnumField({
   );
 }
 
-// One editable line color: native swatch + hex text field + reset-to-default.
-// The native picker is hex-only, so the swatch's controlled value is the
-// resolved-then-hexed color. The hex text field commits on blur/Enter (not per
-// keystroke) to avoid a repaint/persist on every intermediate character; local
-// text resyncs to the resolved value on blur, reset, re-band, or theme change.
+function ToggleField({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: boolean;
+  onChange: (v: boolean) => void;
+}) {
+  return (
+    <label className={styles.legendPopoverField}>
+      <span>{label}</span>
+      <input
+        type="checkbox"
+        checked={value}
+        onChange={(e) => onChange(e.target.checked)}
+      />
+    </label>
+  );
+}
+
+// One editable color: native swatch + hex text field + reset-to-default. The
+// native picker is hex-only, so the swatch's controlled value is the resolved-
+// then-hexed color. The hex text field commits on blur/Enter (not per keystroke)
+// to avoid a repaint/persist on every intermediate character; local text resyncs
+// to the resolved value on blur, reset, re-band, or theme change.
 function ColorField({
-  line,
+  label,
+  colorExpr,
   isOverridden,
   resolveColor,
   onCommit,
   onReset,
 }: {
-  line: IndicatorLineStyle;
+  label: string;
+  colorExpr: string;
   isOverridden: boolean;
   resolveColor: (expr: string) => string;
   onCommit: (hex: string) => void;
   onReset: () => void;
 }) {
-  const resolvedHex = toHex6(resolveColor(line.colorVar));
+  const resolvedHex = toHex6(resolveColor(colorExpr));
   const [text, setText] = useState(resolvedHex);
   useEffect(() => setText(resolvedHex), [resolvedHex]);
 
@@ -200,12 +187,12 @@ function ColorField({
 
   return (
     <div className={styles.legendColorField}>
-      <span>{line.label}</span>
+      <span>{label}</span>
       <div className={styles.legendColorControls}>
         <input
           type="color"
           value={resolvedHex}
-          title={`${line.label} color`}
+          title={`${label} color`}
           onChange={(e) => onCommit(e.target.value)}
         />
         <input
@@ -234,20 +221,21 @@ function ColorField({
   );
 }
 
+// One uniform popover over the def's `settingsSchema`: number/enum/toggle/color
+// controls, each reading its current value from `config.settings`. Color fields
+// also surface the per-field reset (delete the key from `settingsOverrides`).
 function ParamPopover({
   config,
   def,
   onCommit,
-  onColorCommit,
-  onColorReset,
+  onReset,
   resolveColor,
   onClose,
 }: {
   config: IndicatorConfig;
   def: IndicatorDef;
-  onCommit: (key: string, value: number) => void;
-  onColorCommit: (seriesKey: string, hex: string) => void;
-  onColorReset: (seriesKey: string) => void;
+  onCommit: (key: string, value: number | boolean | string) => void;
+  onReset: (key: string) => void;
   resolveColor?: (expr: string) => string;
   onClose: () => void;
 }) {
@@ -268,6 +256,7 @@ function ParamPopover({
   }, [onClose]);
 
   const summary = formatIndicatorParams(config);
+  const resolve = resolveColor ?? ((e: string) => e);
   return (
     <div className={styles.legendPopover} ref={ref}>
       <div className={styles.legendPopoverHeader}>
@@ -285,35 +274,49 @@ function ParamPopover({
         </button>
       </div>
       <div className={styles.legendPopoverBody}>
-        {(def.paramSpecs ?? []).map((spec) =>
-          spec.kind === 'number' ? (
-            <NumberField
-              key={spec.key}
-              spec={spec}
-              value={Number(config.params[spec.key] ?? 0)}
-              onCommit={(v) => onCommit(spec.key, v)}
-            />
-          ) : (
-            <EnumField
-              key={spec.key}
-              spec={spec}
-              value={Number(config.params[spec.key] ?? 0)}
-              onChange={(v) => onCommit(spec.key, v)}
-            />
-          ),
-        )}
-        {config.style.lines
-          .filter((l) => l.width !== 0)
-          .map((line) => (
-            <ColorField
-              key={line.seriesKey}
-              line={line}
-              isOverridden={Boolean(config.colorOverrides?.[line.seriesKey])}
-              resolveColor={resolveColor ?? (() => '#888888')}
-              onCommit={(hex) => onColorCommit(line.seriesKey, hex)}
-              onReset={() => onColorReset(line.seriesKey)}
-            />
-          ))}
+        {def.settingsSchema.map((field) => {
+          switch (field.kind) {
+            case 'number':
+              return (
+                <NumberField
+                  key={field.key}
+                  spec={field}
+                  value={Number(config.settings[field.key] ?? field.default)}
+                  onCommit={(v) => onCommit(field.key, v)}
+                />
+              );
+            case 'enum':
+              return (
+                <EnumField
+                  key={field.key}
+                  spec={field}
+                  value={Number(config.settings[field.key] ?? field.default)}
+                  onChange={(v) => onCommit(field.key, v)}
+                />
+              );
+            case 'toggle':
+              return (
+                <ToggleField
+                  key={field.key}
+                  label={field.label}
+                  value={Boolean(config.settings[field.key] ?? field.default)}
+                  onChange={(v) => onCommit(field.key, v)}
+                />
+              );
+            case 'color':
+              return (
+                <ColorField
+                  key={field.key}
+                  label={field.label}
+                  colorExpr={String(config.settings[field.key] ?? field.default)}
+                  isOverridden={field.key in config.settingsOverrides}
+                  resolveColor={resolve}
+                  onCommit={(hex) => onCommit(field.key, hex)}
+                  onReset={() => onReset(field.key)}
+                />
+              );
+          }
+        })}
       </div>
     </div>
   );
@@ -326,11 +329,10 @@ function LegendBlock({
   openId,
   setOpenId,
   onCommit,
-  onColorCommit,
-  onColorReset,
+  onReset,
   resolveColor,
   onRemove,
-  valuesFor,
+  rowsFor,
   toggle,
 }: {
   configs: IndicatorConfig[];
@@ -338,35 +340,34 @@ function LegendBlock({
   left: number;
   openId: string | null;
   setOpenId: (id: string | null) => void;
-  onCommit: (config: IndicatorConfig, key: string, value: number) => void;
-  onColorCommit: (config: IndicatorConfig, seriesKey: string, hex: string) => void;
-  onColorReset: (config: IndicatorConfig, seriesKey: string) => void;
+  onCommit: (config: IndicatorConfig, key: string, value: number | boolean | string) => void;
+  onReset: (config: IndicatorConfig, key: string) => void;
   resolveColor?: (expr: string) => string;
   onRemove: (id: string) => void;
-  valuesFor: (config: IndicatorConfig) => ValueCell[];
+  rowsFor: (config: IndicatorConfig) => LegendRow[];
   // Renders the per-pane expand/collapse header above the rows; collapsing hides
   // that pane's list down to just this header.
   toggle?: { expanded: boolean; onToggle: () => void };
 }) {
   if (configs.length === 0 && !toggle) return null;
+  const rc = resolveColor ?? ((e: string) => e);
   return (
     <div className={styles.legendBlock} style={{ top, left }}>
       {configs.map((config) => {
         const def = getIndicator(config.defKey);
         if (!def) return null;
-        const hasParams = (def.paramSpecs?.length ?? 0) > 0;
-        // Color-only defs (no paramSpecs but drawn lines, e.g. `highs`) still get
-        // a gear so their line colors are editable.
-        const hasEditable =
-          hasParams || config.style.lines.some((l) => l.width !== 0);
+        // Any def with editable settings gets a gear (color-only defs included;
+        // the old `lines.some(width!==0)` clause is gone).
+        const hasEditable = (def.settingsSchema?.length ?? 0) > 0;
         const summary = formatIndicatorParams(config);
-        const values = valuesFor(config);
+        const rows = rowsFor(config);
+        const dot = rows[0]?.color ? rc(rows[0].color) : 'transparent';
+        const values: ValueCell[] = rows
+          .filter((r) => r.value)
+          .map((r) => ({ text: r.value as string, color: rc(r.color) }));
         return (
           <div key={config.id} className={styles.legendItem}>
-            <span
-              className={styles.legendDot}
-              style={{ background: dotColor(config) }}
-            />
+            <span className={styles.legendDot} style={{ background: dot }} />
             <span className={styles.legendLabel}>
               {def.label}
               {summary ? ` ${summary}` : ''}
@@ -409,10 +410,7 @@ function LegendBlock({
                 config={config}
                 def={def}
                 onCommit={(key, value) => onCommit(config, key, value)}
-                onColorCommit={(seriesKey, hex) =>
-                  onColorCommit(config, seriesKey, hex)
-                }
-                onColorReset={(seriesKey) => onColorReset(config, seriesKey)}
+                onReset={(key) => onReset(config, key)}
                 resolveColor={resolveColor}
                 onClose={() => setOpenId(null)}
               />
@@ -442,7 +440,7 @@ function LegendBlock({
 /**
  * Persistent on-chart indicator legend — one block per pane (price + each
  * subpane), each listing its configs with a color dot, param summary, a gear
- * (param popover) and a remove button. Positioned over `.chartWrapper`; the
+ * (settings popover) and a remove button. Positioned over `.chartWrapper`; the
  * container ignores pointer events so the crosshair is unaffected (individual
  * controls re-enable them).
  */
@@ -477,55 +475,40 @@ export default function IndicatorLegend({
     return subscribeHoverIndex(setHoverIdx);
   }, [expanded, subscribeHoverIndex]);
 
-  // Recompute the whole config via `defaultConfigFor` (not a shallow params
-  // spread) so changing a param re-derives style — e.g. an EMA period 10→100
-  // re-bands blue→green — while preserving any user color override.
-  const commitParam = (config: IndicatorConfig, key: string, value: number) => {
+  // Set one setting override and recompute the whole config via
+  // `defaultConfigFor` (not a shallow spread) so param-dependent defaults
+  // re-derive — e.g. an EMA period 10→100 re-bands blue→green — while any user
+  // color override survives.
+  const commitSetting = (
+    config: IndicatorConfig,
+    key: string,
+    value: number | boolean | string,
+  ) => {
     onIndicatorsChange(
       indicators.map((c) => {
         if (c.id !== config.id) return c;
         const next = defaultConfigFor(c.defKey, {
           id: c.id,
           enabled: c.enabled,
-          params: { ...c.params, [key]: value },
-          colorOverrides: c.colorOverrides,
+          settingsOverrides: { ...c.settingsOverrides, [key]: value },
         });
         return next ?? c;
       }),
     );
   };
 
-  // Set a user override for one line; recompute via `defaultConfigFor` (same
-  // path as commitParam/resetColor) so the resolved colors reflect immediately
-  // and the config stays structurally consistent.
-  const commitColor = (config: IndicatorConfig, seriesKey: string, hex: string) => {
+  // Drop a setting's override and recompute via `defaultConfigFor` so it falls
+  // back to its (possibly param-derived) default.
+  const resetSetting = (config: IndicatorConfig, key: string) => {
     onIndicatorsChange(
       indicators.map((c) => {
         if (c.id !== config.id) return c;
-        const colorOverrides = { ...c.colorOverrides, [seriesKey]: hex };
+        const settingsOverrides = { ...c.settingsOverrides };
+        delete settingsOverrides[key];
         const next = defaultConfigFor(c.defKey, {
           id: c.id,
           enabled: c.enabled,
-          params: c.params,
-          colorOverrides,
-        });
-        return next ?? c;
-      }),
-    );
-  };
-
-  // Drop a line's override and recompute its factory color via `defaultConfigFor`.
-  const resetColor = (config: IndicatorConfig, seriesKey: string) => {
-    onIndicatorsChange(
-      indicators.map((c) => {
-        if (c.id !== config.id) return c;
-        const colorOverrides = { ...c.colorOverrides };
-        delete colorOverrides[seriesKey];
-        const next = defaultConfigFor(c.defKey, {
-          id: c.id,
-          enabled: c.enabled,
-          params: c.params,
-          colorOverrides,
+          settingsOverrides,
         });
         return next ?? c;
       }),
@@ -549,8 +532,15 @@ export default function IndicatorLegend({
 
   // At rest (not hovering) show the latest bar; on hover show that bar.
   const displayIdx = hoverIdx ?? barCount - 1;
-  const valuesFor = (config: IndicatorConfig): ValueCell[] =>
-    rowValues(config, resolved, displayIdx, priceFormatter);
+  const rowsFor = (config: IndicatorConfig): LegendRow[] => {
+    if (displayIdx < 0) return [];
+    const r = resolved.find((x) => x.config.id === config.id);
+    const def = getIndicator(config.defKey);
+    if (!r || !def) return [];
+    return def.legend(r.series, displayIdx, config.settings, {
+      priceFmt: priceFormatter,
+    });
+  };
 
   // Each pane has its own toggle; collapsing hides that pane's list down to the
   // header, expanding shows every row (with live values).
@@ -562,12 +552,11 @@ export default function IndicatorLegend({
         left={marginLeft + 8}
         openId={openId}
         setOpenId={setOpenId}
-        onCommit={commitParam}
-        onColorCommit={commitColor}
-        onColorReset={resetColor}
+        onCommit={commitSetting}
+        onReset={resetSetting}
         resolveColor={resolveColor}
         onRemove={removeConfig}
-        valuesFor={valuesFor}
+        rowsFor={rowsFor}
         toggle={
           priceConfigs.length > 0
             ? { expanded, onToggle: toggleExpanded }
@@ -582,12 +571,11 @@ export default function IndicatorLegend({
           left={marginLeft + 8}
           openId={openId}
           setOpenId={setOpenId}
-          onCommit={commitParam}
-          onColorCommit={commitColor}
-          onColorReset={resetColor}
+          onCommit={commitSetting}
+          onReset={resetSetting}
           resolveColor={resolveColor}
           onRemove={removeConfig}
-          valuesFor={valuesFor}
+          rowsFor={rowsFor}
           toggle={{ expanded, onToggle: toggleExpanded }}
         />
       ))}

@@ -1,36 +1,33 @@
 import type { IndicatorDef } from '../types';
 import { dx, round2 } from '../talibMath';
-import { drawLines } from '../draw';
+import { drawLines, cellAt, fmt2 } from '../draw';
 
-export type DxParams = { period: number };
+export type DxSettings = { period: number; lineColor: string };
 
 /** TA-Lib DX — raw directional index (0–100), lookback `period`. Bounded subpane. */
-export const dxDef: IndicatorDef<DxParams> = {
+export const dxDef: IndicatorDef<DxSettings> = {
   key: 'ti:dx',
   label: 'DX',
   longLabel: 'Directional Movement Index',
-  pane: { subpane: 'dx', scaleHint: { fixedDomain: [0, 100] } },
-  defaultParams: { period: 14 },
-  formatParams: (p) => String(p.period),
-  paramSpecs: [{ key: 'period', label: 'Length', kind: 'number', min: 1 }],
-  warmupBars: (p) => p.period + Math.max(250, 5 * p.period),
-  compute: (input, p) => {
-    const out = dx(input.h, input.l, input.c, p.period);
+  pane: { subpane: 'dx' },
+  settingsSchema: [
+    { key: 'period', label: 'Length', kind: 'number', default: 14, min: 1 },
+    { key: 'lineColor', label: 'Line', kind: 'color', default: 'var(--dx-line)' },
+  ],
+  formatParams: (s) => String(s.period),
+  warmupBars: (s) => s.period + Math.max(250, 5 * s.period),
+  compute: (input, s) => {
+    const out = dx(input.h, input.l, input.c, s.period);
     for (let i = 0; i < out.length; i++) out[i] = round2(out[i]);
-    return { dx: out };
+    return { series: { dx: out } };
   },
-  draw: (ctx, series, scale, style) => drawLines(ctx, series, scale, style),
-  defaultStyle: {
-    lines: [
-      {
-        seriesKey: 'dx',
-        colorVar: 'var(--dx-line)',
-        labelColorVar: 'var(--dx-line)',
-        label: 'DX',
-        width: 1.3,
-      },
-    ],
-    tooltipGroup: 'ti:dx',
-    tooltipTitle: 'DX',
-  },
+  draw: (ctx, series, scale, s, resolveColor) =>
+    drawLines(ctx, series, scale, [
+      { key: 'dx', st: { color: resolveColor(s.lineColor), width: 1.3 } },
+    ]),
+  autofitKeys: () => ['dx'],
+  domain: () => ({ fixedDomain: [0, 100] }),
+  legend: (series, idx, s) => [
+    { color: s.lineColor, label: 'DX', value: cellAt(series.dx, idx, fmt2) },
+  ],
 };

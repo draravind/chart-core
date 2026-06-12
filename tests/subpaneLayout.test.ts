@@ -4,6 +4,18 @@ import {
   computeSubpaneBands,
   computeSubpaneDomain,
 } from '../src/indicators/subpaneLayout';
+import { rsLineDef } from '../src/indicators/builtins/rsLine';
+
+describe('def autofit-key selection (the new Chart-side seam)', () => {
+  it('rsLineDef.autofitKeys returns only [rs] — the 0/1 signal is excluded', () => {
+    const settings = {
+      lookback: 252,
+      lineColor: 'var(--rs-line)',
+      signalColor: 'var(--rs-signal)',
+    };
+    expect(rsLineDef.autofitKeys!(settings)).toEqual(['rs']);
+  });
+});
 
 const RATIOS = { heightRatio: 0.13, floorRatio: 0.45 };
 

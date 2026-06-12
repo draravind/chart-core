@@ -1,24 +1,32 @@
 import type { QuarterlyResult } from '../../types';
 import { barIndexForDate } from '../../utils/dateBarIndex';
-import type { IndicatorDef, IndicatorInput, SubpaneScaleHint } from '../types';
+import type { DomainSpec, IndicatorDef, IndicatorInput } from '../types';
+import { cellAt, fmt2 } from '../draw';
 
 // ---------------------------------------------------------------------------
 // Quarterly Results — a fundamentals subpane porting the finance website's
 // text-based earnings strip into the indicator framework. Two display modes
-// (Text / Bars) behind a `display` enum param. Metrics are RPS (revenue per
+// (Text / Bars) behind a `display` enum setting. Metrics are RPS (revenue per
 // share) + EPS, both ₹/share, so they share one honest y-scale in Bars mode.
 //
 // Core owns the YoY growth math (date-based year-ago matching) and bakes the
 // display strings at compute time using `input.market` for the currency. Since
-// `def.draw` only receives Float64Arrays, the formatted strings + display mode
-// ride a module WeakMap keyed on the `anchor` array's ArrayBuffer — a per-
-// compute, GC-safe key that survives Chart's warmup `subarray(seedLen)` slice
-// (subarray shares the buffer).
+// `def.draw` cannot read non-numeric data off the Float64Arrays, the formatted
+// rows ride `compute`'s `meta` channel (the framework threads it untouched to
+// `draw`). The display MODE is a user setting, read straight off `s.display` in
+// `draw`/`domain` — it never rides `meta`.
 // ---------------------------------------------------------------------------
 
-export type QuarterlyResultsParams = { display: number }; // 0 = Text, 1 = Bars
+export type QuarterlyResultsSettings = {
+  display: number; // 0 = Text, 1 = Bars
+  epsColor: string;
+  rpsColor: string;
+  growthUpColor: string;
+  growthDownColor: string;
+  labelColor: string;
+};
 
-type QrRow = {
+export type QrRow = {
   label: string;
   eps: number; // NaN when absent
   rps: number; // NaN when absent
@@ -29,16 +37,6 @@ type QrRow = {
   epsGrowthUp: boolean;
   rpsGrowthUp: boolean;
 };
-type QrMeta = { mode: 'text' | 'bars'; rows: QrRow[] };
-
-const qrMeta = new WeakMap<ArrayBufferLike, QrMeta>();
-
-/** Resolve the formatted rows + display mode baked for this series' `anchor`
- *  array. Survives the warmup-slice (`anchor.subarray(seedLen)` shares the
- *  buffer). `undefined` when no compute baked this buffer. */
-export function readQrMeta(anchor: Float64Array): QrMeta | undefined {
-  return qrMeta.get(anchor.buffer);
-}
 
 const YOY_TOLERANCE_DAYS = 40;
 const MIN_COL_SPACING_PX = 70;
@@ -48,7 +46,7 @@ const DAY_MS = 86_400_000;
 const YEAR_MS = 365 * DAY_MS;
 const MAX_BAR_PX = 48;
 
-// Legend-matching value format (IndicatorLegend.tsx fmt2): grouped en-US, 2dp.
+// Legend-matching value format: grouped en-US, 2dp.
 const fmtVal = (v: number): string =>
   v.toLocaleString('en-US', {
     minimumFractionDigits: 2,
@@ -118,10 +116,10 @@ export function filterColumnsBySpacing(
   return keep;
 }
 
-function compute(
-  input: IndicatorInput,
-  p: QuarterlyResultsParams,
-): Record<string, Float64Array> {
+function compute(input: IndicatorInput): {
+  series: Record<string, Float64Array>;
+  meta: QrRow[];
+} {
   // 1. Sort rows ascending by date (ISO strings sort lexicographically).
   const rows = [...(input.quarterlyResults ?? [])].sort((a, b) =>
     a.date < b.date ? -1 : a.date > b.date ? 1 : 0,
@@ -182,13 +180,10 @@ function compute(
     }
   }
 
-  // 7. Bake meta on the anchor buffer.
-  qrMeta.set(anchor.buffer, {
-    mode: p.display === 1 ? 'bars' : 'text',
-    rows: qrRows,
-  });
-
-  return { eps, rps, epsGrowth, rpsGrowth, anchor };
+  return {
+    series: { eps, rps, epsGrowth, rpsGrowth, anchor },
+    meta: qrRows,
+  };
 }
 
 type Seg = { text: string; color: string };
@@ -216,27 +211,28 @@ function drawCenteredSegments(
   ctx.textAlign = prevAlign;
 }
 
-const draw: IndicatorDef<QuarterlyResultsParams>['draw'] = (
+const draw: IndicatorDef<QuarterlyResultsSettings>['draw'] = (
   ctx,
   series,
   scale,
-  style,
+  s,
+  resolveColor,
+  meta,
 ) => {
-  const meta = readQrMeta(series.anchor);
-  if (!meta) return;
+  const rows = meta as QrRow[] | undefined;
+  if (!rows) return;
+  const mode: 'text' | 'bars' = s.display === 1 ? 'bars' : 'text';
   const { xScale, bandwidth, renderStart, renderEnd } = scale;
   const paneTop = scale.paneTop ?? 0;
   const paneBottom = scale.paneBottom ?? 0;
   const paneHeight = paneBottom - paneTop;
   if (paneHeight <= 0) return;
 
-  const colorOf = (key: string, fallback: string) =>
-    style.find((s) => s.seriesKey === key)?.color ?? fallback;
-  const epsColor = colorOf('eps', '#f97316');
-  const rpsColor = colorOf('rps', '#60a5fa');
-  const upColor = colorOf('growth_up', '#16a34a');
-  const downColor = colorOf('growth_down', '#dc2626');
-  const labelColor = colorOf('qlabel', '#888888');
+  const epsColor = resolveColor(s.epsColor);
+  const rpsColor = resolveColor(s.rpsColor);
+  const upColor = resolveColor(s.growthUpColor);
+  const downColor = resolveColor(s.growthDownColor);
+  const labelColor = resolveColor(s.labelColor);
 
   // Clip to the pane band (no per-subpane clip exists in the framework today —
   // without this, text/bars bleed into adjacent panes). The drawSeries viewport
@@ -252,12 +248,12 @@ const draw: IndicatorDef<QuarterlyResultsParams>['draw'] = (
   for (let g = renderStart; g < renderEnd; g++) {
     const ord = series.anchor[g];
     if (Number.isNaN(ord)) continue;
-    const row = meta.rows[ord];
+    const row = rows[ord];
     if (!row) continue;
     anchors.push({ g, x: (xScale(g) ?? 0) + bandwidth / 2, row });
   }
 
-  if (meta.mode === 'text') {
+  if (mode === 'text') {
     const keep = filterColumnsBySpacing(
       anchors.map((a) => a.x),
       MIN_COL_SPACING_PX,
@@ -402,8 +398,8 @@ const draw: IndicatorDef<QuarterlyResultsParams>['draw'] = (
     ) => {
       if (!text || !Number.isFinite(value)) return;
       // Always above the bar's top edge (zeroY for a negative bar). The
-      // bars-mode domain pads the top (BARS_HINT.autofitPadding) so the tallest
-      // bar leaves room and the label is never clipped by the pane border.
+      // bars-mode domain pads the top (topPadPx) so the tallest bar leaves room
+      // and the label is never clipped by the pane border.
       const barTop = Math.min(zeroY, scale.y(value));
       ctx.fillStyle = up ? upColor : downColor;
       ctx.textBaseline = 'bottom';
@@ -415,85 +411,51 @@ const draw: IndicatorDef<QuarterlyResultsParams>['draw'] = (
   ctx.restore();
 };
 
-const TEXT_HINT: SubpaneScaleHint = { fixedDomain: [0, 1], hideAxis: true };
+const TEXT_SPEC: DomainSpec = { fixedDomain: [0, 1], hideAxis: true };
 // Bars rest flush on the zero baseline at the bottom (includeZero, no fractional
 // pad) and reserve a FIXED 17px above the tallest bar. The 10px growth label
 // (drawn at `barTop − 2`) spans ~12px upward from the bar top, so 17px clears it
 // AND leaves ~5px of breathing room below `pane.top` — which, with panes now
 // flush, IS the divider line — so the label doesn't sit flush against it.
-const BARS_HINT: SubpaneScaleHint = {
+const BARS_SPEC: DomainSpec = {
   includeZero: true,
   guideLines: [0],
   autofitPadding: 0,
   topPadPx: 17,
 };
 
-export const quarterlyResultsDef: IndicatorDef<QuarterlyResultsParams> = {
+export const quarterlyResultsDef: IndicatorDef<QuarterlyResultsSettings> = {
   key: 'results',
   label: 'Results',
   longLabel: 'Quarterly Results',
-  pane: { subpane: 'results', scaleHint: TEXT_HINT },
-  scaleHintFor(p) {
-    return p.display === 1 ? BARS_HINT : TEXT_HINT;
-  },
+  pane: { subpane: 'results' },
   paneHeightFactor: 1.7, // ≈96px default — the five-row layout fits.
-  defaultParams: { display: 0 },
-  formatParams: (p) => (p.display === 1 ? 'Bars' : 'Text'),
-  paramSpecs: [
+  settingsSchema: [
     {
       key: 'display',
       label: 'Display',
       kind: 'enum',
+      default: 0,
       options: [
         { label: 'Text', value: 0 },
         { label: 'Bars', value: 1 },
       ],
     },
+    { key: 'epsColor', label: 'EPS', kind: 'color', default: 'var(--qr-eps)' },
+    { key: 'rpsColor', label: 'RPS', kind: 'color', default: 'var(--qr-rps)' },
+    { key: 'growthUpColor', label: 'Growth +', kind: 'color', default: 'var(--qr-growth-up)' },
+    { key: 'growthDownColor', label: 'Growth −', kind: 'color', default: 'var(--qr-growth-down)' },
+    { key: 'labelColor', label: 'Quarter', kind: 'color', default: 'var(--qr-label)' },
   ],
+  formatParams: (s) => (s.display === 1 ? 'Bars' : 'Text'),
   warmupBars: () => 0,
-  compute,
+  compute: (input) => compute(input),
   draw,
-  defaultStyle: {
-    lines: [
-      {
-        seriesKey: 'rps',
-        colorVar: 'var(--qr-rps)',
-        labelColorVar: 'var(--chart-qr-rps-label)',
-        label: 'RPS',
-        width: 1,
-      },
-      {
-        seriesKey: 'eps',
-        colorVar: 'var(--qr-eps)',
-        labelColorVar: 'var(--chart-qr-eps-label)',
-        label: 'EPS',
-        width: 1,
-      },
-      // Width-0 color carriers — excluded from autofit / legend values / color
-      // popover (MACD `macdhist_down` precedent).
-      {
-        seriesKey: 'growth_up',
-        colorVar: 'var(--qr-growth-up)',
-        labelColorVar: 'var(--qr-growth-up)',
-        label: 'Growth +',
-        width: 0,
-      },
-      {
-        seriesKey: 'growth_down',
-        colorVar: 'var(--qr-growth-down)',
-        labelColorVar: 'var(--qr-growth-down)',
-        label: 'Growth −',
-        width: 0,
-      },
-      {
-        seriesKey: 'qlabel',
-        colorVar: 'var(--qr-label)',
-        labelColorVar: 'var(--qr-label)',
-        label: 'Quarter',
-        width: 0,
-      },
-    ],
-    tooltipGroup: 'results',
-    tooltipTitle: 'Results',
-  },
+  // Bars mode autofits over EPS+RPS; text mode pins [0,1] and autofits nothing.
+  autofitKeys: (s) => (s.display === 1 ? ['eps', 'rps'] : []),
+  domain: (_series, s) => (s.display === 1 ? BARS_SPEC : TEXT_SPEC),
+  legend: (series, idx, s) => [
+    { color: s.rpsColor, label: 'RPS', value: cellAt(series.rps, idx, fmt2) },
+    { color: s.epsColor, label: 'EPS', value: cellAt(series.eps, idx, fmt2) },
+  ],
 };

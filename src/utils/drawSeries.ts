@@ -1,6 +1,6 @@
 import type * as d3 from 'd3';
 import type { Candle, ChartType } from '../types';
-import type { IndicatorConfig, IndicatorSeries } from '../indicators/types';
+import type { ResolvedIndicator } from '../indicators/types';
 import { getIndicator } from '../indicators/registry';
 
 export type SeriesColors = { positive: string; negative: string };
@@ -29,7 +29,7 @@ export type DrawSeriesParams = {
   subpaneScales: Map<string, d3.ScaleLinear<number, number>>;
   data: readonly Candle[];
   colors: SeriesColors;
-  indicators: { config: IndicatorConfig; series: IndicatorSeries }[];
+  indicators: ResolvedIndicator[];
   resolveColor: (varExpr: string) => string;
 };
 
@@ -155,7 +155,7 @@ function drawBars(ctx: CanvasRenderingContext2D, p: DrawSeriesParams): void {
 
 function drawIndicators(ctx: CanvasRenderingContext2D, p: DrawSeriesParams): void {
   if (p.indicators.length === 0) return;
-  for (const { config, series } of p.indicators) {
+  for (const { config, series, meta } of p.indicators) {
     const def = getIndicator(config.defKey);
     if (!def) continue;
     const isSubpane = typeof def.pane === 'object' && 'subpane' in def.pane;
@@ -182,13 +182,6 @@ function drawIndicators(ctx: CanvasRenderingContext2D, p: DrawSeriesParams): voi
       paneTop: Math.min(...paneRange),
       paneBottom: Math.max(...paneRange),
     };
-    const resolved = config.style.lines.map((l) => ({
-      seriesKey: l.seriesKey,
-      color: p.resolveColor(l.colorVar),
-      width: l.width,
-      dash: l.dash,
-      opacity: l.opacity,
-    }));
-    def.draw(ctx, series, scale, resolved, config.params);
+    def.draw(ctx, series, scale, config.settings, p.resolveColor, meta);
   }
 }

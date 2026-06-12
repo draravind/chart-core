@@ -1,36 +1,32 @@
 import type { IndicatorDef } from '../types';
 import { wma, round2 } from '../talibMath';
-import { drawLines } from '../draw';
+import { drawLines, cellAt } from '../draw';
 
-export type WmaParams = { period: number };
+export type WmaSettings = { period: number; lineColor: string };
 
 /** TA-Lib WMA — linearly-weighted moving average. Price-pane overlay. */
-export const wmaDef: IndicatorDef<WmaParams> = {
+export const wmaDef: IndicatorDef<WmaSettings> = {
   key: 'ti:wma',
   label: 'WMA',
   longLabel: 'Weighted Moving Average',
   pane: 'price',
-  defaultParams: { period: 20 },
-  formatParams: (p) => String(p.period),
-  paramSpecs: [{ key: 'period', label: 'Length', kind: 'number', min: 1 }],
-  warmupBars: (p) => p.period - 1 + Math.max(250, 5 * p.period),
-  compute: (input, p) => {
-    const out = wma(input.c, p.period);
+  settingsSchema: [
+    { key: 'period', label: 'Length', kind: 'number', default: 20, min: 1 },
+    { key: 'lineColor', label: 'Line', kind: 'color', default: 'var(--ti-wma)' },
+  ],
+  formatParams: (s) => String(s.period),
+  warmupBars: (s) => s.period - 1 + Math.max(250, 5 * s.period),
+  compute: (input, s) => {
+    const out = wma(input.c, s.period);
     for (let i = 0; i < out.length; i++) out[i] = round2(out[i]);
-    return { wma: out };
+    return { series: { wma: out } };
   },
-  draw: (ctx, series, scale, style) => drawLines(ctx, series, scale, style),
-  defaultStyle: {
-    lines: [
-      {
-        seriesKey: 'wma',
-        colorVar: 'var(--ti-wma)',
-        labelColorVar: 'var(--ti-wma)',
-        label: 'WMA',
-        width: 1.2,
-      },
-    ],
-    tooltipGroup: 'ti:wma',
-    tooltipTitle: 'WMA',
-  },
+  draw: (ctx, series, scale, s, resolveColor) =>
+    drawLines(ctx, series, scale, [
+      { key: 'wma', st: { color: resolveColor(s.lineColor), width: 1.2 } },
+    ]),
+  autofitKeys: () => ['wma'],
+  legend: (series, idx, s, ctx) => [
+    { color: s.lineColor, label: 'WMA', value: cellAt(series.wma, idx, ctx.priceFmt) },
+  ],
 };

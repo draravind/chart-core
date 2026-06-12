@@ -5,7 +5,8 @@ import {
   quarterlyResultsDef,
   computeYoYGrowth,
   filterColumnsBySpacing,
-  readQrMeta,
+  type QuarterlyResultsSettings,
+  type QrRow,
 } from '../src/indicators/builtins/quarterlyResults';
 import {
   getIndicator,
@@ -44,6 +45,15 @@ function makeInput(
     market,
   };
 }
+
+const baseSettings = (display: number): QuarterlyResultsSettings => ({
+  display,
+  epsColor: 'var(--qr-eps)',
+  rpsColor: 'var(--qr-rps)',
+  growthUpColor: 'var(--qr-growth-up)',
+  growthDownColor: 'var(--qr-growth-down)',
+  labelColor: 'var(--qr-label)',
+});
 
 describe('computeYoYGrowth', () => {
   it('quarterly cadence matches the ~365d-back row, not adjacent quarters', () => {
@@ -119,7 +129,7 @@ describe('quarterlyResultsDef.compute — alignment + step fill', () => {
     const rows: QuarterlyResult[] = [
       { label: 'Q', date: bars[50].date, eps: 12.5, rps: 200 },
     ];
-    const s = quarterlyResultsDef.compute(makeInput(bars, rows), { display: 0 });
+    const s = quarterlyResultsDef.compute(makeInput(bars, rows), baseSettings(0)).series;
     expect(s.anchor[50]).toBe(0); // row ordinal 0
     expect(Number.isNaN(s.anchor[49])).toBe(true);
     expect(s.eps[50]).toBeCloseTo(12.5, 6);
@@ -145,7 +155,7 @@ describe('quarterlyResultsDef.compute — alignment + step fill', () => {
     const rows: QuarterlyResult[] = [
       { label: 'Q', date: '2025-01-04', eps: 5 }, // Saturday → preceding bar idx 2
     ];
-    const s = quarterlyResultsDef.compute(makeInput(bars, rows), { display: 0 });
+    const s = quarterlyResultsDef.compute(makeInput(bars, rows), baseSettings(0)).series;
     expect(s.anchor[2]).toBe(0);
     expect(Number.isNaN(s.anchor[3])).toBe(true);
   });
@@ -158,7 +168,7 @@ describe('quarterlyResultsDef.compute — alignment + step fill', () => {
       { label: 'old', date: oldDate, eps: 100 },
       { label: 'new', date: inRange, eps: 120 },
     ];
-    const s = quarterlyResultsDef.compute(makeInput(bars, rows), { display: 0 });
+    const s = quarterlyResultsDef.compute(makeInput(bars, rows), baseSettings(0)).series;
     // No anchor for the out-of-range row anywhere; only the in-range one.
     const anchorCount = Array.from(s.anchor).filter(
       (v) => !Number.isNaN(v),
@@ -170,38 +180,30 @@ describe('quarterlyResultsDef.compute — alignment + step fill', () => {
   });
 });
 
-describe('quarterlyResultsDef meta channel', () => {
+describe('quarterlyResultsDef meta channel (formatted rows ride compute.meta)', () => {
   const bars = dailyBars('2025-01-01', 60);
   const rows: QuarterlyResult[] = [
     { label: 'Q1', date: bars[30].date, eps: 12.34, rps: 2250.5 },
     { label: 'Q2', date: bars[50].date, rps: 99 }, // missing eps
   ];
 
-  it('readQrMeta resolves through a warmup-slice (shared buffer)', () => {
-    const s = quarterlyResultsDef.compute(makeInput(bars, rows), { display: 0 });
-    const meta = readQrMeta(s.anchor.subarray(5));
-    expect(meta).toBeDefined();
-    expect(meta!.mode).toBe('text');
-  });
-
   it('US market bakes $, India bakes ₹, en-US 2dp grouping, -- for missing', () => {
-    const us = readQrMeta(
-      quarterlyResultsDef.compute(makeInput(bars, rows, 'US'), { display: 0 })
-        .anchor,
-    )!;
-    expect(us.rows[0].rpsText).toBe('$2,250.50');
-    expect(us.rows[0].epsText).toBe('$12.34');
-    expect(us.rows[1].epsText).toBe('--'); // missing eps
+    const us = quarterlyResultsDef.compute(
+      makeInput(bars, rows, 'US'),
+      baseSettings(0),
+    ).meta as QrRow[];
+    expect(us[0].rpsText).toBe('$2,250.50');
+    expect(us[0].epsText).toBe('$12.34');
+    expect(us[1].epsText).toBe('--'); // missing eps
 
-    const india = readQrMeta(
-      quarterlyResultsDef.compute(makeInput(bars, rows, 'India'), {
-        display: 0,
-      }).anchor,
-    )!;
-    expect(india.rows[0].rpsText).toBe('₹2,250.50');
+    const india = quarterlyResultsDef.compute(
+      makeInput(bars, rows, 'India'),
+      baseSettings(0),
+    ).meta as QrRow[];
+    expect(india[0].rpsText).toBe('₹2,250.50');
   });
 
-  it('display:1 bakes bars mode; growth strings format as +x.x%', () => {
+  it('growth strings format as +x.x%', () => {
     const cur = '2025-06-15';
     const target = addDays(cur, -365);
     const yoyRows: QuarterlyResult[] = [
@@ -209,13 +211,12 @@ describe('quarterlyResultsDef meta channel', () => {
       { label: 'cur', date: cur, eps: 115, rps: 100 },
     ];
     const yoyBars = dailyBars(target, 400);
-    const meta = readQrMeta(
-      quarterlyResultsDef.compute(makeInput(yoyBars, yoyRows), { display: 1 })
-        .anchor,
-    )!;
-    expect(meta.mode).toBe('bars');
-    expect(meta.rows[1].epsGrowthText).toBe('+15.0%');
-    expect(meta.rows[1].epsGrowthUp).toBe(true);
+    const meta = quarterlyResultsDef.compute(
+      makeInput(yoyBars, yoyRows),
+      baseSettings(1),
+    ).meta as QrRow[];
+    expect(meta[1].epsGrowthText).toBe('+15.0%');
+    expect(meta[1].epsGrowthUp).toBe(true);
   });
 });
 
@@ -249,24 +250,24 @@ describe('quarterlyResults registration + colors', () => {
     expect(quarterlyResultsDef.paneHeightFactor).toBe(1.7);
   });
 
-  it('scaleHintFor switches with display', () => {
-    const text = quarterlyResultsDef.scaleHintFor!({ display: 0 });
+  it('domain + autofitKeys switch with display', () => {
+    const text = quarterlyResultsDef.domain!({}, baseSettings(0));
     expect(text).toEqual({ fixedDomain: [0, 1], hideAxis: true });
-    const bars = quarterlyResultsDef.scaleHintFor!({ display: 1 });
+    expect(quarterlyResultsDef.autofitKeys!(baseSettings(0))).toEqual([]);
+
+    const bars = quarterlyResultsDef.domain!({}, baseSettings(1));
     expect(bars?.includeZero).toBe(true);
     expect(bars?.guideLines).toEqual([0]);
+    expect(quarterlyResultsDef.autofitKeys!(baseSettings(1))).toEqual([
+      'eps',
+      'rps',
+    ]);
   });
 
-  it('colorOverrides.eps wins without mutating defaultStyle', () => {
+  it('settingsOverrides.epsColor wins over the schema default', () => {
     const cfg = defaultConfigFor('results', {
-      colorOverrides: { eps: '#123456' },
+      settingsOverrides: { epsColor: '#123456' },
     });
-    const epsLine = cfg!.style.lines.find((l) => l.seriesKey === 'eps')!;
-    expect(epsLine.colorVar).toBe('#123456');
-    // The shared singleton is untouched.
-    const defEps = quarterlyResultsDef.defaultStyle.lines.find(
-      (l) => l.seriesKey === 'eps',
-    )!;
-    expect(defEps.colorVar).toBe('var(--qr-eps)');
+    expect(cfg!.settings.epsColor).toBe('#123456');
   });
 });

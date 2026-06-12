@@ -1,16 +1,17 @@
 import type { IndicatorDef, IndicatorInput } from '../types';
 
-export type Stage2Params = {
+export type Stage2Settings = {
   smaPeriod: number; // 150
   slopeLookback: number; // 20
   slopeMin: number; // 0.01
   minPeriods: number; // 100 (mirror pandas min_periods)
+  bandColor: string;
 };
 
-// Fixed pixel height of the bottom band. NOT a param: `draw` is invoked as
-// def.draw(ctx, series, scale, resolved) (drawSeries.ts) and never receives
-// params, so a per-instance height would be unreachable at draw time.
+// Fixed pixel height of the bottom band + the band's draw opacity (literals, not
+// settings: the band is decorative chrome, only its color is user-editable).
 const BAND_PX = 12;
+const BAND_OPACITY = 0.18;
 
 /**
  * Stage 2 (advancing) — per-bar trend flag mirroring the daily-scans
@@ -20,27 +21,29 @@ const BAND_PX = 12;
  * `1` on Stage 2 bars and `NaN` otherwise so the band predicate is a plain
  * finite-check and nothing is drawn off-range. Derivable from close alone.
  */
-export const stage2Def: IndicatorDef<Stage2Params> = {
+export const stage2Def: IndicatorDef<Stage2Settings> = {
   key: 'stage2',
   label: 'Stage 2',
   longLabel: 'Stage 2 Advancing',
   pane: 'price',
-  defaultParams: { smaPeriod: 150, slopeLookback: 20, slopeMin: 0.01, minPeriods: 100 },
-  formatParams: (p) => `${p.smaPeriod},${p.slopeLookback}`,
-  paramSpecs: [
-    { key: 'smaPeriod', label: 'SMA length', kind: 'number', min: 1 },
-    { key: 'slopeLookback', label: 'Slope lookback', kind: 'number', min: 1 },
+  settingsSchema: [
+    { key: 'smaPeriod', label: 'SMA length', kind: 'number', default: 150, min: 1 },
+    { key: 'slopeLookback', label: 'Slope lookback', kind: 'number', default: 20, min: 1 },
+    { key: 'slopeMin', label: 'Slope min', kind: 'number', default: 0.01, min: 0, step: 0.01 },
+    { key: 'minPeriods', label: 'Min periods', kind: 'number', default: 100, min: 1 },
+    { key: 'bandColor', label: 'Band', kind: 'color', default: 'var(--stage2-band)' },
   ],
+  formatParams: (s) => `${s.smaPeriod},${s.slopeLookback}`,
   // Full SMA window + the slope shift, so every displayed bar matches the scan.
-  warmupBars: (p) => p.smaPeriod + p.slopeLookback,
-  compute: (input: IndicatorInput, p) => {
+  warmupBars: (s) => s.smaPeriod + s.slopeLookback,
+  compute: (input: IndicatorInput, s) => {
     const c = input.c;
     const n = c.length;
     const sma = new Float64Array(n);
     // Rolling mean over `smaPeriod` with pandas min_periods semantics: NaN until
     // ≥minPeriods valid closes sit in the trailing window, else mean-of-available.
     for (let i = 0; i < n; i++) {
-      const start = Math.max(0, i - p.smaPeriod + 1);
+      const start = Math.max(0, i - s.smaPeriod + 1);
       let sum = 0;
       let count = 0;
       for (let j = start; j <= i; j++) {
@@ -50,32 +53,29 @@ export const stage2Def: IndicatorDef<Stage2Params> = {
           count++;
         }
       }
-      sma[i] = count >= p.minPeriods ? sum / count : NaN;
+      sma[i] = count >= s.minPeriods ? sum / count : NaN;
     }
     const stage2 = new Float64Array(n);
     for (let i = 0; i < n; i++) {
-      const prev = i - p.slopeLookback >= 0 ? sma[i - p.slopeLookback] : NaN;
+      const prev = i - s.slopeLookback >= 0 ? sma[i - s.slopeLookback] : NaN;
       const cur = sma[i];
       const slope =
         Number.isNaN(cur) || Number.isNaN(prev) || prev === 0
           ? NaN
           : (cur - prev) / prev;
-      stage2[i] =
-        slope > p.slopeMin && c[i] > cur ? 1 : NaN;
+      stage2[i] = slope > s.slopeMin && c[i] > cur ? 1 : NaN;
     }
-    return { stage2 };
+    return { series: { stage2 } };
   },
-  draw: (ctx, series, scale, style) => {
-    const s = series.stage2;
-    if (!s) return;
-    const band = style.find((x) => x.seriesKey === 'stage2');
-    if (!band) return;
+  draw: (ctx, series, scale, s, resolveColor) => {
+    const flags = series.stage2;
+    if (!flags) return;
     const { xScale, bandwidth, renderStart, renderEnd } = scale;
     const bottom = Math.max(...scale.yPrice.range());
     const top = bottom - BAND_PX;
     ctx.save();
-    ctx.fillStyle = band.color;
-    ctx.globalAlpha = band.opacity ?? 0.18;
+    ctx.fillStyle = resolveColor(s.bandColor);
+    ctx.globalAlpha = BAND_OPACITY;
     let runStart = -1;
     const flush = (runEnd: number) => {
       const x1 = xScale(runStart)!;
@@ -83,7 +83,7 @@ export const stage2Def: IndicatorDef<Stage2Params> = {
       ctx.fillRect(x1, top, x2 - x1, BAND_PX);
     };
     for (let g = renderStart; g < renderEnd; g++) {
-      if (s[g] === 1) {
+      if (flags[g] === 1) {
         if (runStart === -1) runStart = g;
       } else if (runStart !== -1) {
         flush(g - 1);
@@ -93,18 +93,9 @@ export const stage2Def: IndicatorDef<Stage2Params> = {
     if (runStart !== -1) flush(renderEnd - 1);
     ctx.restore();
   },
-  defaultStyle: {
-    lines: [
-      {
-        seriesKey: 'stage2',
-        colorVar: 'var(--stage2-band)',
-        labelColorVar: 'var(--stage2-band)',
-        label: 'Stage 2',
-        width: 0, // MARKER: excluded from price autofit + tooltip (see Chart.tsx)
-        opacity: 0.18,
-      },
-    ],
-    tooltipGroup: 'stage2',
-    tooltipTitle: 'Stage 2',
-  },
+  // The band never moves the price domain (parity with the old width-0 marker).
+  autofitKeys: () => [],
+  legend: (_series, _idx, s) => [
+    { color: s.bandColor, label: 'Stage 2', value: null },
+  ],
 };

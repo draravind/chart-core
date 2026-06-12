@@ -1,13 +1,16 @@
 import type { IndicatorDef } from '../types';
 import { maDispatch, maLookback, stddevPop, round2 } from '../talibMath';
-import { drawLines } from '../draw';
-import { MA_TYPE_OPTIONS } from '../paramSpecs';
+import { drawLines, cellAt } from '../draw';
+import { MA_TYPE_OPTIONS } from '../settingsOptions';
 
-export type BbandsParams = {
+export type BbandsSettings = {
   period: number;
   nbdevup: number;
   nbdevdn: number;
   matype: number;
+  upperColor: string;
+  midColor: string;
+  lowerColor: string;
 };
 
 /**
@@ -15,26 +18,28 @@ export type BbandsParams = {
  * `mid ± nbdev·popStdDev` (population stddev, ddof=0). matype subset 0..4
  * (SMA/EMA/WMA/DEMA/TEMA). Price-pane overlay (three lines).
  */
-export const bbandsDef: IndicatorDef<BbandsParams> = {
+export const bbandsDef: IndicatorDef<BbandsSettings> = {
   key: 'ti:bbands',
   label: 'BBANDS',
   longLabel: 'Bollinger Bands',
   pane: 'price',
-  defaultParams: { period: 20, nbdevup: 2, nbdevdn: 2, matype: 0 },
-  formatParams: (p) => `${p.period},${p.nbdevup}`,
-  paramSpecs: [
-    { key: 'period', label: 'Length', kind: 'number', min: 1 },
-    { key: 'nbdevup', label: 'Upper band', kind: 'number', min: 0, step: 0.1 },
-    { key: 'nbdevdn', label: 'Lower band', kind: 'number', min: 0, step: 0.1 },
-    { key: 'matype', label: 'Moving average type', kind: 'enum', options: MA_TYPE_OPTIONS },
+  settingsSchema: [
+    { key: 'period', label: 'Length', kind: 'number', default: 20, min: 1 },
+    { key: 'nbdevup', label: 'Upper band', kind: 'number', default: 2, min: 0, step: 0.1 },
+    { key: 'nbdevdn', label: 'Lower band', kind: 'number', default: 2, min: 0, step: 0.1 },
+    { key: 'matype', label: 'Moving average type', kind: 'enum', default: 0, options: MA_TYPE_OPTIONS },
+    { key: 'upperColor', label: 'Upper', kind: 'color', default: 'var(--bb-upper)' },
+    { key: 'midColor', label: 'Mid', kind: 'color', default: 'var(--bb-mid)' },
+    { key: 'lowerColor', label: 'Lower', kind: 'color', default: 'var(--bb-lower)' },
   ],
-  warmupBars: (p) =>
-    Math.max(maLookback(p.matype, p.period), p.period - 1) +
-    Math.max(250, 5 * p.period),
-  compute: (input, p) => {
+  formatParams: (s) => `${s.period},${s.nbdevup}`,
+  warmupBars: (s) =>
+    Math.max(maLookback(s.matype, s.period), s.period - 1) +
+    Math.max(250, 5 * s.period),
+  compute: (input, s) => {
     const n = input.c.length;
-    const mid = maDispatch(p.matype, input.c, p.period);
-    const std = stddevPop(input.c, p.period);
+    const mid = maDispatch(s.matype, input.c, s.period);
+    const std = stddevPop(input.c, s.period);
     const upperband = new Float64Array(n);
     const middleband = new Float64Array(n);
     const lowerband = new Float64Array(n);
@@ -47,41 +52,21 @@ export const bbandsDef: IndicatorDef<BbandsParams> = {
         continue;
       }
       middleband[i] = round2(mid[i]);
-      upperband[i] = round2(mid[i] + p.nbdevup * std[i]);
-      lowerband[i] = round2(mid[i] - p.nbdevdn * std[i]);
+      upperband[i] = round2(mid[i] + s.nbdevup * std[i]);
+      lowerband[i] = round2(mid[i] - s.nbdevdn * std[i]);
     }
-    return { upperband, middleband, lowerband };
+    return { series: { upperband, middleband, lowerband } };
   },
-  draw: (ctx, series, scale, style) => drawLines(ctx, series, scale, style),
-  defaultStyle: {
-    lines: [
-      {
-        seriesKey: 'upperband',
-        colorVar: 'var(--bb-upper)',
-        labelColorVar: 'var(--bb-upper)',
-        label: 'Upper',
-        width: 1,
-        dash: [4, 3],
-        opacity: 0.8,
-      },
-      {
-        seriesKey: 'middleband',
-        colorVar: 'var(--bb-mid)',
-        labelColorVar: 'var(--bb-mid)',
-        label: 'Mid',
-        width: 1.2,
-      },
-      {
-        seriesKey: 'lowerband',
-        colorVar: 'var(--bb-lower)',
-        labelColorVar: 'var(--bb-lower)',
-        label: 'Lower',
-        width: 1,
-        dash: [4, 3],
-        opacity: 0.8,
-      },
-    ],
-    tooltipGroup: 'ti:bbands',
-    tooltipTitle: 'BB',
-  },
+  draw: (ctx, series, scale, s, resolveColor) =>
+    drawLines(ctx, series, scale, [
+      { key: 'upperband', st: { color: resolveColor(s.upperColor), width: 1, dash: [4, 3], opacity: 0.8 } },
+      { key: 'middleband', st: { color: resolveColor(s.midColor), width: 1.2 } },
+      { key: 'lowerband', st: { color: resolveColor(s.lowerColor), width: 1, dash: [4, 3], opacity: 0.8 } },
+    ]),
+  autofitKeys: () => ['upperband', 'middleband', 'lowerband'],
+  legend: (series, idx, s, ctx) => [
+    { color: s.upperColor, label: 'Upper', value: cellAt(series.upperband, idx, ctx.priceFmt) },
+    { color: s.midColor, label: 'Mid', value: cellAt(series.middleband, idx, ctx.priceFmt) },
+    { color: s.lowerColor, label: 'Lower', value: cellAt(series.lowerband, idx, ctx.priceFmt) },
+  ],
 };

@@ -40,15 +40,15 @@ Public barrel — the only import surface for consumers (never deep-import). Re-
   `SUBPANE_ORDER`.
 - From `indicators/compute`: `computeEMA`, `computeRollingHigh`, `computeExpandingMax`.
 - Indicator types from `indicators/types`: `IndicatorDef`, `IndicatorConfig`,
-  `IndicatorSeries`, `IndicatorStyle`, `IndicatorLineStyle`, `IndicatorPane`,
-  `SubpaneScaleHint`, `IndicatorInput`, `ResolvedIndicator`, `ParamSpec`,
-  `ColorOverrides`.
+  `IndicatorSeries`, `IndicatorPane`, `IndicatorInput`, `ResolvedIndicator`,
+  `SettingsField`, `LegendRow`, `DomainSpec`.
 - TA-Lib primitives from `indicators/talibMath`: `sma`, `wma`, `emaTalib`, `dema`,
   `tema`, `maDispatch`, `rsi`, `rawStochK`, `computeDx` (=`dx`), `computeAdx`
   (=`adx`), `computeAtr` (=`atr`), `trueRange`, `stddevPop`, `rollingMin`,
   `rollingMax`, `wilderSmooth`, `wilderSum`.
-- Per-indicator `*Params` types from each builtin (`SmaParams` … `TrangeParams`,
-  plus `RsParams`, `Stage2Params`).
+- Per-indicator `*Settings` types from each builtin (`SmaSettings` …
+  `TrangeSettings`, plus `RsSettings`, `Stage2Settings`,
+  `QuarterlyResultsSettings`).
 - `Chart` (default), `ChartControls` (default).
 - From `context`: `useChartScale`, `useChartOverlayHost`, `useChartGeometry`,
   `useReportOverlayPriceBounds`, `useBackgroundPointerDown`, type `ChartOverlayLayer`.
@@ -126,8 +126,11 @@ Scoped styles for the chart shell: `.chartWrapper`/`.chartWrapperBare`,
   `resolved`, `subpanes`, `marginTop`, `marginLeft`, `barCount`,
   `expanded`/`onExpandedChange`, `subscribeHoverIndex`, `priceFormatter`,
   `resolveColor`. Subscribes to a hover index so only the legend re-renders on
-  crosshair move. Internal: `NumberField`, `EnumField`, `ColorField`,
-  `ParamPopover`, `LegendBlock`.
+  crosshair move. Live values + dot come from the def's `legend()`; the popover
+  iterates `def.settingsSchema` (number/enum/toggle/color controls reading
+  `config.settings`), commit/reset route through `defaultConfigFor` over
+  `settingsOverrides`. Internal: `NumberField`, `EnumField`, `ToggleField`,
+  `ColorField` (prop `{label, colorExpr}`), `ParamPopover`, `LegendBlock`.
 
 ---
 
@@ -135,34 +138,34 @@ Scoped styles for the chart shell: `.chartWrapper`/`.chartWrapperBare`,
 
 ### `src/indicators/types.ts`
 
-- `IndicatorDef<P>` — the unit of modularity. Fields: `key`, `label`,
-  `longLabel?`, `pane`, `defaultParams`, `warmupBars(params) → number`,
-  `compute(input, params) → IndicatorSeries`,
-  `draw(ctx, series, scale, style, params)` (5th arg = the def's user `params`,
-  so appearance-only settings are read directly instead of smuggled through the
-  series; impls may omit it), `defaultStyle`,
-  `defaultLineColor?(params, seriesKey)`, `formatParams?(params)`,
-  `formatValue?(value, seriesKey)` (def-level legend value formatter, e.g. Volume's
-  K/M/B), `scaleHintFor?(params)` (params-aware `scaleHint` override; method syntax —
-  bivariance), `paneHeightFactor?` (default subpane height multiplier),
-  `paramSpecs?`.
-- `IndicatorPane` = `'price' | {subpane: string; scaleHint?: SubpaneScaleHint}`.
-- `SubpaneScaleHint` — `{fixedDomain?, guideLines?, zeroLine?, autofitPadding?,
-  hideAxis?, includeZero?, topPadPx?, tickFormat?}` (`topPadPx` = fixed-pixel
-  headroom above the autofit max, applied at scale build in `Chart`; `tickFormat`
-  = pane right-axis tick formatter, e.g. Volume's K/M/B).
+- `IndicatorDef<S>` — the unit of modularity. Every `S`-typed callback uses
+  method syntax (bivariance under `strictFunctionTypes`). Fields: `key`, `label`,
+  `longLabel?`, `pane`, `settingsSchema: SettingsField[]` (drives the popover +
+  static defaults), `deriveDefaults?(s)` (param-dependent defaults, e.g. EMA bands
+  its color from period — replaces `defaultLineColor`), `warmupBars(s)`,
+  `compute(input, s) → {series, meta?}` (`meta` = the per-instance non-numeric
+  payload lane, e.g. Quarterly Results' formatted rows), `draw(ctx, series, scale,
+  s, resolveColor, meta?)`, `autofitKeys?(s) → string[]` (which series drive the
+  scale — used by BOTH price + subpane loops), `domain?(series, s) → DomainSpec`
+  (subpane scale SHAPE only; absent ⇒ plain autofit), `legend(series, idx, s,
+  {priceFmt}) → LegendRow[]` (required), `formatParams?(s)`, `paneHeightFactor?`.
+- `SettingsField` — one typed editable setting: `color | number | enum | toggle`
+  (a `color` default is a `var()` expr; a user override is raw hex).
+- `LegendRow` — `{color, value: string|null, label?}` (one live legend row).
+- `DomainSpec` — subpane scale shape: `{fixedDomain?, guideLines?, zeroLine?,
+  autofitPadding?, includeZero?, topPadPx?, hideAxis?, tickFormat?}` (replaces the
+  old `SubpaneScaleHint` + `scaleHintFor`; carries shape only — `autofitKeys` owns
+  which series autofit).
+- `IndicatorPane` = `'price' | {subpane: string}`.
 - `IndicatorSeries` = `Record<string, Float64Array>` (one line per key; NaN = gap).
-- `IndicatorInput` — `{o,h,l,c,v: Float64Array; bars: readonly Candle[];
-  benchmarkClose?; quarterlyResults?; market?; displayStart?}` (`displayStart` =
-  index where the display window begins, i.e. `warmupSeed.length`; lets a def scope
-  display-only stats to the rendered bars — Volume's HVE/HVY + cold-start SMA).
-- `IndicatorDrawScale` — adds `paneTop?/paneBottom?` (pixel band bounds for draw
-  layout + clipping).
-- `IndicatorConfig` — resolved user instance: `{id, defKey, params, label, enabled,
-style, colorOverrides?}`.
-- `ParamSpec` — number/enum control spec driving the legend popover.
-- Also home of `ResolvedIndicator`, `IndicatorStyle`, `IndicatorLineStyle`,
-  `ColorOverrides` (re-exported from the barrel).
+- `IndicatorInput` — `{o,h,l,c,v: Float64Array; bars; benchmarkClose?;
+  quarterlyResults?; market?; displayStart?}`.
+- `IndicatorDrawScale` — adds `paneTop?/paneBottom?` (pixel band bounds).
+- `IndicatorConfig` — resolved user instance: `{id, defKey, label, enabled,
+  settings, settingsOverrides}` (`settings` = effective merge; `settingsOverrides`
+  = the only persisted source of truth, sparse deltas).
+- `ResolvedIndicator` — `{config, series, meta?}` (Chart-published; `meta` threads
+  the compute payload to `draw`).
 
 ### `src/indicators/registry.ts`
 
@@ -170,14 +173,17 @@ style, colorOverrides?}`.
 - `getIndicator(key) → IndicatorDef<any> | undefined` — lookup by key (`ti:*` for
   TA-Lib defs, e.g. `ti:ema`; legacy keys unprefixed, e.g. `highs`, `rs`).
 - `listIndicators() → IndicatorDef[]`.
-- `defaultConfigFor(defKey, overrides?) → IndicatorConfig | undefined` — factory:
-  def defaults + color factory + user overrides → a resolved `IndicatorConfig`.
+- `defaultsFromSchema(schema) → Record<string, unknown>` — static defaults off the
+  schema (the single base-settings source).
+- `effectiveSettings(def, overrides) → S` — the delta ladder:
+  `base → {...base,...overrides} → deriveDefaults(merged) →
+  {...base,...derived,...overrides}` (user delta wins over derived). Pure.
+- `defaultConfigFor(defKey, overrides?) → IndicatorConfig | undefined` — factory
+  from `{id?, enabled?, settingsOverrides?}` → `{settings, settingsOverrides, …}`.
 - `formatIndicatorParams(config) → string` — delegates to the def's `formatParams`
-  hook (e.g. MACD → `"12,26,9"`).
+  hook (e.g. MACD → `"12,26,9"`), reading `config.settings`.
 - `OVERLAY_ORDER` / `SUBPANE_ORDER: string[]` — canonical picker/stacking order.
-- Imports every builtin so they self-register on module load. Color resolution is
-  three-tier: `defaultStyle` → `defaultLineColor()` factory (params-aware) →
-  user `colorOverrides[seriesKey]`.
+- Imports every builtin so they self-register on module load.
 
 ### `src/indicators/compute.ts`
 
@@ -191,12 +197,16 @@ Legacy, non-TA-Lib compute helpers (also part of the public barrel):
 
 ### `src/indicators/draw.ts`
 
-Canvas painters shared by builtin `draw` hooks:
+Canvas painters + small legend helpers shared by builtin hooks:
 
+- `LineStyle` = `{color, width, dash?, opacity?}` — resolved (rgb) stroke style
+  (draw-layer local; not in `types.ts`).
+- `fmt2(v)` / `cellAt(values, idx, fmt)` — legend cell formatting (`''` on
+  NaN/oob); reused by simple defs' `legend`.
 - `drawPolyline(ctx, scale, values, style, defined)` — line painter; `defined`
   predicate breaks the line on NaN/false.
-- `drawLines(ctx, series, scale, style[])` — default multi-line painter (skips
-  width=0 marker series).
+- `drawLines(ctx, series, scale, lines: {key, st}[])` — default multi-line painter
+  (caller passes only real lines — no width-0 skip).
 - `drawHistogram(ctx, scale, values, style, negColor?)` — bars from zero, dual
   color (MACD).
 - `drawGuideLines(ctx, scale, levels[], color, opts?)` — dashed horizontal guides
@@ -204,9 +214,9 @@ Canvas painters shared by builtin `draw` hooks:
 - `drawDots(ctx, scale, values, style, marked, radius?)` — markers on selected bars
   (RS-line signals).
 
-### `src/indicators/paramSpecs.ts`
+### `src/indicators/settingsOptions.ts`
 
-- `MA_TYPE_OPTIONS: {label, value}[]` — enum options for the `matype` selector
+- `MA_TYPE_OPTIONS: {label, value}[]` — enum-field options for the `matype` selector
   (0=SMA, 1=EMA, 2=WMA, 3=DEMA, 4=TEMA); shared by BBANDS/STOCH/STOCHF/STOCHRSI.
 
 ### `src/indicators/subpaneLayout.ts`
@@ -243,35 +253,37 @@ rounding in primitives (builtins round once on the final value).
 
 ## Built-in indicators
 
-`src/indicators/builtins/*.ts` — 22 files. **Shared shape:** each exports a `*Params`
-type **and** a `*Def: IndicatorDef<*Params>` const that self-registers via the
-registry import. Two exceptions noted below. Each is a thin wrapper over
-`talibMath` primitives (compute) + `draw` helpers (render).
+`src/indicators/builtins/*.ts` — 22 files. **Shared shape:** each exports a
+`*Settings` type **and** a `*Def: IndicatorDef<*Settings>` const that self-registers
+via the registry import. Each `*Settings` carries the numeric/enum params PLUS a
+`color`-field per drawn element (key listed in the def's `settingsSchema`). Each is
+a thin wrapper over `talibMath` primitives (compute) + `draw` helpers (render), and
+declares `autofitKeys` (+ a `domain` for bounded/special subpanes) and a `legend`.
 
-| File             | Params type                                                     | Computes                                                                              |
+| File             | Settings type (params shown; every def also has color fields)   | Computes                                                                              |
 | ---------------- | --------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
-| `sma.ts`         | `SmaParams {period}`                                            | Simple moving average                                                                 |
-| `wma.ts`         | `WmaParams {period}`                                            | Linearly-weighted MA                                                                  |
-| `emaTalib.ts`    | `EmaTalibParams {period}`                                       | TA-Lib EMA; period-banded factory colors (10/20/50/200)                               |
-| `dema.ts`        | `DemaParams {period}`                                           | Double EMA                                                                            |
-| `tema.ts`        | `TemaParams {period}`                                           | Triple EMA                                                                            |
-| `rsi.ts`         | `RsiParams {period}`                                            | Wilder RSI (0–100); guides at 30/70                                                   |
-| `macd.ts`        | `MacdParams {fast, slow, signal}`                               | MACD line + signal + histogram (dual-color bars)                                      |
-| `bbands.ts`      | `BbandsParams {period, nbdevup, nbdevdn, matype}`               | Bollinger Bands (MA ± n·stddev)                                                       |
-| `stoch.ts`       | `StochParams {fastk, slowk, slowk_matype, slowd, slowd_matype}` | Slow stochastic %K/%D; guides 20/80                                                   |
-| `stochf.ts`      | `StochfParams {fastk, fastd, fastd_matype}`                     | Fast stochastic; guides 20/80                                                         |
-| `stochrsi.ts`    | `StochrsiParams {timeperiod, fastk, fastd, fastd_matype}`       | Stochastic of RSI; guides 20/80                                                       |
-| `willr.ts`       | `WillrParams {period}`                                          | Williams %R (−100..0); guides −20/−80                                                 |
-| `adx.ts`         | `AdxParams {period}`                                            | Average directional index (trend strength)                                            |
-| `dx.ts`          | `DxParams {period}`                                             | Raw directional index                                                                 |
-| `atr.ts`         | `AtrParams {period}`                                            | Average true range (price units)                                                      |
-| `natr.ts`        | `NatrParams {period}`                                           | Normalized ATR (percent)                                                              |
-| `trange.ts`      | `TrangeParams = Record<string, never>`                          | Per-bar true range (**no user params**)                                               |
-| `rollingHigh.ts` | **(no `*Params` type)**                                         | `highsDef` — data-backed 1Y/2Y/3Y/ATH highs read off `bars[].high*` columns           |
-| `rsLine.ts`      | `RsParams {lookback}`                                           | RS line (stock/benchmark, rebased to 100) + signal dots; uses `input.benchmarkClose`  |
-| `stage2.ts`      | `Stage2Params {smaPeriod, slopeLookback, slopeMin, minPeriods}` | Stage-2 advancing band (green price-pane band; width=0 marker, excluded from autofit) |
-| `quarterlyResults.ts` | `QuarterlyResultsParams {display}`                        | Quarterly Results fundamentals subpane (RPS+EPS, core-computed YoY growth); Text/Bars modes; reads `input.quarterlyResults`/`market`; baked strings ride a `WeakMap` keyed on `anchor.buffer`; `paneHeightFactor 1.7` |
-| `volume.ts`      | `VolumeParams {smaPeriod, smaFade, milestones, standardOpacity, fadeOpacity}` | Volume subpane indicator (ported from the old hardcoded volume zone). Custom 4-bucket draw (up/down × above/below SMA, faded opacity); `volumeUp`/`volumeDown` split = 2 editable data-backed lines; `volSma`/`volLabel` are style-less data channels; HVE/HVY labels + K/M/B axis (`VOL_HINT.tickFormat`); scopes stats to `input.displayStart`; reads `params.fadeOpacity` in `draw`; `paneHeightFactor 1.154`; reuses `computeVolumeStats` |
+| `sma.ts`         | `SmaSettings {period, lineColor}`                              | Simple moving average                                                                 |
+| `wma.ts`         | `WmaSettings {period, …}`                                      | Linearly-weighted MA                                                                  |
+| `emaTalib.ts`    | `EmaTalibSettings {period, lineColor, labelColor}`            | TA-Lib EMA; period-banded colors via `deriveDefaults` (10/20/50/200)                  |
+| `dema.ts`        | `DemaSettings {period, …}`                                     | Double EMA                                                                            |
+| `tema.ts`        | `TemaSettings {period, …}`                                     | Triple EMA                                                                            |
+| `rsi.ts`         | `RsiSettings {period, lineColor}`                             | Wilder RSI (0–100); `domain` guides at 30/70                                          |
+| `macd.ts`        | `MacdSettings {fast, slow, signal, macd, macdsignal, histUpColor, histDownColor}` | MACD line + signal + histogram (dual-color bars; `histDownColor` is a first-class field, no carrier) |
+| `bbands.ts`      | `BbandsSettings {period, nbdevup, nbdevdn, matype, upperColor, midColor, lowerColor}` | Bollinger Bands (MA ± n·stddev)                                         |
+| `stoch.ts`       | `StochSettings {fastk, slowk, slowk_matype, slowd, slowd_matype, kColor, dColor}` | Slow stochastic %K/%D; guides 20/80                              |
+| `stochf.ts`      | `StochfSettings {fastk, fastd, fastd_matype, kColor, dColor}` | Fast stochastic; guides 20/80                                                         |
+| `stochrsi.ts`    | `StochrsiSettings {timeperiod, fastk, fastd, fastd_matype, kColor, dColor}` | Stochastic of RSI; guides 20/80                                             |
+| `willr.ts`       | `WillrSettings {period, lineColor}`                           | Williams %R (−100..0); guides −20/−80                                                 |
+| `adx.ts`         | `AdxSettings {period, lineColor}`                             | Average directional index (trend strength)                                            |
+| `dx.ts`          | `DxSettings {period, lineColor}`                              | Raw directional index                                                                 |
+| `atr.ts`         | `AtrSettings {period, lineColor}`                             | Average true range (price units); plain-autofit (no `domain`)                         |
+| `natr.ts`        | `NatrSettings {period, lineColor}`                            | Normalized ATR (percent); plain-autofit                                              |
+| `trange.ts`      | `TrangeSettings {lineColor}`                                  | Per-bar true range (**no numeric params**)                                            |
+| `rollingHigh.ts` | `HighsSettings` (local; `color1y/2y/3y/All`)                  | `highsDef` — data-backed 1Y/2Y/3Y/ATH highs read off `bars[].high*` columns           |
+| `rsLine.ts`      | `RsSettings {lookback, lineColor, signalColor}`              | RS line (stock/benchmark, rebased to 100) + signal dots; `autofitKeys: ['rs']` excludes the 0/1 `signal` |
+| `stage2.ts`      | `Stage2Settings {smaPeriod, slopeLookback, slopeMin, minPeriods, bandColor}` | Stage-2 advancing band (green price-pane band; `autofitKeys: []` so it never moves the price domain) |
+| `quarterlyResults.ts` | `QuarterlyResultsSettings {display, epsColor, rpsColor, growthUpColor, growthDownColor, labelColor}` | Quarterly Results subpane (RPS+EPS, core-computed YoY growth); Text/Bars via `display`; formatted rows ride `compute`'s `meta` (no WeakMap); `domain`/`autofitKeys` switch on `display`; `paneHeightFactor 1.7` |
+| `volume.ts`      | `VolumeSettings {smaPeriod, smaFade, milestones, standardOpacity, fadeOpacity, upColor, downColor, labelColor}` | Volume subpane indicator. Custom 4-bucket draw (up/down × above/below SMA, faded opacity); `volumeUp`/`volumeDown` autofit the pane; `volSma`/`volLabel` are data channels; HVE/HVY labels + K/M/B axis (`domain.tickFormat`); reads opacities from settings; `paneHeightFactor 1.154`; reuses `computeVolumeStats` |
 
 ---
 
@@ -385,8 +397,8 @@ Record<string, unknown>}`. Structural mirror of the app's API marker shape.
 - `drawSeries(ctx, p: DrawSeriesParams) → void` — single-canvas painter for
   candles/bars + indicator lines (volume is now the `volume` subpane indicator,
   painted via `drawIndicators`); applies background gradient, `#chart-viewport`
-  clip, and pan transform; clears the backing store each call. Passes each
-  indicator's `config.params` to `def.draw` as the 5th arg.
+  clip, and pan transform; clears the backing store each call. `drawIndicators`
+  calls `def.draw(ctx, series, scale, config.settings, resolveColor, meta)`.
 - `SeriesColors` = `{positive, negative}`; `DrawSeriesParams` — dpr, dimensions,
   scales (`xScale`, `yPrice`, `subpaneScales`), render slice bounds, chart type,
   colors, indicators, color resolver.
@@ -447,12 +459,13 @@ Record<string, unknown>}`. Structural mirror of the app's API marker shape.
   - `parity.test.ts` — 17 builtins match TA-Lib within 0.01, against
     `src/indicators/__fixtures__/talib_fixtures.json`.
   - `subpaneLayout.test.ts` — subpane height allocation (factors/userHeights/floor
-    redistribution) + domain autofit (incl. `includeZero`) + `applySubpaneDrag`.
+    redistribution) + domain autofit (incl. `includeZero`) + `applySubpaneDrag` +
+    the def-level `autofitKeys` selection seam (`rsLineDef.autofitKeys → ['rs']`).
   - `quarterlyResults.test.ts` — YoY growth matching, row→bar alignment + step fill,
-    meta channel (warmup-slice survival, currency/format), column spacing,
-    registration/colors.
-  - `indicatorColors.test.ts` — EMA period-band colors, override precedence, no
-    shared mutation of def singletons.
+    `compute.meta` row strings (currency/format), `domain`/`autofitKeys` switch on
+    `display`, column spacing, settings colors.
+  - `indicatorColors.test.ts` — EMA `deriveDefaults` band colors, override
+    precedence + reset, `effectiveSettings` purity.
   - `toHex6.test.ts` — color-format normalization.
   - `stats.test.ts` — price-stats math: ATR parity + bands, short-history blank,
     fundamentals (FF%/PE/Mkt-Cap India·US), PE/guard edge cases, collapse.

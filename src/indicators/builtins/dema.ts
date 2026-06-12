@@ -1,36 +1,32 @@
 import type { IndicatorDef } from '../types';
 import { dema, round2 } from '../talibMath';
-import { drawLines } from '../draw';
+import { drawLines, cellAt } from '../draw';
 
-export type DemaParams = { period: number };
+export type DemaSettings = { period: number; lineColor: string };
 
 /** TA-Lib DEMA — `2·EMA − EMA(EMA)`, lookback `2(period−1)`. Price-pane overlay. */
-export const demaDef: IndicatorDef<DemaParams> = {
+export const demaDef: IndicatorDef<DemaSettings> = {
   key: 'ti:dema',
   label: 'DEMA',
   longLabel: 'Double Exponential Moving Average',
   pane: 'price',
-  defaultParams: { period: 20 },
-  formatParams: (p) => String(p.period),
-  paramSpecs: [{ key: 'period', label: 'Length', kind: 'number', min: 1 }],
-  warmupBars: (p) => 2 * (p.period - 1) + Math.max(250, 5 * p.period),
-  compute: (input, p) => {
-    const out = dema(input.c, p.period);
+  settingsSchema: [
+    { key: 'period', label: 'Length', kind: 'number', default: 20, min: 1 },
+    { key: 'lineColor', label: 'Line', kind: 'color', default: 'var(--ti-dema)' },
+  ],
+  formatParams: (s) => String(s.period),
+  warmupBars: (s) => 2 * (s.period - 1) + Math.max(250, 5 * s.period),
+  compute: (input, s) => {
+    const out = dema(input.c, s.period);
     for (let i = 0; i < out.length; i++) out[i] = round2(out[i]);
-    return { dema: out };
+    return { series: { dema: out } };
   },
-  draw: (ctx, series, scale, style) => drawLines(ctx, series, scale, style),
-  defaultStyle: {
-    lines: [
-      {
-        seriesKey: 'dema',
-        colorVar: 'var(--ti-dema)',
-        labelColorVar: 'var(--ti-dema)',
-        label: 'DEMA',
-        width: 1.2,
-      },
-    ],
-    tooltipGroup: 'ti:dema',
-    tooltipTitle: 'DEMA',
-  },
+  draw: (ctx, series, scale, s, resolveColor) =>
+    drawLines(ctx, series, scale, [
+      { key: 'dema', st: { color: resolveColor(s.lineColor), width: 1.2 } },
+    ]),
+  autofitKeys: () => ['dema'],
+  legend: (series, idx, s, ctx) => [
+    { color: s.lineColor, label: 'DEMA', value: cellAt(series.dema, idx, ctx.priceFmt) },
+  ],
 };

@@ -1,14 +1,10 @@
-import type {
-  IndicatorDef,
-  IndicatorInput,
-  IndicatorSeries,
-  SubpaneScaleHint,
-} from '../types';
+import type { IndicatorDef, IndicatorInput, IndicatorSeries } from '../types';
 import {
   computeVolumeStats,
   formatVolume,
   formatVolumeTick,
 } from '../../utils/chartCalculations';
+import { cellAt } from '../draw';
 
 // ---------------------------------------------------------------------------
 // Volume — the old hardcoded volume zone, re-expressed as a first-class subpane
@@ -19,45 +15,35 @@ import {
 // average), HVE/HVY milestone labels, and a K/M/B right axis.
 //
 // The two split series (`volumeUp`/`volumeDown`) are genuine, data-backed lines
-// (volume partitioned by candle direction) so BOTH colors are editable in the
-// legend with no fake/inert line; their union autofits the pane to [0, maxVol].
-// `volSma`/`volLabel` carry no style line — pure data the custom `draw` decodes.
+// (volume partitioned by candle direction); their union autofits the pane to
+// [0, maxVol]. `volSma`/`volLabel` are pure data the custom `draw` decodes. All
+// three colors (up/down/label) are editable color settings — no fake line.
 // ---------------------------------------------------------------------------
 
-export type VolumeParams = {
+export type VolumeSettings = {
   smaPeriod: number; // averaging window for the fade threshold (default 30)
   smaFade: number; // 1 = fade below-average bars, 0 = flat opacity
   milestones: number; // 1 = draw HVE/HVY labels, 0 = hide them
   standardOpacity: number; // opacity of standard (≥ average) bars (default 0.5)
   fadeOpacity: number; // opacity of below-average bars (default 0.2)
+  upColor: string;
+  downColor: string;
+  labelColor: string;
 };
 
 // Default standard-bar opacity (the legacy drawSeries value was 0.35). Both the
-// standard and the faded opacities are now user-editable params; this constant is
-// just the default seed for `standardOpacity`.
+// standard and the faded opacities are now user-editable settings; this constant
+// is just the default seed for `standardOpacity`.
 const VOL_OPACITY_STANDARD = 0.5;
 const LABEL_GAP = 2; // px gap between the label baseline and the bar top
 // Defensive ceiling on how high the label baseline may go (a label this close to
-// the divider would clip). With VOL_HINT.topPadPx reserving headroom above the
-// tallest bar, the label's natural `barTop − LABEL_GAP` spot already clears this,
-// so this only guards degenerate cases (e.g. a custom hint with no headroom).
+// the divider would clip). With the domain's topPadPx reserving headroom above
+// the tallest bar, the label's natural `barTop − LABEL_GAP` spot already clears
+// this, so this only guards degenerate cases (e.g. no headroom).
 const LABEL_MIN_Y = 9;
 const VOL_LABEL_FONT = "600 9px 'Helvetica Neue', Helvetica, Arial, sans-serif";
 
-// `includeZero` + `autofitPadding: 0` gives a `[0, volMax]` domain (bars rest on
-// a zero baseline at the pane bottom). `topPadPx: 15` reserves fixed headroom
-// above the tallest bar — enough for the 9px HVE/HVY label (drawn at `barTop −
-// LABEL_GAP`) to sit fully ABOVE the bar instead of clamped into it, with a few
-// px of breathing room below the top divider. The zero baseline is unaffected —
-// only the domain top is extended. `tickFormat` restores the K/M/B right axis.
-const VOL_HINT: SubpaneScaleHint = {
-  includeZero: true,
-  autofitPadding: 0,
-  topPadPx: 15,
-  tickFormat: formatVolumeTick,
-};
-
-function compute(input: IndicatorInput, p: VolumeParams): IndicatorSeries {
+function compute(input: IndicatorInput, s: VolumeSettings): IndicatorSeries {
   const n = input.c.length;
   // Compute over the DISPLAY region only (not the warmup-prefixed `combined`),
   // so HVE/HVY and the cold-start SMA stay pixel-identical to the legacy path
@@ -66,7 +52,7 @@ function compute(input: IndicatorInput, p: VolumeParams): IndicatorSeries {
   // `subarray(seedLen)` (seedLen == start) recovers exactly the display window.
   const start = input.displayStart ?? 0;
   const display = input.bars.slice(start);
-  const stats = computeVolumeStats(display, p.smaPeriod);
+  const stats = computeVolumeStats(display, s.smaPeriod);
 
   const volumeUp = new Float64Array(n).fill(NaN);
   const volumeDown = new Float64Array(n).fill(NaN);
@@ -83,14 +69,14 @@ function compute(input: IndicatorInput, p: VolumeParams): IndicatorSeries {
       else volumeDown[g] = d.volume;
     }
     // `smaFade` off ⇒ emit no threshold ⇒ `draw` fades nothing.
-    if (p.smaFade) {
-      const s = stats.sma[i];
-      if (s !== undefined) volSma[g] = s;
+    if (s.smaFade) {
+      const sm = stats.sma[i];
+      if (sm !== undefined) volSma[g] = sm;
     }
   }
 
   // `milestones` off ⇒ emit no labels ⇒ `draw` draws none.
-  if (p.milestones) {
+  if (s.milestones) {
     for (const lbl of stats.labels) {
       volLabel[start + lbl.index] = lbl.text === 'HVE' ? 1 : 2;
     }
@@ -99,23 +85,21 @@ function compute(input: IndicatorInput, p: VolumeParams): IndicatorSeries {
   return { volumeUp, volumeDown, volSma, volLabel };
 }
 
-const draw: IndicatorDef<VolumeParams>['draw'] = (
+const draw: IndicatorDef<VolumeSettings>['draw'] = (
   ctx,
   series,
   scale,
-  style,
-  params,
+  s,
+  resolveColor,
 ) => {
   const { xScale, bandwidth, renderStart, renderEnd, data } = scale;
   const paneTop = scale.paneTop ?? 0;
   const paneBottom = scale.paneBottom ?? 0;
   if (paneBottom <= paneTop) return;
 
-  const colorOf = (key: string, fallback: string) =>
-    style.find((s) => s.seriesKey === key)?.color ?? fallback;
-  const upColor = colorOf('volumeUp', '#16a34a');
-  const downColor = colorOf('volumeDown', '#dc2626');
-  const labelColor = colorOf('volLabelColor', '#888888');
+  const upColor = resolveColor(s.upColor);
+  const downColor = resolveColor(s.downColor);
+  const labelColor = resolveColor(s.labelColor);
 
   const volSma = series.volSma;
   const volLabel = series.volLabel;
@@ -138,7 +122,7 @@ const draw: IndicatorDef<VolumeParams>['draw'] = (
     const sma = volSma?.[g];
     const faded = sma !== undefined && Number.isFinite(sma) && d.volume < sma;
     ctx.fillStyle = up ? upColor : downColor;
-    ctx.globalAlpha = faded ? params.fadeOpacity : params.standardOpacity;
+    ctx.globalAlpha = faded ? s.fadeOpacity : s.standardOpacity;
     ctx.fillRect(x, yTop, bandwidth, h);
   }
   ctx.globalAlpha = 1;
@@ -162,29 +146,21 @@ const draw: IndicatorDef<VolumeParams>['draw'] = (
   ctx.restore();
 };
 
-export const volumeDef: IndicatorDef<VolumeParams> = {
+export const volumeDef: IndicatorDef<VolumeSettings> = {
   key: 'volume',
   label: 'Volume',
   longLabel: 'Volume',
-  pane: { subpane: 'volume', scaleHint: VOL_HINT },
+  pane: { subpane: 'volume' },
   // ≈ VOLUME_HEIGHT_RATIO (0.15) / SUBPANE_HEIGHT_RATIO (0.13), so an enabled
   // volume pane defaults to ~15% of chart height — the legacy reserved share.
   paneHeightFactor: 1.154,
-  defaultParams: {
-    smaPeriod: 30,
-    smaFade: 1,
-    milestones: 1,
-    standardOpacity: VOL_OPACITY_STANDARD,
-    fadeOpacity: 0.2,
-  },
-  formatParams: (p) => (p.smaFade ? `${p.smaPeriod}` : `${p.smaPeriod} · plain`),
-  formatValue: (v) => formatVolume(v),
-  paramSpecs: [
-    { key: 'smaPeriod', label: 'Avg Length', kind: 'number', min: 1 },
+  settingsSchema: [
+    { key: 'smaPeriod', label: 'Avg Length', kind: 'number', default: 30, min: 1 },
     {
       key: 'smaFade',
       label: 'Fade Below Avg',
       kind: 'enum',
+      default: 1,
       options: [
         { label: 'On', value: 1 },
         { label: 'Off', value: 0 },
@@ -194,16 +170,18 @@ export const volumeDef: IndicatorDef<VolumeParams> = {
       key: 'milestones',
       label: 'HVE/HVY',
       kind: 'enum',
+      default: 1,
       options: [
         { label: 'On', value: 1 },
         { label: 'Off', value: 0 },
       ],
     },
     {
-      // Opacity of standard (≥ average) bars. Default 0.35 (the legacy value).
+      // Opacity of standard (≥ average) bars.
       key: 'standardOpacity',
       label: 'Normal Bar Opacity',
       kind: 'number',
+      default: VOL_OPACITY_STANDARD,
       min: 0,
       max: 1,
       step: 0.01,
@@ -213,42 +191,32 @@ export const volumeDef: IndicatorDef<VolumeParams> = {
       key: 'fadeOpacity',
       label: 'Faded Bar Opacity',
       kind: 'number',
+      default: 0.2,
       min: 0,
       max: 1,
       step: 0.01,
     },
+    { key: 'upColor', label: 'Up', kind: 'color', default: 'var(--chart-positive)' },
+    { key: 'downColor', label: 'Down', kind: 'color', default: 'var(--chart-negative)' },
+    { key: 'labelColor', label: 'HVE/HVY', kind: 'color', default: 'var(--chart-axis-label)' },
   ],
+  formatParams: (s) => (s.smaFade ? `${s.smaPeriod}` : `${s.smaPeriod} · plain`),
   warmupBars: () => 0,
-  compute,
+  compute: (input, s) => ({ series: compute(input, s) }),
   draw,
-  defaultStyle: {
-    lines: [
-      {
-        seriesKey: 'volumeUp',
-        colorVar: 'var(--chart-positive)',
-        labelColorVar: 'var(--chart-positive)',
-        label: 'Vol Up',
-        width: 1,
-      },
-      {
-        seriesKey: 'volumeDown',
-        colorVar: 'var(--chart-negative)',
-        labelColorVar: 'var(--chart-negative)',
-        label: 'Vol Down',
-        width: 1,
-      },
-      // Width-0 color carrier for the HVE/HVY text (accepted convention, cf.
-      // Quarterly Results' `qlabel`): no data, not editable, hands its resolved
-      // color to the custom `draw`.
-      {
-        seriesKey: 'volLabelColor',
-        colorVar: 'var(--chart-axis-label)',
-        labelColorVar: 'var(--chart-axis-label)',
-        label: 'HVE/HVY',
-        width: 0,
-      },
-    ],
-    tooltipGroup: 'volume',
-    tooltipTitle: 'Volume',
-  },
+  // `includeZero` + `autofitPadding: 0` gives a `[0, volMax]` domain (bars rest
+  // on a zero baseline at the pane bottom). `topPadPx: 15` reserves fixed
+  // headroom for the 9px HVE/HVY label to sit fully ABOVE the tallest bar.
+  // `tickFormat` restores the K/M/B right axis.
+  autofitKeys: () => ['volumeUp', 'volumeDown'],
+  domain: () => ({
+    includeZero: true,
+    autofitPadding: 0,
+    topPadPx: 15,
+    tickFormat: formatVolumeTick,
+  }),
+  legend: (series, idx, s) => [
+    { color: s.upColor, label: 'Vol', value: cellAt(series.volumeUp, idx, formatVolume) },
+    { color: s.downColor, label: 'Vol', value: cellAt(series.volumeDown, idx, formatVolume) },
+  ],
 };

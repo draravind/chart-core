@@ -30,7 +30,7 @@ import type {
   StatsSize,
   StatsTableData,
 } from './stats/types';
-import type { SubpaneScaleHint } from './indicators/types';
+import type { DomainSpec } from './indicators/types';
 import {
   applySubpaneDrag,
   computeSubpaneBands,
@@ -71,7 +71,7 @@ const SUBPANE_HEIGHT_RATIO = 0.13;
 const PRICE_FLOOR_RATIO = 0.45;
 // Minimum height (px) any subpane may be dragged down to.
 const SUBPANE_MIN_PX = 24;
-// Minimum padding applied to an autofit subpane domain when the def's scaleHint
+// Minimum padding applied to an autofit subpane domain when the def's DomainSpec
 // does not override it.
 const DEFAULT_SUBPANE_PAD = 0.08;
 const RIGHT_BUFFER = 18;
@@ -379,12 +379,12 @@ const Chart = ({
     return enabled.map((config) => {
       const def = getIndicator(config.defKey);
       if (!def) return { config, series: {} as IndicatorSeries };
-      const full = def.compute(input, config.params);
+      const { series: full, meta } = def.compute(input, config.settings);
       const series: IndicatorSeries = {};
       for (const key of Object.keys(full)) {
         series[key] = seedLen ? full[key].subarray(seedLen) : full[key];
       }
-      return { config, series };
+      return { config, series, meta };
     });
   }, [
     data,
@@ -455,6 +455,7 @@ const Chart = ({
       indicators: st.indicators.map((r) => ({
         config: r.config,
         series: r.series,
+        meta: r.meta,
       })),
       resolveColor: (v) => colorResolverRef.current?.resolve(v) ?? '#888888',
     });
@@ -1254,15 +1255,16 @@ const Chart = ({
       // indicators (RS line) live on their own scale — their ratio values must
       // NOT pollute the price-pane domain, so skip them here.
       for (const { config, series } of resolvedIndicators) {
-        if (typeof getIndicator(config.defKey)?.pane === 'object') continue;
-        // Marker lines (width 0, e.g. the Stage 2 band's 1/NaN flag) are not
-        // prices — exclude them so they never collapse the log price domain.
-        const markerKeys = new Set(
-          config.style.lines.filter((l) => l.width === 0).map((l) => l.seriesKey),
-        );
-        for (const key of Object.keys(series)) {
-          if (markerKeys.has(key)) continue;
+        const def = getIndicator(config.defKey);
+        if (!def || typeof def.pane === 'object') continue;
+        // Only the def's `autofitKeys` series drive the price domain (replaces
+        // the old implicit `width !== 0` set). Stage 2 returns [] — its 1/NaN
+        // band flag never collapses the log price domain. A def without
+        // `autofitKeys` falls back to every series it computed.
+        const keys = def.autofitKeys?.(config.settings) ?? Object.keys(series);
+        for (const key of keys) {
           const arr = series[key];
+          if (!arr) continue;
           for (let g = visStart; g < visEnd && g < arr.length; g++) {
             const v = arr[g];
             // Skip non-positive overlay values (e.g. a BBANDS lower band can dip
@@ -1334,41 +1336,45 @@ const Chart = ({
       .attr('stroke', AXIS_STROKE)
       .attr('stroke-opacity', AXIS_OPACITY);
 
-    // Per-subpane linear scales. Each pane's domain is either pinned by its def's
-    // `scaleHint.fixedDomain`, or autofit over the pane's drawn-line series
-    // (excluding width===0 marker lines — e.g. the RS 0/1 `signal`) across the
-    // visible window. Range targets the pane band [bottom, top]. Independent of
-    // priceZoom.
+    // Per-subpane linear scales. Each pane's scale SHAPE comes from the first
+    // config's `def.domain(...)` (fixed/guide/zero/pad — reads settings, so e.g.
+    // Results' display enum picks text vs. bars); the autofit lines come from
+    // every config's `def.autofitKeys(...)` series across the visible window.
+    // Range targets the pane band [bottom, top]. Independent of priceZoom.
     const subpaneScales = new Map<string, d3.ScaleLinear<number, number>>();
-    const paneHints = new Map<string, SubpaneScaleHint | undefined>();
+    const paneSpecs = new Map<string, DomainSpec | undefined>();
     const paneIndicators = new Map<string, ResolvedIndicator[]>();
     for (const r of resolvedIndicators) {
       const def = getIndicator(r.config.defKey);
       const pane = def?.pane;
       if (!pane || typeof pane !== 'object' || !('subpane' in pane)) continue;
-      // Params-aware override (e.g. Results' display enum) wins over the static
-      // pane.scaleHint; first def per pane sets the hint.
-      if (!paneHints.has(pane.subpane)) {
-        const hint = def?.scaleHintFor?.(r.config.params) ?? pane.scaleHint;
-        paneHints.set(pane.subpane, hint);
+      // First def per pane sets the scale shape.
+      if (!paneSpecs.has(pane.subpane)) {
+        paneSpecs.set(
+          pane.subpane,
+          def?.domain?.(r.series, r.config.settings) ?? undefined,
+        );
       }
       const list = paneIndicators.get(pane.subpane) ?? [];
       list.push(r);
       paneIndicators.set(pane.subpane, list);
     }
     for (const pane of subpanes) {
-      const hint = paneHints.get(pane.key);
-      // Marker lines (width 0, e.g. the RS 0/1 signal) are excluded from autofit.
+      const spec = paneSpecs.get(pane.key);
+      // Only each def's `autofitKeys` series drive the pane domain (replaces the
+      // old implicit `width !== 0` set — e.g. the RS 0/1 `signal` is excluded).
       const lines: { values: Float64Array; isMarker: boolean }[] = [];
       for (const r of paneIndicators.get(pane.key) ?? []) {
-        for (const line of r.config.style.lines) {
-          const arr = r.series[line.seriesKey];
+        const def = getIndicator(r.config.defKey);
+        const keys = def?.autofitKeys?.(r.config.settings) ?? [];
+        for (const key of keys) {
+          const arr = r.series[key];
           if (!arr) continue;
-          lines.push({ values: arr, isMarker: line.width === 0 });
+          lines.push({ values: arr, isMarker: false });
         }
       }
       const domain = computeSubpaneDomain({
-        hint,
+        hint: spec,
         lines,
         visStart,
         visEnd,
@@ -1387,7 +1393,7 @@ const Chart = ({
         // part of the label pushed above `pane.top` is sliced off. With subpanes
         // now flush (divider sits on `pane.top`), this seats the label directly
         // under the divider with no wasted band above it.
-        const padPx = hint?.topPadPx ?? 0;
+        const padPx = spec?.topPadPx ?? 0;
         const H = pane.bottom - pane.top;
         if (padPx > 0 && H > padPx && hi > lo) {
           hi = lo + (hi - lo) * (H / (H - padPx));
@@ -1410,12 +1416,12 @@ const Chart = ({
       for (const pane of subpanes) {
         const scale = subpaneScales.get(pane.key);
         if (!scale) continue;
-        const hint = paneHints.get(pane.key);
+        const spec = paneSpecs.get(pane.key);
         // Text-mode panes (Results) suppress their axis — the scale carries no
         // value semantics. Guide/zero lines below stay gated independently.
-        if (!hint?.hideAxis) {
+        if (!spec?.hideAxis) {
           // Pane-specific tick format (e.g. Volume's K/M/B) overrides the default.
-          const tickFmt = hint?.tickFormat ?? subTickFormat;
+          const tickFmt = spec?.tickFormat ?? subTickFormat;
           const axisG = ySubAxisGRef.current!
             .append('g')
             .attr('transform', `translate(${width},0)`) as Sel<SVGGElement>;
@@ -1432,8 +1438,8 @@ const Chart = ({
             .attr('stroke', AXIS_STROKE)
             .attr('stroke-opacity', AXIS_OPACITY);
         }
-        const levels = [...(hint?.guideLines ?? [])];
-        if (hint?.zeroLine) levels.push(0);
+        const levels = [...(spec?.guideLines ?? [])];
+        if (spec?.zeroLine) levels.push(0);
         for (const level of levels) {
           subGuidesGroupRef.current!
             .append('line')

@@ -1,6 +1,6 @@
-// Shared param-spec building blocks reused across builtin defs.
+// Shared settings-field building blocks reused across builtin defs.
 
-/** MA-type enum options for `*_matype`/`matype` params (maDispatch supports 0–4). */
+/** MA-type enum options for `*_matype`/`matype` enum fields (maDispatch supports 0–4). */
 export const MA_TYPE_OPTIONS = [
   { label: 'SMA', value: 0 },
   { label: 'EMA', value: 1 },

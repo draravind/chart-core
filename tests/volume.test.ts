@@ -3,7 +3,7 @@ import type { Candle } from '../src/types';
 import type { IndicatorInput } from '../src/indicators/types';
 import {
   volumeDef,
-  type VolumeParams,
+  type VolumeSettings,
 } from '../src/indicators/builtins/volume';
 import { computeVolumeStats } from '../src/utils/chartCalculations';
 import {
@@ -40,12 +40,15 @@ function makeInput(combined: Candle[], displayStart: number): IndicatorInput {
   };
 }
 
-const DEFAULTS: VolumeParams = {
+const DEFAULTS: VolumeSettings = {
   smaPeriod: 30,
   smaFade: 1,
   milestones: 1,
   standardOpacity: 0.35,
   fadeOpacity: 0.12,
+  upColor: 'var(--chart-positive)',
+  downColor: 'var(--chart-negative)',
+  labelColor: 'var(--chart-axis-label)',
 };
 
 // A 5-bar display window prefixed by a 5-bar warmup seed. The display mixes
@@ -63,7 +66,7 @@ const combined = warmup.concat(display);
 
 describe('volumeDef.compute', () => {
   it('partitions volume by candle direction, NaN where vol <= 0, aligned after the start offset', () => {
-    const series = volumeDef.compute(makeInput(combined, START), DEFAULTS);
+    const series = volumeDef.compute(makeInput(combined, START), DEFAULTS).series;
 
     // Combined-length arrays; the warmup prefix is all NaN.
     expect(series.volumeUp.length).toBe(combined.length);
@@ -90,7 +93,7 @@ describe('volumeDef.compute', () => {
   });
 
   it('HVE/HVY indices in volLabel match computeVolumeStats(display) offset by start', () => {
-    const series = volumeDef.compute(makeInput(combined, START), DEFAULTS);
+    const series = volumeDef.compute(makeInput(combined, START), DEFAULTS).series;
     const stats = computeVolumeStats(display, DEFAULTS.smaPeriod);
 
     const finite: number[] = [];
@@ -111,7 +114,7 @@ describe('volumeDef.compute', () => {
     const longDisplay = Array.from({ length: n }, (_, i) => bar(i, true, 10));
     longDisplay[10] = bar(10, true, 5000); // HVE (>365d before the last bar)
     longDisplay[480] = bar(480, true, 3000); // HVY (within the trailing year)
-    const series = volumeDef.compute(makeInput(longDisplay, 0), DEFAULTS);
+    const series = volumeDef.compute(makeInput(longDisplay, 0), DEFAULTS).series;
     expect(series.volLabel[10]).toBe(1); // HVE
     expect(series.volLabel[480]).toBe(2); // HVY
   });
@@ -120,7 +123,7 @@ describe('volumeDef.compute', () => {
     const off = volumeDef.compute(makeInput(combined, START), {
       ...DEFAULTS,
       smaFade: 0,
-    });
+    }).series;
     expect([...off.volSma].every((v) => Number.isNaN(v))).toBe(true);
 
     // With a short averaging window the SMA becomes defined within the display.
@@ -128,7 +131,7 @@ describe('volumeDef.compute', () => {
       ...DEFAULTS,
       smaFade: 1,
       smaPeriod: 2,
-    });
+    }).series;
     expect([...on.volSma].some((v) => Number.isFinite(v))).toBe(true);
   });
 
@@ -136,7 +139,7 @@ describe('volumeDef.compute', () => {
     const series = volumeDef.compute(makeInput(combined, START), {
       ...DEFAULTS,
       milestones: 0,
-    });
+    }).series;
     expect([...series.volLabel].every((v) => Number.isNaN(v))).toBe(true);
   });
 });
@@ -151,16 +154,26 @@ describe('volumeDef registration', () => {
     expect(volumeDef.paneHeightFactor).toBe(1.154);
   });
 
-  it('defaultConfigFor exposes exactly two editable color lines (Vol Up / Vol Down)', () => {
-    const cfg = defaultConfigFor('volume');
-    const editable = cfg!.style.lines.filter((l) => l.width !== 0);
-    expect(editable.map((l) => l.seriesKey)).toEqual([
-      'volumeUp',
-      'volumeDown',
-    ]);
+  it('settingsSchema exposes three editable color fields (up / down / label)', () => {
+    const colorKeys = volumeDef.settingsSchema
+      .filter((f) => f.kind === 'color')
+      .map((f) => f.key);
+    expect(colorKeys).toEqual(['upColor', 'downColor', 'labelColor']);
   });
 
-  it('formatValue formats volume as K/M/B', () => {
-    expect(volumeDef.formatValue!(12_345_678, 'volumeUp')).toBe('12.35M');
+  it('domain tickFormat formats axis ticks as K/M/B', () => {
+    const spec = volumeDef.domain!({}, {} as VolumeSettings);
+    expect(spec!.tickFormat!(12_345_678)).toBe('12M');
+  });
+
+  it('legend formats the live volume cell as K/M/B', () => {
+    const series = volumeDef.compute(makeInput(combined, START), DEFAULTS).series;
+    const rows = volumeDef.legend(series, START + 0, DEFAULTS, {
+      priceFmt: (v) => String(v),
+    });
+    // bar 0 is an up bar of volume 100 → the up row carries the formatted value.
+    const valued = rows.filter((r) => r.value);
+    expect(valued).toHaveLength(1);
+    expect(valued[0].value).toBe('100');
   });
 });

@@ -1,4 +1,4 @@
-import type { ColorOverrides, IndicatorConfig, IndicatorDef } from './types';
+import type { IndicatorConfig, IndicatorDef, SettingsField } from './types';
 import { highsDef } from './builtins/rollingHigh';
 import { rsLineDef } from './builtins/rsLine';
 import { stage2Def } from './builtins/stage2';
@@ -28,7 +28,7 @@ import { trangeDef } from './builtins/trange';
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const registry = new Map<string, IndicatorDef<any>>();
 
-export function registerIndicator<P>(def: IndicatorDef<P>): void {
+export function registerIndicator<S>(def: IndicatorDef<S>): void {
   registry.set(def.key, def);
 }
 
@@ -41,46 +41,61 @@ export function listIndicators(): IndicatorDef[] {
   return [...registry.values()];
 }
 
+/** Static defaults straight off the schema (key → default). The single source
+ *  of base settings, so schema-default and blob-default can never drift. */
+export function defaultsFromSchema(schema: SettingsField[]): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const f of schema) out[f.key] = f.default;
+  return out;
+}
+
+/**
+ * Resolve effective settings from sparse user deltas. The delta ladder:
+ * `base(staticDefaults)` → `{...base, ...overrides}` → `deriveDefaults(merged)`
+ * (param-dependent defaults, e.g. EMA bands its color from period) →
+ * `{...base, ...derived, ...overrides}`. The user delta wins over the derived
+ * default; per-field reset = deleting that key from the deltas. Pure — never
+ * mutates the def or the inputs.
+ */
+export function effectiveSettings<S>(
+  def: IndicatorDef<S>,
+  overrides: Partial<S>,
+): S {
+  const base = defaultsFromSchema(def.settingsSchema) as S;
+  const merged1 = { ...base, ...overrides } as S;
+  const derived = def.deriveDefaults?.(merged1) ?? ({} as Partial<S>);
+  return { ...base, ...derived, ...overrides } as S;
+}
+
+/** Accepted `defaultConfigFor` overrides — id/enabled plus the sparse settings
+ *  delta map (the only persisted source of truth). */
+type ConfigOverrides = {
+  id?: string;
+  enabled?: boolean;
+  settingsOverrides?: Record<string, unknown>;
+};
+
 /**
  * Build a default `IndicatorConfig` for a registry key from the def's
- * `defaultParams` + `defaultStyle`. Hosts call this to surface an indicator in
- * `ChartControls` with one line. Returns `undefined` for an unknown key.
- *
- * Per-line colors are resolved in layers (`generic → factory → user override`):
- * the `defaultStyle` color is the generic fallback, the def's params-aware
- * `defaultLineColor` hook (when present) supplies the factory color, and any
- * `colorOverrides[seriesKey]` user hex wins. Clones style + lines + each line so
- * the shared `def.defaultStyle` singleton is never mutated.
+ * `settingsSchema` + any user deltas. Hosts call this to surface an indicator
+ * in `ChartControls`, and the legend re-runs it on every edit so param-dependent
+ * defaults (EMA re-banding) re-derive. Returns `undefined` for an unknown key.
  */
 export function defaultConfigFor(
   defKey: string,
-  overrides?: Partial<Pick<IndicatorConfig, 'id' | 'enabled' | 'params'>> & {
-    colorOverrides?: ColorOverrides;
-  },
+  overrides?: ConfigOverrides,
 ): IndicatorConfig | undefined {
   const def = getIndicator(defKey);
   if (!def) return undefined;
-  const params = { ...def.defaultParams, ...overrides?.params };
-  const colorOverrides = overrides?.colorOverrides ?? {};
-  const lines = def.defaultStyle.lines.map((line) => {
-    const factory = def.defaultLineColor?.(params, line.seriesKey);
-    let colorVar = factory?.colorVar ?? line.colorVar;
-    let labelColorVar = factory?.labelColorVar ?? line.labelColorVar;
-    const userHex = colorOverrides[line.seriesKey];
-    if (userHex) {
-      colorVar = userHex;
-      labelColorVar = userHex;
-    }
-    return { ...line, colorVar, labelColorVar };
-  });
+  const so: Record<string, unknown> = { ...overrides?.settingsOverrides };
+  const settings = effectiveSettings(def, so) as Record<string, unknown>;
   return {
     id: overrides?.id ?? defKey,
     defKey,
-    params,
     label: def.label,
     enabled: overrides?.enabled ?? false,
-    style: { ...def.defaultStyle, lines },
-    colorOverrides,
+    settings,
+    settingsOverrides: so,
   };
 }
 
@@ -121,7 +136,7 @@ for (const def of TI_DEFS) registerIndicator(def);
 export function formatIndicatorParams(config: IndicatorConfig): string {
   const def = getIndicator(config.defKey);
   if (!def?.formatParams) return '';
-  return def.formatParams(config.params);
+  return def.formatParams(config.settings);
 }
 
 /** Canonical left-to-right ordering for price-pane overlays in the picker. */

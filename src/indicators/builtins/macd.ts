@@ -1,8 +1,16 @@
 import type { IndicatorDef } from '../types';
 import { emaTalib, emaTalibAt, round2 } from '../talibMath';
-import { drawPolyline, drawHistogram } from '../draw';
+import { drawLines, drawHistogram, cellAt, fmt2 } from '../draw';
 
-export type MacdParams = { fast: number; slow: number; signal: number };
+export type MacdSettings = {
+  fast: number;
+  slow: number;
+  signal: number;
+  macd: string;
+  macdsignal: string;
+  histUpColor: string;
+  histDownColor: string;
+};
 
 /**
  * TA-Lib MACD — `macd = EMA(fast) − EMA(slow)`; `signal = EMA(macd, signal)`;
@@ -10,34 +18,37 @@ export type MacdParams = { fast: number; slow: number; signal: number };
  * `(slow−1)+(signal−1)` (TA-Lib emits the macd line from there too). Unbounded
  * subpane with a zero line; histogram drawn as bars. `slow` must exceed `fast`.
  */
-export const macdDef: IndicatorDef<MacdParams> = {
+export const macdDef: IndicatorDef<MacdSettings> = {
   key: 'ti:macd',
   label: 'MACD',
   longLabel: 'Moving Average Convergence Divergence',
-  pane: { subpane: 'macd', scaleHint: { zeroLine: true } },
-  defaultParams: { fast: 12, slow: 26, signal: 9 },
-  formatParams: (p) => `${p.fast},${p.slow},${p.signal}`,
-  paramSpecs: [
-    { key: 'fast', label: 'Fast', kind: 'number', min: 1 },
-    { key: 'slow', label: 'Slow', kind: 'number', min: 1 },
-    { key: 'signal', label: 'Signal', kind: 'number', min: 1 },
+  pane: { subpane: 'macd' },
+  settingsSchema: [
+    { key: 'fast', label: 'Fast', kind: 'number', default: 12, min: 1 },
+    { key: 'slow', label: 'Slow', kind: 'number', default: 26, min: 1 },
+    { key: 'signal', label: 'Signal', kind: 'number', default: 9, min: 1 },
+    { key: 'macd', label: 'MACD', kind: 'color', default: 'var(--macd-line)' },
+    { key: 'macdsignal', label: 'Signal', kind: 'color', default: 'var(--macd-signal)' },
+    { key: 'histUpColor', label: 'Hist +', kind: 'color', default: 'var(--macd-hist-up)' },
+    { key: 'histDownColor', label: 'Hist −', kind: 'color', default: 'var(--macd-hist-down)' },
   ],
-  warmupBars: (p) =>
-    p.slow - 1 + (p.signal - 1) + Math.max(250, 5 * p.slow),
-  compute: (input, p) => {
+  formatParams: (s) => `${s.fast},${s.slow},${s.signal}`,
+  warmupBars: (s) =>
+    s.slow - 1 + (s.signal - 1) + Math.max(250, 5 * s.slow),
+  compute: (input, s) => {
     const n = input.c.length;
     // TA-Lib seeds BOTH EMAs at index `slow−1` so they share a start point: the
     // fast EMA seeds with the SMA of its `fast` values ending at `slow−1` (NOT
     // its own earlier `fast−1` seed), the slow EMA with SMA of the first `slow`.
-    const emaFast = emaTalibAt(input.c, p.fast, p.slow - 1);
-    const emaSlow = emaTalib(input.c, p.slow);
+    const emaFast = emaTalibAt(input.c, s.fast, s.slow - 1);
+    const emaSlow = emaTalib(input.c, s.slow);
     const macdLine = new Float64Array(n);
     macdLine.fill(NaN);
     for (let i = 0; i < n; i++) {
       if (!Number.isNaN(emaFast[i]) && !Number.isNaN(emaSlow[i]))
         macdLine[i] = emaFast[i] - emaSlow[i];
     }
-    const signalLine = emaTalib(macdLine, p.signal);
+    const signalLine = emaTalib(macdLine, s.signal);
     const macd = new Float64Array(n);
     const macdsignal = new Float64Array(n);
     const macdhist = new Float64Array(n);
@@ -53,57 +64,28 @@ export const macdDef: IndicatorDef<MacdParams> = {
       macdsignal[i] = round2(signalLine[i]);
       macdhist[i] = round2(macdLine[i] - signalLine[i]);
     }
-    return { macd, macdsignal, macdhist };
+    return { series: { macd, macdsignal, macdhist } };
   },
-  draw: (ctx, series, scale, style) => {
-    const histStyle = style.find((s) => s.seriesKey === 'macdhist');
-    const downColor = style.find((s) => s.seriesKey === 'macdhist_down')?.color;
-    if (histStyle && series.macdhist) {
-      drawHistogram(ctx, scale, series.macdhist, histStyle, downColor);
+  draw: (ctx, series, scale, s, resolveColor) => {
+    if (series.macdhist) {
+      drawHistogram(
+        ctx,
+        scale,
+        series.macdhist,
+        { color: resolveColor(s.histUpColor), width: 1 },
+        resolveColor(s.histDownColor),
+      );
     }
-    for (const line of style) {
-      if (line.seriesKey === 'macdhist' || line.width === 0) continue;
-      const values = series[line.seriesKey];
-      if (!values) continue;
-      drawPolyline(ctx, scale, values, line, (g) => !Number.isNaN(values[g]));
-    }
+    drawLines(ctx, series, scale, [
+      { key: 'macd', st: { color: resolveColor(s.macd), width: 1.3 } },
+      { key: 'macdsignal', st: { color: resolveColor(s.macdsignal), width: 1.1 } },
+    ]);
   },
-  defaultStyle: {
-    lines: [
-      {
-        seriesKey: 'macd',
-        colorVar: 'var(--macd-line)',
-        labelColorVar: 'var(--macd-line)',
-        label: 'MACD',
-        width: 1.3,
-      },
-      {
-        seriesKey: 'macdsignal',
-        colorVar: 'var(--macd-signal)',
-        labelColorVar: 'var(--macd-signal)',
-        label: 'Signal',
-        width: 1.1,
-      },
-      {
-        // Histogram contributes to the pane domain (non-zero width) but is drawn
-        // as bars, not a polyline. Up bars use this color.
-        seriesKey: 'macdhist',
-        colorVar: 'var(--macd-hist-up)',
-        labelColorVar: 'var(--macd-hist-up)',
-        label: 'Hist',
-        width: 1,
-      },
-      {
-        // Marker-only (width 0): carries the down-bar color for the histogram;
-        // no series array, excluded from autofit and polyline drawing.
-        seriesKey: 'macdhist_down',
-        colorVar: 'var(--macd-hist-down)',
-        labelColorVar: 'var(--macd-hist-down)',
-        label: 'HistDown',
-        width: 0,
-      },
-    ],
-    tooltipGroup: 'ti:macd',
-    tooltipTitle: 'MACD',
-  },
+  autofitKeys: () => ['macd', 'macdsignal', 'macdhist'],
+  domain: () => ({ zeroLine: true }),
+  legend: (series, idx, s) => [
+    { color: s.macd, label: 'MACD', value: cellAt(series.macd, idx, fmt2) },
+    { color: s.macdsignal, label: 'Signal', value: cellAt(series.macdsignal, idx, fmt2) },
+    { color: s.histUpColor, label: 'Hist', value: cellAt(series.macdhist, idx, fmt2) },
+  ],
 };

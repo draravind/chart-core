@@ -1,8 +1,28 @@
-import type {
-  IndicatorDrawScale,
-  IndicatorSeries,
-  ResolvedLineStyle,
-} from './types';
+import type { IndicatorDrawScale, IndicatorSeries } from './types';
+
+/** Resolved (rgb) stroke style handed to the canvas painters. Lives here (not
+ *  in types.ts) — it's a draw-layer detail, not part of the public contract. */
+export type LineStyle = {
+  color: string;
+  width: number;
+  dash?: number[] | null;
+  opacity?: number;
+};
+
+/** Legend-matching value format: grouped en-US, 2dp. Shared by simple defs. */
+export const fmt2 = (v: number): string =>
+  v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+/** Format a series value at `idx`; `''` on NaN / out-of-bounds / missing. */
+export function cellAt(
+  values: Float64Array | undefined,
+  idx: number,
+  fmt: (v: number) => string,
+): string {
+  if (!values || idx < 0 || idx >= values.length) return '';
+  const v = values[idx];
+  return Number.isNaN(v) ? '' : fmt(v);
+}
 
 /**
  * Paint a single indicator line on canvas across the render window. `defined`
@@ -14,7 +34,7 @@ export function drawPolyline(
   ctx: CanvasRenderingContext2D,
   scale: IndicatorDrawScale,
   values: Float64Array,
-  style: ResolvedLineStyle,
+  style: LineStyle,
   defined: (globalIdx: number) => boolean,
 ): void {
   const { xScale, bandwidth, renderStart, renderEnd } = scale;
@@ -45,34 +65,33 @@ export function drawPolyline(
 }
 
 /**
- * Default multi-line painter: draw every styled line as a polyline gated on a
- * finite value. Lines with `width === 0` are markers (not strokes) and skipped.
+ * Default multi-line painter: draw every line (gated on a finite value).
+ * Callers pass only real lines as `{ key, st }` — there is no width-0 skip.
  */
 export function drawLines(
   ctx: CanvasRenderingContext2D,
   series: IndicatorSeries,
   scale: IndicatorDrawScale,
-  style: ResolvedLineStyle[],
+  lines: { key: string; st: LineStyle }[],
 ): void {
-  for (const line of style) {
-    if (line.width === 0) continue;
-    const values = series[line.seriesKey];
+  for (const line of lines) {
+    const values = series[line.key];
     if (!values) continue;
-    drawPolyline(ctx, scale, values, line, (g) => !Number.isNaN(values[g]));
+    drawPolyline(ctx, scale, values, line.st, (g) => !Number.isNaN(values[g]));
   }
 }
 
 /**
  * Paint vertical bars from the zero line to each finite value across the render
- * window. Used for the MACD histogram; bars above zero use `color`, below use
- * `negColor` (falls back to `color`). The zero pixel is derived from the
- * subpane scale so the bars sit on the pane's own zero crossing.
+ * window. Used for the MACD histogram; bars above zero use `style.color`, below
+ * use `negColor` (falls back to `style.color`). The zero pixel is derived from
+ * the subpane scale so the bars sit on the pane's own zero crossing.
  */
 export function drawHistogram(
   ctx: CanvasRenderingContext2D,
   scale: IndicatorDrawScale,
   values: Float64Array,
-  style: ResolvedLineStyle,
+  style: LineStyle,
   negColor?: string,
 ): void {
   const { xScale, bandwidth, renderStart, renderEnd } = scale;
@@ -131,7 +150,7 @@ export function drawDots(
   ctx: CanvasRenderingContext2D,
   scale: IndicatorDrawScale,
   values: Float64Array,
-  style: ResolvedLineStyle,
+  style: LineStyle,
   marked: (globalIdx: number) => boolean,
   radius = 2.5,
 ): void {

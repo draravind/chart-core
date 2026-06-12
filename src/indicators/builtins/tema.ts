@@ -1,36 +1,32 @@
 import type { IndicatorDef } from '../types';
 import { tema, round2 } from '../talibMath';
-import { drawLines } from '../draw';
+import { drawLines, cellAt } from '../draw';
 
-export type TemaParams = { period: number };
+export type TemaSettings = { period: number; lineColor: string };
 
 /** TA-Lib TEMA — `3·EMA − 3·EMA(EMA) + EMA(EMA(EMA))`, lookback `3(period−1)`. */
-export const temaDef: IndicatorDef<TemaParams> = {
+export const temaDef: IndicatorDef<TemaSettings> = {
   key: 'ti:tema',
   label: 'TEMA',
   longLabel: 'Triple Exponential Moving Average',
   pane: 'price',
-  defaultParams: { period: 20 },
-  formatParams: (p) => String(p.period),
-  paramSpecs: [{ key: 'period', label: 'Length', kind: 'number', min: 1 }],
-  warmupBars: (p) => 3 * (p.period - 1) + Math.max(250, 5 * p.period),
-  compute: (input, p) => {
-    const out = tema(input.c, p.period);
+  settingsSchema: [
+    { key: 'period', label: 'Length', kind: 'number', default: 20, min: 1 },
+    { key: 'lineColor', label: 'Line', kind: 'color', default: 'var(--ti-tema)' },
+  ],
+  formatParams: (s) => String(s.period),
+  warmupBars: (s) => 3 * (s.period - 1) + Math.max(250, 5 * s.period),
+  compute: (input, s) => {
+    const out = tema(input.c, s.period);
     for (let i = 0; i < out.length; i++) out[i] = round2(out[i]);
-    return { tema: out };
+    return { series: { tema: out } };
   },
-  draw: (ctx, series, scale, style) => drawLines(ctx, series, scale, style),
-  defaultStyle: {
-    lines: [
-      {
-        seriesKey: 'tema',
-        colorVar: 'var(--ti-tema)',
-        labelColorVar: 'var(--ti-tema)',
-        label: 'TEMA',
-        width: 1.2,
-      },
-    ],
-    tooltipGroup: 'ti:tema',
-    tooltipTitle: 'TEMA',
-  },
+  draw: (ctx, series, scale, s, resolveColor) =>
+    drawLines(ctx, series, scale, [
+      { key: 'tema', st: { color: resolveColor(s.lineColor), width: 1.2 } },
+    ]),
+  autofitKeys: () => ['tema'],
+  legend: (series, idx, s, ctx) => [
+    { color: s.lineColor, label: 'TEMA', value: cellAt(series.tema, idx, ctx.priceFmt) },
+  ],
 };

@@ -1,4 +1,4 @@
-import type { SubpaneScaleHint } from './types';
+import type { DomainSpec } from './types';
 
 // ---------------------------------------------------------------------------
 // Pure subpane layout + scale math, extracted from Chart so it can be unit
@@ -139,7 +139,7 @@ export type DomainLine = { values: Float64Array; isMarker: boolean };
  * Returns `null` when no finite value exists.
  */
 export function computeSubpaneDomain(params: {
-  hint: SubpaneScaleHint | undefined;
+  hint: DomainSpec | undefined;
   lines: DomainLine[];
   visStart: number;
   visEnd: number;
