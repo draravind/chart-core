@@ -1,6 +1,7 @@
 import * as d3 from 'd3';
 
 import type { Candle } from '../types';
+import type { PatternStyles } from '../appearance/types';
 import type { PatternMarker } from './types';
 import { renderers } from './renderers';
 
@@ -24,6 +25,10 @@ export type ChartPatternCtx = {
   baseTranslateX: number;
   dataLength: number;
   marginTop: number;
+  // Per-pattern user style (from the chart appearance config) + a color resolver
+  // (var()/hex → rgb). Each renderer reads `patternStyle[detection.pattern_name]`.
+  patternStyle: PatternStyles;
+  resolveColor: (expr: string) => string;
   registerHover?: (r: HoverRegion) => void;
 };
 

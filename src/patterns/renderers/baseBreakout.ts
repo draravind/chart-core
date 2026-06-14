@@ -4,18 +4,12 @@ import type { PatternMarker } from '../types';
 import { barIndexForDate } from '../../utils/dateBarIndex';
 import type { ChartPatternCtx } from '../mountChartPatternOverlay';
 
-const LINE_COLOR = '#252525';
-const DOT_FILL = '#252525';
-const LABEL_BG = '#252525';
-const LABEL_BG_OPACITY = 0.7;
-const LABEL_TEXT_COLOR = '#ffffff';
-const LABEL_FONT_SIZE = 11;
+// Deferred pure-geometry constants (not user-meaningful styling in v1).
 const LABEL_PADDING_X = 8;
 const LABEL_PADDING_Y = 4;
 
 // Base-stats annotation (days lasted + depth %) drawn directly on the
 // resistance line — no background chip, centered on the base's midpoint bar.
-const STAT_COLOR = '#252525';
 const STAT_FONT_SIZE = 10;
 const STAT_BASELINE_OFFSET = 6; // gap above the resistance line for the stat row
 
@@ -57,6 +51,10 @@ export function renderBaseBreakout(
   const m = detection.markers as unknown as Markers;
   if (!Array.isArray(m?.levels) || m.levels.length === 0) return;
 
+  const st = ctx.patternStyle.base_breakout;
+  const rc = ctx.resolveColor;
+  const LABEL_FONT_SIZE = st.labelFontSize;
+
   // Right end of the last drawn resistance line — fallback anchor for the chip
   // when the last-bar x can't be resolved (mirrors HTF's `?? flagXRight`).
   let lastLineRight: number | null = null;
@@ -82,10 +80,10 @@ export function renderBaseBreakout(
       .attr('y1', y)
       .attr('x2', x2)
       .attr('y2', y)
-      .attr('stroke', LINE_COLOR)
-      .attr('stroke-opacity', 0.5)
-      .attr('stroke-width', 1.5)
-      .attr('stroke-dasharray', '5 4')
+      .attr('stroke', rc(st.lineColor))
+      .attr('stroke-opacity', st.lineOpacity)
+      .attr('stroke-width', st.lineWidth)
+      .attr('stroke-dasharray', st.lineDash)
       .attr('stroke-linecap', 'round');
 
     target
@@ -94,7 +92,7 @@ export function renderBaseBreakout(
       .attr('cx', x2)
       .attr('cy', y)
       .attr('r', 3)
-      .attr('fill', DOT_FILL);
+      .attr('fill', rc(st.dotFill));
 
     // Base stats on the line: number of days the base lasted and the depth of
     // its low below the resistance, stacked above the line on the bar at the
@@ -116,7 +114,7 @@ export function renderBaseBreakout(
         .attr('y', statY)
         .attr('text-anchor', 'middle')
         .attr('font-size', STAT_FONT_SIZE)
-        .attr('fill', STAT_COLOR)
+        .attr('fill', rc(st.statColor))
         .attr('font-weight', 600)
         .text(
           `${Math.round(level.base_days)}d · ${level.base_depth_pct.toFixed(1)}%`,
@@ -147,7 +145,7 @@ export function renderBaseBreakout(
     .attr('y', chipH / 2)
     .attr('dominant-baseline', 'central')
     .attr('font-size', LABEL_FONT_SIZE)
-    .attr('fill', LABEL_TEXT_COLOR)
+    .attr('fill', rc(st.labelTextColor))
     .attr('font-weight', 600)
     .text(labelText);
 
@@ -164,6 +162,6 @@ export function renderBaseBreakout(
     .attr('width', chipW)
     .attr('height', chipH)
     .attr('rx', 3)
-    .attr('fill', LABEL_BG)
-    .attr('fill-opacity', LABEL_BG_OPACITY);
+    .attr('fill', rc(st.labelBg))
+    .attr('fill-opacity', st.labelBgOpacity);
 }

@@ -1,6 +1,7 @@
 import type { IndicatorDef } from '../types';
 import { maDispatch, maLookback, stddevPop, round2 } from '../talibMath';
 import { drawLines, cellAt } from '../draw';
+import { lineStyleFrom } from '../lineSettings';
 import { MA_TYPE_OPTIONS } from '../settingsOptions';
 
 export type BbandsSettings = {
@@ -28,9 +29,9 @@ export const bbandsDef: IndicatorDef<BbandsSettings> = {
     { key: 'nbdevup', label: 'Upper band', kind: 'number', default: 2, min: 0, step: 0.1 },
     { key: 'nbdevdn', label: 'Lower band', kind: 'number', default: 2, min: 0, step: 0.1 },
     { key: 'matype', label: 'Moving average type', kind: 'enum', default: 0, options: MA_TYPE_OPTIONS },
-    { key: 'upperColor', label: 'Upper', kind: 'color', default: 'var(--bb-upper)' },
-    { key: 'midColor', label: 'Mid', kind: 'color', default: 'var(--bb-mid)' },
-    { key: 'lowerColor', label: 'Lower', kind: 'color', default: 'var(--bb-lower)' },
+    { key: 'upper', label: 'Upper', kind: 'line', default: { color: 'var(--bb-upper)', width: 1, style: 1, opacity: 0.8 } },
+    { key: 'mid', label: 'Mid', kind: 'line', default: { color: 'var(--bb-mid)', width: 1.2 } },
+    { key: 'lower', label: 'Lower', kind: 'line', default: { color: 'var(--bb-lower)', width: 1, style: 1, opacity: 0.8 } },
   ],
   formatParams: (s) => `${s.period},${s.nbdevup}`,
   warmupBars: (s) =>
@@ -59,9 +60,9 @@ export const bbandsDef: IndicatorDef<BbandsSettings> = {
   },
   draw: (ctx, series, scale, s, resolveColor) =>
     drawLines(ctx, series, scale, [
-      { key: 'upperband', st: { color: resolveColor(s.upperColor), width: 1, dash: [4, 3], opacity: 0.8 } },
-      { key: 'middleband', st: { color: resolveColor(s.midColor), width: 1.2 } },
-      { key: 'lowerband', st: { color: resolveColor(s.lowerColor), width: 1, dash: [4, 3], opacity: 0.8 } },
+      { key: 'upperband', st: lineStyleFrom(s, 'upper', resolveColor) },
+      { key: 'middleband', st: lineStyleFrom(s, 'mid', resolveColor) },
+      { key: 'lowerband', st: lineStyleFrom(s, 'lower', resolveColor) },
     ]),
   autofitKeys: () => ['upperband', 'middleband', 'lowerband'],
   legend: (series, idx, s, ctx) => [

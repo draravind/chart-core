@@ -1,6 +1,7 @@
 import type { IndicatorDef } from '../types';
 import { emaTalib, round2 } from '../talibMath';
 import { drawLines, cellAt } from '../draw';
+import { lineStyleFrom } from '../lineSettings';
 
 export type EmaTalibSettings = {
   period: number;
@@ -35,7 +36,7 @@ export const emaTalibDef: IndicatorDef<EmaTalibSettings> = {
   pane: 'price',
   settingsSchema: [
     { key: 'period', label: 'Length', kind: 'number', default: 20, min: 1 },
-    { key: 'lineColor', label: 'Line', kind: 'color', default: 'var(--ti-ema)' },
+    { key: 'line', label: 'Line', kind: 'line', default: { color: 'var(--ti-ema)', width: 1.2 } },
     { key: 'labelColor', label: 'Label', kind: 'color', default: 'var(--ti-ema)' },
   ],
   deriveDefaults: (s) => {
@@ -51,7 +52,7 @@ export const emaTalibDef: IndicatorDef<EmaTalibSettings> = {
   },
   draw: (ctx, series, scale, s, resolveColor) =>
     drawLines(ctx, series, scale, [
-      { key: 'ema', st: { color: resolveColor(s.lineColor), width: 1.2 } },
+      { key: 'ema', st: lineStyleFrom(s, 'line', resolveColor) },
     ]),
   autofitKeys: () => ['ema'],
   legend: (series, idx, s, ctx) => [

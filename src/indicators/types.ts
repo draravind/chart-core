@@ -36,7 +36,17 @@ export type SettingsField =
       default: number;
       options: { label: string; value: number }[];
     })
-  | (SettingsFieldBase & { kind: 'toggle'; default: boolean });
+  | (SettingsFieldBase & { kind: 'toggle'; default: boolean })
+  // A grouped line control (TradingView-style). The `key` is a PREFIX, not an
+  // object slot: it EXPANDS (in `defaultsFromSchema`) into four ordinary scalar
+  // settings keys — `${key}Color`, `${key}Width`, `${key}Style`, `${key}Opacity`
+  // (`style` = index into `LINE_STYLE_OPTIONS`). Keeping storage scalar preserves
+  // the shallow-spread `effectiveSettings`, EMA's per-period re-banding, and the
+  // `'lineColor' in settingsOverrides` invariants.
+  | (SettingsFieldBase & {
+      kind: 'line';
+      default: { color: string; width: number; style?: number; opacity?: number };
+    });
 
 /** One legend row: a color expr (resolved by the legend), a formatted live
  *  value (null/'' = no value cell), and an optional per-row label. */

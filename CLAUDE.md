@@ -42,6 +42,10 @@ The split is intentional: the routing table + glossary here are **pay-always**
 | Add a new indicator                                      | `src/indicators/builtins/` (new `*Def` with a `settingsSchema`), register via import in `src/indicators/registry.ts`; shared enum options in `src/indicators/settingsOptions.ts` |
 | Fix indicator math / TA-Lib parity                       | `src/indicators/talibMath.ts`; verify with `tests/parity.test.ts` + `src/indicators/__fixtures__/talib_fixtures.json`                              |
 | Fix a wrong indicator color                              | `src/utils/resolveChartColors.ts`, `src/utils/toHex6.ts`; color-layer logic in `registry.ts` (`defaultConfigFor`); `tests/indicatorColors.test.ts` |
+| Edit global chart appearance at runtime (candle/bg/axis/crosshair/separators) | `src/appearance/{types,registry}.ts` (`ChartAppearance`, `APPEARANCE_DEFAULTS`, `effectiveAppearance`); `appearance`/`onAppearanceChange` Chart props; color-injection + `colorEpoch` in `Chart.tsx`; gear dialog `src/controls/SettingsDialog.tsx`; `tests/appearance.test.ts` |
+| Style an indicator line (width / dash / opacity, not just color) | grouped `line` `SettingsField` (`src/indicators/types.ts`), expanded to 4 scalar sub-keys in `registry.ts` (`defaultsFromSchema`); `lineStyleFrom` in `src/indicators/lineSettings.ts`; `LINE_STYLE_OPTIONS`/`dashFor` in `src/indicators/settingsOptions.ts`; `tests/lineSettings.test.ts` |
+| Style a pattern overlay (line/box/label colors, widths, opacities) | `APPEARANCE_DEFAULTS.patterns`; renderers read `ctx.patternStyle[name]` + `ctx.resolveColor` (`src/patterns/renderers/*`, `mountChartPatternOverlay.ts`); `tests/patternStyle.test.ts` |
+| Add/share a settings UI control (number/enum/toggle/color/slider/line) | `src/controls/SettingsFields.tsx` (shared field vocabulary, used by both legend popover + dialog) |
 | Fix subpane height/layout                                | `src/indicators/subpaneLayout.ts` (per-pane `heightFactors`/`userHeights`); `tests/subpaneLayout.test.ts`                                          |
 | Resize/persist subpane heights (drag dividers)           | `src/Chart.tsx` (`subpaneHeights`/`onSubpaneHeightsChange`, divider handles) + `applySubpaneDrag` in `src/indicators/subpaneLayout.ts`             |
 | Add/adjust the Quarterly Results pane                    | `src/indicators/builtins/quarterlyResults.ts`; `quarterlyResults` Chart prop; `--qr-*` tokens; `tests/quarterlyResults.test.ts`                    |
@@ -78,6 +82,33 @@ The split is intentional: the routing table + glossary here are **pay-always**
   `settingsOverrides` deltas and resolves the effective merge via
   `effectiveSettings` (base→derived→overrides). There is no `style.lines` — the
   old line list, `width`-as-flag, color-carrier lines, and `scaleHintFor` are gone.
+- **Grouped `line` field** — a `SettingsField` kind whose `key` is a PREFIX that
+  EXPANDS (in `defaultsFromSchema`) into four scalar sub-keys
+  (`${key}Color/Width/Style/Opacity`) so storage stays scalar (preserving the
+  shallow-spread `effectiveSettings`, EMA re-banding, and `'lineColor' in
+  settingsOverrides`). `lineStyleFrom` (`src/indicators/lineSettings.ts`) reads
+  them into a `LineStyle`; the popover renders it via `LineField`. Applied only to
+  polyline-drawn elements (not histograms/dots/volume bars).
+- **ChartAppearance / appearance config** — the global user-editable visual
+  contract (`src/appearance/types.ts`); the app persists a sparse `DeepPartial`
+  delta (`AppearanceOverrides`) via the `onAppearanceChange` Chart prop and Chart
+  resolves the merge over `APPEARANCE_DEFAULTS` via `effectiveAppearance`
+  (`src/appearance/registry.ts`). Colors ride a `colors` map injected as inline
+  `--<key>` CSS vars on the wrapper (zero draw-code change); non-color scalars
+  (gradient/wick/axis/crosshair) thread explicitly into draw code. Pattern styling
+  lives under `patterns[pattern_name]`. UI: the gear-triggered
+  `src/controls/SettingsDialog.tsx`; shared field controls in
+  `src/controls/SettingsFields.tsx`.
+- **Panel wheel-scroll contract** — the chart wrapper owns a greedy, non-passive
+  `wheel` listener (`Chart.tsx`) that `preventDefault()`s every wheel into a zoom,
+  *anywhere* over the chart surface (incl. floating legend/stats chrome). Any panel
+  that floats over the chart must carry the `data-chart-wheel-scroll` attribute on
+  its **root** element (so the *whole* panel — header + body — is a no-zoom zone, not
+  just the scroll area); its scroll body uses the shared `.panelScrollBody` style
+  (`Chart.module.css`). The wrapper handler `closest()`-checks for the attribute and
+  yields the wheel (native scroll then works on `.panelScrollBody`); otherwise the
+  chart zoom hijacks the gesture. Used by `SettingsDialog` and `IndicatorLegend`'s
+  param popover.
 - **Subpane** — a named oscillator pane below the price pane (RSI, MACD…); layout in
   `src/indicators/subpaneLayout.ts`. Heights are user-draggable (divider handles in
   `Chart.tsx`, math in `applySubpaneDrag`), persisted via `subpaneHeights`.

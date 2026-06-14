@@ -45,7 +45,19 @@ export function listIndicators(): IndicatorDef[] {
  *  of base settings, so schema-default and blob-default can never drift. */
 export function defaultsFromSchema(schema: SettingsField[]): Record<string, unknown> {
   const out: Record<string, unknown> = {};
-  for (const f of schema) out[f.key] = f.default;
+  for (const f of schema) {
+    if (f.kind === 'line') {
+      // A grouped `line` field expands into four scalar sub-keys so the rest of
+      // the framework (effectiveSettings, commit/reset, ColorField) keeps
+      // operating on plain scalar keys exactly as before.
+      out[`${f.key}Color`] = f.default.color;
+      out[`${f.key}Width`] = f.default.width;
+      out[`${f.key}Style`] = f.default.style ?? 0;
+      out[`${f.key}Opacity`] = f.default.opacity ?? 1;
+    } else {
+      out[f.key] = f.default;
+    }
+  }
   return out;
 }
 

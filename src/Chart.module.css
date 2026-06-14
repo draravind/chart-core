@@ -330,11 +330,12 @@
   color: var(--text-primary);
 }
 
-.legendPopoverBody {
+.panelScrollBody {
   display: flex;
   flex-direction: column;
   gap: 8px;
   padding: 12px;
+  overflow-y: auto; /* harmless on the popover today (no max-height); scrolls only if it grows */
 }
 
 .legendPopoverField {
@@ -483,4 +484,163 @@
 .legendColorHex:focus-visible {
   border-color: #5b8def;
   box-shadow: 0 0 0 2px color-mix(in srgb, #5b8def 28%, transparent);
+}
+
+/* ---- Grouped line field (settings popover) --------------------------- */
+/* Compact row: color swatch · style select · width stepper · opacity slider ·
+ * reset. Dedicated classes so the global popover `input { width:98px }` rule
+ * doesn't squash these. */
+.lineFieldControls {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.lineFieldControls input[type='color'] {
+  width: 28px;
+  height: 28px;
+  padding: 2px;
+  border: 1px solid color-mix(in srgb, var(--text-muted) 26%, transparent);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--surface-panel-header) 70%, #000);
+  cursor: pointer;
+  outline: none;
+}
+
+.lineFieldControls input[type='color']::-webkit-color-swatch-wrapper {
+  padding: 0;
+}
+.lineFieldControls input[type='color']::-webkit-color-swatch {
+  border: none;
+  border-radius: 3px;
+}
+.lineFieldControls input[type='color']::-moz-color-swatch {
+  border: none;
+  border-radius: 3px;
+}
+
+.lineFieldSelect {
+  height: 28px;
+  padding: 0 6px;
+  border: 1px solid color-mix(in srgb, var(--text-muted) 26%, transparent);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--surface-panel-header) 70%, #000);
+  color: var(--text-primary);
+  font-size: var(--text-xs);
+  font-family: inherit;
+  outline: none;
+  cursor: pointer;
+}
+
+.lineFieldWidth {
+  width: 48px;
+  height: 28px;
+  padding: 0 6px;
+  border: 1px solid color-mix(in srgb, var(--text-muted) 26%, transparent);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--surface-panel-header) 70%, #000);
+  color: var(--text-primary);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+  font-family: inherit;
+  outline: none;
+  appearance: textfield;
+  -moz-appearance: textfield;
+}
+.lineFieldWidth::-webkit-inner-spin-button,
+.lineFieldWidth::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.lineFieldOpacity {
+  width: 56px;
+}
+
+/* ---- Slider field ---------------------------------------------------- */
+.sliderControl {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.sliderControl input[type='range'] {
+  width: 78px;
+}
+
+.sliderValue {
+  min-width: 30px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+}
+
+/* ---- Settings gear + dialog ------------------------------------------ */
+.settingsGearBtn {
+  position: absolute;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border-radius: var(--radius-sm);
+  border: none;
+  background: color-mix(in srgb, var(--bg-card) 40%, transparent);
+  color: var(--text-muted);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 120ms ease, color 120ms ease;
+  z-index: 3;
+}
+
+.chartWrapperBare:hover .settingsGearBtn,
+.chartWrapper:hover .settingsGearBtn {
+  opacity: 1;
+}
+
+.settingsGearBtn:hover {
+  color: var(--text-primary);
+}
+
+.settingsDialog {
+  pointer-events: auto;
+  position: absolute;
+  z-index: 4;
+  width: 320px;
+  max-height: 70%;
+  display: flex;
+  flex-direction: column;
+  border-radius: 10px;
+  background: var(--surface-panel-raised);
+  border: 1px solid color-mix(in srgb, var(--text-muted) 22%, transparent);
+  box-shadow:
+    0 8px 24px rgba(0, 0, 0, 0.45),
+    0 2px 6px rgba(0, 0, 0, 0.3);
+  overflow: hidden;
+  font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+}
+
+.settingsSectionTitle {
+  font-size: var(--text-xs);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--text-primary);
+  margin-top: 4px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid color-mix(in srgb, var(--text-muted) 15%, transparent);
+}
+
+.settingsSectionTitle:first-child {
+  margin-top: 0;
+}
+
+.settingsGroupTitle {
+  font-size: var(--text-3xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-primary);
+  margin-top: 12px;
+  margin-bottom: 2px;
 }

@@ -1,6 +1,7 @@
 import type { IndicatorDef } from '../types';
 import { rsi, rawStochK, maDispatch, round2 } from '../talibMath';
 import { drawLines, cellAt, fmt2 } from '../draw';
+import { lineStyleFrom } from '../lineSettings';
 import { MA_TYPE_OPTIONS } from '../settingsOptions';
 
 export type StochrsiSettings = {
@@ -28,8 +29,8 @@ export const stochrsiDef: IndicatorDef<StochrsiSettings> = {
     { key: 'fastk', label: '%K length', kind: 'number', default: 5, min: 1 },
     { key: 'fastd', label: '%D smoothing', kind: 'number', default: 3, min: 1 },
     { key: 'fastd_matype', label: '%D moving average', kind: 'enum', default: 0, options: MA_TYPE_OPTIONS },
-    { key: 'kColor', label: '%K', kind: 'color', default: 'var(--stoch-k)' },
-    { key: 'dColor', label: '%D', kind: 'color', default: 'var(--stoch-d)' },
+    { key: 'k', label: '%K', kind: 'line', default: { color: 'var(--stoch-k)', width: 1.3 } },
+    { key: 'd', label: '%D', kind: 'line', default: { color: 'var(--stoch-d)', width: 1.1, style: 1 } },
   ],
   formatParams: (s) => `${s.timeperiod},${s.fastk},${s.fastd}`,
   warmupBars: (s) =>
@@ -48,8 +49,8 @@ export const stochrsiDef: IndicatorDef<StochrsiSettings> = {
   },
   draw: (ctx, series, scale, s, resolveColor) =>
     drawLines(ctx, series, scale, [
-      { key: 'fastk', st: { color: resolveColor(s.kColor), width: 1.3 } },
-      { key: 'fastd', st: { color: resolveColor(s.dColor), width: 1.1, dash: [4, 3] } },
+      { key: 'fastk', st: lineStyleFrom(s, 'k', resolveColor) },
+      { key: 'fastd', st: lineStyleFrom(s, 'd', resolveColor) },
     ]),
   autofitKeys: () => ['fastk', 'fastd'],
   domain: () => ({ fixedDomain: [0, 100], guideLines: [20, 80] }),

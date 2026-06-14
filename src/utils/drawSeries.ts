@@ -29,6 +29,10 @@ export type DrawSeriesParams = {
   subpaneScales: Map<string, d3.ScaleLinear<number, number>>;
   data: readonly Candle[];
   colors: SeriesColors;
+  // Background gradient (resolved rgb) + corner radius, threaded from appearance.
+  background: { topColor: string; bottomColor: string; radius: number };
+  // Candle/bar stroke width, threaded from appearance.
+  candle: { wickWidth: number };
   indicators: ResolvedIndicator[];
   resolveColor: (varExpr: string) => string;
 };
@@ -54,12 +58,12 @@ export function drawSeries(ctx: CanvasRenderingContext2D, p: DrawSeriesParams): 
   // the viewport clip so it also fills the axis gutter / volume pane.
   const bgHeight = p.fullHeight + p.marginTop + p.marginBottom;
   const bg = ctx.createLinearGradient(0, bgHeight, 0, 0);
-  bg.addColorStop(0, '#776a5a');
-  bg.addColorStop(1, '#6e7b8b');
+  bg.addColorStop(0, p.background.bottomColor);
+  bg.addColorStop(1, p.background.topColor);
   ctx.save();
   ctx.fillStyle = bg;
   ctx.beginPath();
-  ctx.roundRect(0, 0, p.cssWidth, bgHeight, 12);
+  ctx.roundRect(0, 0, p.cssWidth, bgHeight, p.background.radius);
   ctx.fill();
   ctx.restore();
 
@@ -112,7 +116,7 @@ function drawCandles(ctx: CanvasRenderingContext2D, p: DrawSeriesParams): void {
     const h = Math.max(1, Math.abs(yPrice(d.open) - yPrice(d.close)));
     (up ? posBodies : negBodies).push({ x: bx, y: yTop, w: bw, h });
   }
-  ctx.lineWidth = 1.25;
+  ctx.lineWidth = p.candle.wickWidth;
   ctx.strokeStyle = colors.positive;
   ctx.stroke(posWicks);
   ctx.strokeStyle = colors.negative;
@@ -146,7 +150,7 @@ function drawBars(ctx: CanvasRenderingContext2D, p: DrawSeriesParams): void {
     path.moveTo(x0 + tickLen, yc);
     path.lineTo(x0 + bandwidth, yc);
   }
-  ctx.lineWidth = 1.25;
+  ctx.lineWidth = p.candle.wickWidth;
   ctx.strokeStyle = colors.positive;
   ctx.stroke(posPath);
   ctx.strokeStyle = colors.negative;

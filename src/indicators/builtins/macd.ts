@@ -1,13 +1,14 @@
 import type { IndicatorDef } from '../types';
 import { emaTalib, emaTalibAt, round2 } from '../talibMath';
 import { drawLines, drawHistogram, cellAt, fmt2 } from '../draw';
+import { lineStyleFrom } from '../lineSettings';
 
 export type MacdSettings = {
   fast: number;
   slow: number;
   signal: number;
-  macd: string;
-  macdsignal: string;
+  macdColor: string;
+  macdsignalColor: string;
   histUpColor: string;
   histDownColor: string;
 };
@@ -27,8 +28,8 @@ export const macdDef: IndicatorDef<MacdSettings> = {
     { key: 'fast', label: 'Fast', kind: 'number', default: 12, min: 1 },
     { key: 'slow', label: 'Slow', kind: 'number', default: 26, min: 1 },
     { key: 'signal', label: 'Signal', kind: 'number', default: 9, min: 1 },
-    { key: 'macd', label: 'MACD', kind: 'color', default: 'var(--macd-line)' },
-    { key: 'macdsignal', label: 'Signal', kind: 'color', default: 'var(--macd-signal)' },
+    { key: 'macd', label: 'MACD', kind: 'line', default: { color: 'var(--macd-line)', width: 1.3 } },
+    { key: 'macdsignal', label: 'Signal', kind: 'line', default: { color: 'var(--macd-signal)', width: 1.1 } },
     { key: 'histUpColor', label: 'Hist +', kind: 'color', default: 'var(--macd-hist-up)' },
     { key: 'histDownColor', label: 'Hist −', kind: 'color', default: 'var(--macd-hist-down)' },
   ],
@@ -77,15 +78,15 @@ export const macdDef: IndicatorDef<MacdSettings> = {
       );
     }
     drawLines(ctx, series, scale, [
-      { key: 'macd', st: { color: resolveColor(s.macd), width: 1.3 } },
-      { key: 'macdsignal', st: { color: resolveColor(s.macdsignal), width: 1.1 } },
+      { key: 'macd', st: lineStyleFrom(s, 'macd', resolveColor) },
+      { key: 'macdsignal', st: lineStyleFrom(s, 'macdsignal', resolveColor) },
     ]);
   },
   autofitKeys: () => ['macd', 'macdsignal', 'macdhist'],
   domain: () => ({ zeroLine: true }),
   legend: (series, idx, s) => [
-    { color: s.macd, label: 'MACD', value: cellAt(series.macd, idx, fmt2) },
-    { color: s.macdsignal, label: 'Signal', value: cellAt(series.macdsignal, idx, fmt2) },
+    { color: s.macdColor, label: 'MACD', value: cellAt(series.macd, idx, fmt2) },
+    { color: s.macdsignalColor, label: 'Signal', value: cellAt(series.macdsignal, idx, fmt2) },
     { color: s.histUpColor, label: 'Hist', value: cellAt(series.macdhist, idx, fmt2) },
   ],
 };

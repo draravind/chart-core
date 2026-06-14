@@ -1,6 +1,7 @@
 import type { IndicatorDef } from '../types';
 import { adx, round2 } from '../talibMath';
 import { drawLines, cellAt, fmt2 } from '../draw';
+import { lineStyleFrom } from '../lineSettings';
 
 export type AdxSettings = { period: number; lineColor: string };
 
@@ -12,7 +13,7 @@ export const adxDef: IndicatorDef<AdxSettings> = {
   pane: { subpane: 'adx' },
   settingsSchema: [
     { key: 'period', label: 'Length', kind: 'number', default: 14, min: 1 },
-    { key: 'lineColor', label: 'Line', kind: 'color', default: 'var(--adx-line)' },
+    { key: 'line', label: 'Line', kind: 'line', default: { color: 'var(--adx-line)', width: 1.3 } },
   ],
   formatParams: (s) => String(s.period),
   warmupBars: (s) => 2 * s.period - 1 + Math.max(250, 5 * s.period),
@@ -23,7 +24,7 @@ export const adxDef: IndicatorDef<AdxSettings> = {
   },
   draw: (ctx, series, scale, s, resolveColor) =>
     drawLines(ctx, series, scale, [
-      { key: 'adx', st: { color: resolveColor(s.lineColor), width: 1.3 } },
+      { key: 'adx', st: lineStyleFrom(s, 'line', resolveColor) },
     ]),
   autofitKeys: () => ['adx'],
   domain: () => ({ fixedDomain: [0, 100] }),

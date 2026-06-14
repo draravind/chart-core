@@ -1,6 +1,7 @@
 import type { Candle } from '../../types';
 import type { IndicatorDef, IndicatorSeries } from '../types';
 import { drawPolyline, cellAt } from '../draw';
+import { lineStyleFrom } from '../lineSettings';
 
 type HighKey = 'high1y' | 'high2y' | 'high3y' | 'highAll';
 
@@ -42,17 +43,19 @@ function highVisibleAt(
 }
 
 type HighsSettings = {
-  color1y: string;
-  color2y: string;
-  color3y: string;
-  colorAll: string;
+  high1yColor: string;
+  high2yColor: string;
+  high3yColor: string;
+  highAllColor: string;
 };
 
-const TIERS: { key: HighKey; field: keyof HighsSettings; label: string; dash: number[] | null }[] = [
-  { key: 'high1y', field: 'color1y', label: '1Y', dash: [4, 3] },
-  { key: 'high2y', field: 'color2y', label: '2Y', dash: [4, 3] },
-  { key: 'high3y', field: 'color3y', label: '3Y', dash: [4, 3] },
-  { key: 'highAll', field: 'colorAll', label: 'ATH', dash: null },
+// Each tier's series key doubles as its `line` settings prefix (so e.g. prefix
+// `high1y` expands to `high1yColor`/`high1yWidth`/`high1yStyle`/`high1yOpacity`).
+const TIERS: { key: HighKey; label: string }[] = [
+  { key: 'high1y', label: '1Y' },
+  { key: 'high2y', label: '2Y' },
+  { key: 'high3y', label: '3Y' },
+  { key: 'highAll', label: 'ATH' },
 ];
 
 /**
@@ -67,10 +70,10 @@ export const highsDef: IndicatorDef<HighsSettings> = {
   longLabel: 'Rolling Highs',
   pane: 'price',
   settingsSchema: [
-    { key: 'color1y', label: '1Y', kind: 'color', default: 'var(--high-1y)' },
-    { key: 'color2y', label: '2Y', kind: 'color', default: 'var(--high-2y)' },
-    { key: 'color3y', label: '3Y', kind: 'color', default: 'var(--high-3y)' },
-    { key: 'colorAll', label: 'ATH', kind: 'color', default: 'var(--high-all)' },
+    { key: 'high1y', label: '1Y', kind: 'line', default: { color: 'var(--high-1y)', width: 1.1, style: 1, opacity: 0.5 } },
+    { key: 'high2y', label: '2Y', kind: 'line', default: { color: 'var(--high-2y)', width: 1.1, style: 1, opacity: 0.5 } },
+    { key: 'high3y', label: '3Y', kind: 'line', default: { color: 'var(--high-3y)', width: 1.1, style: 1, opacity: 0.5 } },
+    { key: 'highAll', label: 'ATH', kind: 'line', default: { color: 'var(--high-all)', width: 1.1, style: 0, opacity: 0.5 } },
   ],
   warmupBars: () => 0,
   compute: (input) => ({
@@ -85,12 +88,7 @@ export const highsDef: IndicatorDef<HighsSettings> = {
     for (const tier of TIERS) {
       const values = series[tier.key];
       if (!values) continue;
-      const st = {
-        color: resolveColor(s[tier.field]),
-        width: 1.1,
-        opacity: 0.5,
-        dash: tier.dash,
-      };
+      const st = lineStyleFrom(s, tier.key, resolveColor);
       drawPolyline(ctx, scale, values, st, (g) =>
         highVisibleAt(tier.key, g, series, scale.data),
       );
@@ -99,7 +97,7 @@ export const highsDef: IndicatorDef<HighsSettings> = {
   autofitKeys: () => ['high1y', 'high2y', 'high3y', 'highAll'],
   legend: (series, idx, s, ctx) =>
     TIERS.map((tier) => ({
-      color: s[tier.field],
+      color: String((s as Record<string, unknown>)[`${tier.key}Color`]),
       label: tier.label,
       value: cellAt(series[tier.key], idx, ctx.priceFmt),
     })),

@@ -100,7 +100,23 @@ export type { AtrSettings } from './indicators/builtins/atr';
 export type { NatrSettings } from './indicators/builtins/natr';
 export type { TrangeSettings } from './indicators/builtins/trange';
 
+// Appearance / theming framework — global user-editable chart visuals.
+export type {
+  ChartAppearance,
+  AppearanceOverrides,
+  PatternStyles,
+  LabelStyle,
+  BaseBreakoutStyle,
+  ConsolidationStyle,
+  HighTightFlagStyle,
+  DeepPartial,
+} from './appearance/types';
+export { APPEARANCE_DEFAULTS, effectiveAppearance } from './appearance/registry';
+export { LINE_STYLE_OPTIONS, dashFor } from './indicators/settingsOptions';
+export { lineStyleFrom } from './indicators/lineSettings';
+
 export { default as ChartControls } from './controls/ChartControls';
+export { default as SettingsDialog } from './controls/SettingsDialog';
 
 export { default as Chart } from './Chart';
 export {

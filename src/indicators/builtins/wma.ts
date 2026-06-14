@@ -1,6 +1,7 @@
 import type { IndicatorDef } from '../types';
 import { wma, round2 } from '../talibMath';
 import { drawLines, cellAt } from '../draw';
+import { lineStyleFrom } from '../lineSettings';
 
 export type WmaSettings = { period: number; lineColor: string };
 
@@ -12,7 +13,7 @@ export const wmaDef: IndicatorDef<WmaSettings> = {
   pane: 'price',
   settingsSchema: [
     { key: 'period', label: 'Length', kind: 'number', default: 20, min: 1 },
-    { key: 'lineColor', label: 'Line', kind: 'color', default: 'var(--ti-wma)' },
+    { key: 'line', label: 'Line', kind: 'line', default: { color: 'var(--ti-wma)', width: 1.2 } },
   ],
   formatParams: (s) => String(s.period),
   warmupBars: (s) => s.period - 1 + Math.max(250, 5 * s.period),
@@ -23,7 +24,7 @@ export const wmaDef: IndicatorDef<WmaSettings> = {
   },
   draw: (ctx, series, scale, s, resolveColor) =>
     drawLines(ctx, series, scale, [
-      { key: 'wma', st: { color: resolveColor(s.lineColor), width: 1.2 } },
+      { key: 'wma', st: lineStyleFrom(s, 'line', resolveColor) },
     ]),
   autofitKeys: () => ['wma'],
   legend: (series, idx, s, ctx) => [

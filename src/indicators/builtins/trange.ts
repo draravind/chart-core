@@ -1,6 +1,7 @@
 import type { IndicatorDef } from '../types';
 import { trueRange, round2 } from '../talibMath';
 import { drawLines, cellAt, fmt2 } from '../draw';
+import { lineStyleFrom } from '../lineSettings';
 
 export type TrangeSettings = { lineColor: string };
 
@@ -11,7 +12,7 @@ export const trangeDef: IndicatorDef<TrangeSettings> = {
   longLabel: 'True Range',
   pane: { subpane: 'trange' },
   settingsSchema: [
-    { key: 'lineColor', label: 'Line', kind: 'color', default: 'var(--trange-line)' },
+    { key: 'line', label: 'Line', kind: 'line', default: { color: 'var(--trange-line)', width: 1.3 } },
   ],
   warmupBars: () => 1 + 250,
   compute: (input) => {
@@ -21,7 +22,7 @@ export const trangeDef: IndicatorDef<TrangeSettings> = {
   },
   draw: (ctx, series, scale, s, resolveColor) =>
     drawLines(ctx, series, scale, [
-      { key: 'trange', st: { color: resolveColor(s.lineColor), width: 1.3 } },
+      { key: 'trange', st: lineStyleFrom(s, 'line', resolveColor) },
     ]),
   autofitKeys: () => ['trange'],
   legend: (series, idx, s) => [

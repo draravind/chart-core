@@ -4,12 +4,7 @@ import type { PatternMarker } from '../types';
 import { barIndexForDate } from '../../utils/dateBarIndex';
 import type { ChartPatternCtx } from '../mountChartPatternOverlay';
 
-const BOX_FILL = '#252525';
-const BOX_FILL_OPACITY = 0.1;
-const LABEL_BG = '#252525';
-const LABEL_BG_OPACITY = 0.7;
-const LABEL_TEXT_COLOR = '#ffffff';
-const LABEL_FONT_SIZE = 11;
+// Deferred pure-geometry constants (not user-meaningful styling in v1).
 const LABEL_PADDING_X = 8;
 const LABEL_PADDING_Y = 4;
 
@@ -47,6 +42,10 @@ export function renderConsolidation(
   if (!m?.start_date || !m?.end_date) return;
   if (!Number.isFinite(m.range_high) || !Number.isFinite(m.range_low)) return;
 
+  const st = ctx.patternStyle.consolidation;
+  const rc = ctx.resolveColor;
+  const LABEL_FONT_SIZE = st.labelFontSize;
+
   const startIdx = barIndexForDate(ctx.bars, m.start_date);
   const endIdx = barIndexForDate(ctx.bars, m.end_date);
   if (startIdx == null || endIdx == null) return;
@@ -73,8 +72,8 @@ export function renderConsolidation(
     .attr('y', yTop)
     .attr('width', Math.max(0, xRight - xLeft))
     .attr('height', Math.max(0, yBot - yTop))
-    .attr('fill', BOX_FILL)
-    .attr('fill-opacity', BOX_FILL_OPACITY)
+    .attr('fill', rc(st.boxFill))
+    .attr('fill-opacity', st.boxFillOpacity)
     .attr('stroke', 'none');
 
   // Label text.
@@ -103,7 +102,7 @@ export function renderConsolidation(
     .attr('y', chipH / 2)
     .attr('dominant-baseline', 'central')
     .attr('font-size', LABEL_FONT_SIZE)
-    .attr('fill', LABEL_TEXT_COLOR)
+    .attr('fill', rc(st.labelTextColor))
     .attr('font-weight', 600)
     .text(labelText);
   const textW = text.node()?.getBBox().width ?? labelText.length * 7;
@@ -121,8 +120,8 @@ export function renderConsolidation(
     .attr('width', chipW)
     .attr('height', chipH)
     .attr('rx', 3)
-    .attr('fill', LABEL_BG)
-    .attr('fill-opacity', LABEL_BG_OPACITY);
+    .attr('fill', rc(st.labelBg))
+    .attr('fill-opacity', st.labelBgOpacity);
 
   // Register hover region (local/pre-pan x bounds; price-pixel y bounds).
   const labelNode = labelGroup.node();

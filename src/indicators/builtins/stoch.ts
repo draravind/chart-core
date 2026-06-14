@@ -1,6 +1,7 @@
 import type { IndicatorDef } from '../types';
 import { rawStochK, maDispatch, round2 } from '../talibMath';
 import { drawLines, cellAt, fmt2 } from '../draw';
+import { lineStyleFrom } from '../lineSettings';
 import { MA_TYPE_OPTIONS } from '../settingsOptions';
 
 export type StochSettings = {
@@ -29,8 +30,8 @@ export const stochDef: IndicatorDef<StochSettings> = {
     { key: 'slowk_matype', label: '%K moving average', kind: 'enum', default: 0, options: MA_TYPE_OPTIONS },
     { key: 'slowd', label: '%D smoothing', kind: 'number', default: 3, min: 1 },
     { key: 'slowd_matype', label: '%D moving average', kind: 'enum', default: 0, options: MA_TYPE_OPTIONS },
-    { key: 'kColor', label: '%K', kind: 'color', default: 'var(--stoch-k)' },
-    { key: 'dColor', label: '%D', kind: 'color', default: 'var(--stoch-d)' },
+    { key: 'k', label: '%K', kind: 'line', default: { color: 'var(--stoch-k)', width: 1.3 } },
+    { key: 'd', label: '%D', kind: 'line', default: { color: 'var(--stoch-d)', width: 1.1, style: 1 } },
   ],
   formatParams: (s) => `${s.fastk},${s.slowk},${s.slowd}`,
   warmupBars: (s) =>
@@ -50,8 +51,8 @@ export const stochDef: IndicatorDef<StochSettings> = {
   },
   draw: (ctx, series, scale, s, resolveColor) =>
     drawLines(ctx, series, scale, [
-      { key: 'slowk', st: { color: resolveColor(s.kColor), width: 1.3 } },
-      { key: 'slowd', st: { color: resolveColor(s.dColor), width: 1.1, dash: [4, 3] } },
+      { key: 'slowk', st: lineStyleFrom(s, 'k', resolveColor) },
+      { key: 'slowd', st: lineStyleFrom(s, 'd', resolveColor) },
     ]),
   autofitKeys: () => ['slowk', 'slowd'],
   domain: () => ({ fixedDomain: [0, 100], guideLines: [20, 80] }),

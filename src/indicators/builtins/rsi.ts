@@ -1,6 +1,7 @@
 import type { IndicatorDef } from '../types';
 import { rsi, round2 } from '../talibMath';
 import { drawLines, cellAt, fmt2 } from '../draw';
+import { lineStyleFrom } from '../lineSettings';
 
 export type RsiSettings = { period: number; lineColor: string };
 
@@ -12,7 +13,7 @@ export const rsiDef: IndicatorDef<RsiSettings> = {
   pane: { subpane: 'rsi' },
   settingsSchema: [
     { key: 'period', label: 'Length', kind: 'number', default: 14, min: 1 },
-    { key: 'lineColor', label: 'Line', kind: 'color', default: 'var(--rsi-line)' },
+    { key: 'line', label: 'Line', kind: 'line', default: { color: 'var(--rsi-line)', width: 1.3 } },
   ],
   formatParams: (s) => String(s.period),
   warmupBars: (s) => s.period + Math.max(250, 5 * s.period),
@@ -23,7 +24,7 @@ export const rsiDef: IndicatorDef<RsiSettings> = {
   },
   draw: (ctx, series, scale, s, resolveColor) =>
     drawLines(ctx, series, scale, [
-      { key: 'rsi', st: { color: resolveColor(s.lineColor), width: 1.3 } },
+      { key: 'rsi', st: lineStyleFrom(s, 'line', resolveColor) },
     ]),
   autofitKeys: () => ['rsi'],
   domain: () => ({ fixedDomain: [0, 100], guideLines: [30, 70] }),

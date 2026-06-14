@@ -4,13 +4,7 @@ import type { PatternMarker } from '../types';
 import { barIndexForDate } from '../../utils/dateBarIndex';
 import type { ChartPatternCtx } from '../mountChartPatternOverlay';
 
-const POLE_COLOR = '#252525';
-const FLAG_FILL = '#252525';
-const FLAG_FILL_OPACITY = 0.12;
-const LABEL_BG = '#252525';
-const LABEL_BG_OPACITY = 0.7;
-const LABEL_TEXT_COLOR = '#ffffff';
-const LABEL_FONT_SIZE = 11;
+// Deferred pure-geometry constants (not user-meaningful styling in v1).
 const LABEL_PADDING_X = 8;
 const LABEL_PADDING_Y = 4;
 
@@ -43,6 +37,10 @@ export function renderHighTightFlag(
 ): void {
   const m = detection.markers as unknown as Markers;
   if (!m?.segments?.pole || !m?.segments?.flag) return;
+
+  const st = ctx.patternStyle.high_tight_flag;
+  const rc = ctx.resolveColor;
+  const LABEL_FONT_SIZE = st.labelFontSize;
 
   const poleStartIdx = barIndexForDate(ctx.bars, m.segments.pole[0]);
   const poleEndIdx = barIndexForDate(ctx.bars, m.segments.pole[1]);
@@ -101,9 +99,9 @@ export function renderHighTightFlag(
     .attr('y1', yPoleStart)
     .attr('x2', poleX2)
     .attr('y2', yPoleEnd)
-    .attr('stroke', POLE_COLOR)
-    .attr('stroke-opacity', 0.35)
-    .attr('stroke-width', 2)
+    .attr('stroke', rc(st.poleColor))
+    .attr('stroke-opacity', st.poleOpacity)
+    .attr('stroke-width', st.poleWidth)
     .attr('stroke-linecap', 'round');
 
   target
@@ -113,8 +111,8 @@ export function renderHighTightFlag(
     .attr('y', flagYTop)
     .attr('width', Math.max(0, flagXRight - flagXLeft))
     .attr('height', Math.max(0, flagYBot - flagYTop))
-    .attr('fill', FLAG_FILL)
-    .attr('fill-opacity', FLAG_FILL_OPACITY)
+    .attr('fill', rc(st.flagFill))
+    .attr('fill-opacity', st.flagFillOpacity)
     .attr('stroke', 'none');
 
   const score = m.score;
@@ -143,7 +141,7 @@ export function renderHighTightFlag(
     .attr('y', chipH / 2)
     .attr('dominant-baseline', 'central')
     .attr('font-size', LABEL_FONT_SIZE)
-    .attr('fill', LABEL_TEXT_COLOR)
+    .attr('fill', rc(st.labelTextColor))
     .attr('font-weight', 600)
     .text(labelText);
 
@@ -160,6 +158,6 @@ export function renderHighTightFlag(
     .attr('width', chipW)
     .attr('height', chipH)
     .attr('rx', 3)
-    .attr('fill', LABEL_BG)
-    .attr('fill-opacity', LABEL_BG_OPACITY);
+    .attr('fill', rc(st.labelBg))
+    .attr('fill-opacity', st.labelBgOpacity);
 }

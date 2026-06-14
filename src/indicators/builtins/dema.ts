@@ -1,6 +1,7 @@
 import type { IndicatorDef } from '../types';
 import { dema, round2 } from '../talibMath';
 import { drawLines, cellAt } from '../draw';
+import { lineStyleFrom } from '../lineSettings';
 
 export type DemaSettings = { period: number; lineColor: string };
 
@@ -12,7 +13,7 @@ export const demaDef: IndicatorDef<DemaSettings> = {
   pane: 'price',
   settingsSchema: [
     { key: 'period', label: 'Length', kind: 'number', default: 20, min: 1 },
-    { key: 'lineColor', label: 'Line', kind: 'color', default: 'var(--ti-dema)' },
+    { key: 'line', label: 'Line', kind: 'line', default: { color: 'var(--ti-dema)', width: 1.2 } },
   ],
   formatParams: (s) => String(s.period),
   warmupBars: (s) => 2 * (s.period - 1) + Math.max(250, 5 * s.period),
@@ -23,7 +24,7 @@ export const demaDef: IndicatorDef<DemaSettings> = {
   },
   draw: (ctx, series, scale, s, resolveColor) =>
     drawLines(ctx, series, scale, [
-      { key: 'dema', st: { color: resolveColor(s.lineColor), width: 1.2 } },
+      { key: 'dema', st: lineStyleFrom(s, 'line', resolveColor) },
     ]),
   autofitKeys: () => ['dema'],
   legend: (series, idx, s, ctx) => [

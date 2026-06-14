@@ -5,14 +5,19 @@ import type {
   IndicatorDef,
   LegendRow,
   ResolvedIndicator,
-  SettingsField,
 } from '../indicators/types';
 import {
   getIndicator,
   formatIndicatorParams,
   defaultConfigFor,
 } from '../indicators/registry';
-import { toHex6 } from '../utils/toHex6';
+import {
+  NumberField,
+  EnumField,
+  ToggleField,
+  ColorField,
+  LineField,
+} from './SettingsFields';
 import styles from '../Chart.module.css';
 
 // Geometry handed down from Chart's `layout`. `subpanes[i].top` is in inner-SVG
@@ -53,175 +58,7 @@ type Props = {
   resolveColor?: (expr: string) => string;
 };
 
-type NumberFieldSpec = Extract<SettingsField, { kind: 'number' }>;
-type EnumFieldSpec = Extract<SettingsField, { kind: 'enum' }>;
-
-function clamp(n: number, spec: NumberFieldSpec): number {
-  let v = n;
-  if (spec.min != null) v = Math.max(spec.min, v);
-  if (spec.max != null) v = Math.min(spec.max, v);
-  return v;
-}
-
-// Smart live commit: hold the field text locally; commit the clamped value on
-// every parseable change (live), re-sync text to the committed value on blur.
-// Lets the user clear and retype (50 → 200) without snapping to `min`.
-function NumberField({
-  spec,
-  value,
-  onCommit,
-}: {
-  spec: NumberFieldSpec;
-  value: number;
-  onCommit: (v: number) => void;
-}) {
-  const [text, setText] = useState(String(value));
-  const step = spec.step ?? 1;
-  const isInt = Number.isInteger(step);
-  const title = isInt
-    ? `Whole number${spec.min != null ? ` ≥ ${spec.min}` : ''}`
-    : `Number${spec.min != null ? ` ≥ ${spec.min}` : ''}, step ${step}`;
-  return (
-    <label className={styles.legendPopoverField}>
-      <span>{spec.label}</span>
-      <input
-        type="number"
-        value={text}
-        min={spec.min}
-        max={spec.max}
-        step={step}
-        title={title}
-        autoComplete="off"
-        // Scroll-wheel over a focused number field silently mutates the value —
-        // a finance footgun. Blur on wheel so the gesture scrolls the chart.
-        onWheel={(e) => e.currentTarget.blur()}
-        onChange={(e) => {
-          const t = e.target.value;
-          setText(t);
-          const n = Number(t);
-          // Commit only clean decimals (blocks e-notation / signs from state);
-          // integer-stepped fields round so 2.5 can't reach a period param.
-          if (t.trim() !== '' && Number.isFinite(n) && /^\d*\.?\d*$/.test(t)) {
-            onCommit(clamp(isInt ? Math.round(n) : n, spec));
-          }
-        }}
-        onBlur={() => setText(String(value))}
-      />
-    </label>
-  );
-}
-
-function EnumField({
-  spec,
-  value,
-  onChange,
-}: {
-  spec: EnumFieldSpec;
-  value: number;
-  onChange: (v: number) => void;
-}) {
-  return (
-    <label className={styles.legendPopoverField}>
-      <span>{spec.label}</span>
-      <select value={value} onChange={(e) => onChange(Number(e.target.value))}>
-        {spec.options.map((o) => (
-          <option key={o.value} value={o.value}>
-            {o.label}
-          </option>
-        ))}
-      </select>
-    </label>
-  );
-}
-
-function ToggleField({
-  label,
-  value,
-  onChange,
-}: {
-  label: string;
-  value: boolean;
-  onChange: (v: boolean) => void;
-}) {
-  return (
-    <label className={styles.legendPopoverField}>
-      <span>{label}</span>
-      <input
-        type="checkbox"
-        checked={value}
-        onChange={(e) => onChange(e.target.checked)}
-      />
-    </label>
-  );
-}
-
-// One editable color: native swatch + hex text field + reset-to-default. The
-// native picker is hex-only, so the swatch's controlled value is the resolved-
-// then-hexed color. The hex text field commits on blur/Enter (not per keystroke)
-// to avoid a repaint/persist on every intermediate character; local text resyncs
-// to the resolved value on blur, reset, re-band, or theme change.
-function ColorField({
-  label,
-  colorExpr,
-  isOverridden,
-  resolveColor,
-  onCommit,
-  onReset,
-}: {
-  label: string;
-  colorExpr: string;
-  isOverridden: boolean;
-  resolveColor: (expr: string) => string;
-  onCommit: (hex: string) => void;
-  onReset: () => void;
-}) {
-  const resolvedHex = toHex6(resolveColor(colorExpr));
-  const [text, setText] = useState(resolvedHex);
-  useEffect(() => setText(resolvedHex), [resolvedHex]);
-
-  const commitText = () => {
-    const t = text.trim().toLowerCase();
-    if (/^#[0-9a-f]{6}$/.test(t)) onCommit(t);
-    else setText(resolvedHex);
-  };
-
-  return (
-    <div className={styles.legendColorField}>
-      <span>{label}</span>
-      <div className={styles.legendColorControls}>
-        <input
-          type="color"
-          value={resolvedHex}
-          title={`${label} color`}
-          onChange={(e) => onCommit(e.target.value)}
-        />
-        <input
-          type="text"
-          className={styles.legendColorHex}
-          value={text}
-          spellCheck={false}
-          autoComplete="off"
-          onChange={(e) => setText(e.target.value)}
-          onBlur={commitText}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') e.currentTarget.blur();
-          }}
-        />
-        <button
-          type="button"
-          className={styles.legendBtn}
-          title="Reset to default color"
-          disabled={!isOverridden}
-          onClick={onReset}
-        >
-          ↺
-        </button>
-      </div>
-    </div>
-  );
-}
-
-// One uniform popover over the def's `settingsSchema`: number/enum/toggle/color
+// One uniform popover over the def's `settingsSchema`: number/enum/toggle/color/line
 // controls, each reading its current value from `config.settings`. Color fields
 // also surface the per-field reset (delete the key from `settingsOverrides`).
 function ParamPopover({
@@ -229,6 +66,7 @@ function ParamPopover({
   def,
   onCommit,
   onReset,
+  onResetKeys,
   resolveColor,
   onClose,
 }: {
@@ -236,6 +74,7 @@ function ParamPopover({
   def: IndicatorDef;
   onCommit: (key: string, value: number | boolean | string) => void;
   onReset: (key: string) => void;
+  onResetKeys: (keys: string[]) => void;
   resolveColor?: (expr: string) => string;
   onClose: () => void;
 }) {
@@ -258,7 +97,7 @@ function ParamPopover({
   const summary = formatIndicatorParams(config);
   const resolve = resolveColor ?? ((e: string) => e);
   return (
-    <div className={styles.legendPopover} ref={ref}>
+    <div className={styles.legendPopover} ref={ref} data-chart-wheel-scroll>
       <div className={styles.legendPopoverHeader}>
         <span className={styles.legendPopoverTitle}>
           {def.longLabel ?? def.label}
@@ -273,7 +112,7 @@ function ParamPopover({
           ×
         </button>
       </div>
-      <div className={styles.legendPopoverBody}>
+      <div className={styles.panelScrollBody}>
         {def.settingsSchema.map((field) => {
           switch (field.kind) {
             case 'number':
@@ -315,6 +154,19 @@ function ParamPopover({
                   onReset={() => onReset(field.key)}
                 />
               );
+            case 'line':
+              return (
+                <LineField
+                  key={field.key}
+                  label={field.label}
+                  prefix={field.key}
+                  settings={config.settings}
+                  settingsOverrides={config.settingsOverrides}
+                  resolveColor={resolve}
+                  onCommit={(key, value) => onCommit(key, value)}
+                  onResetKeys={(keys) => onResetKeys(keys)}
+                />
+              );
           }
         })}
       </div>
@@ -330,6 +182,7 @@ function LegendBlock({
   setOpenId,
   onCommit,
   onReset,
+  onResetKeys,
   resolveColor,
   onRemove,
   rowsFor,
@@ -342,6 +195,7 @@ function LegendBlock({
   setOpenId: (id: string | null) => void;
   onCommit: (config: IndicatorConfig, key: string, value: number | boolean | string) => void;
   onReset: (config: IndicatorConfig, key: string) => void;
+  onResetKeys: (config: IndicatorConfig, keys: string[]) => void;
   resolveColor?: (expr: string) => string;
   onRemove: (id: string) => void;
   rowsFor: (config: IndicatorConfig) => LegendRow[];
@@ -411,6 +265,7 @@ function LegendBlock({
                 def={def}
                 onCommit={(key, value) => onCommit(config, key, value)}
                 onReset={(key) => onReset(config, key)}
+                onResetKeys={(keys) => onResetKeys(config, keys)}
                 resolveColor={resolveColor}
                 onClose={() => setOpenId(null)}
               />
@@ -500,11 +355,21 @@ export default function IndicatorLegend({
   // Drop a setting's override and recompute via `defaultConfigFor` so it falls
   // back to its (possibly param-derived) default.
   const resetSetting = (config: IndicatorConfig, key: string) => {
+    resetSettings(config, [key]);
+  };
+
+  // Batched reset: drop several overrides in ONE `onIndicatorsChange` so the
+  // grouped line ↺ clears every sub-key at once. A per-key loop would fire
+  // multiple synchronous `onIndicatorsChange(value)` calls that each map over the
+  // same render-time `indicators`; React batches them into last-write-wins, so
+  // only one key would actually be cleared per click.
+  const resetSettings = (config: IndicatorConfig, keys: string[]) => {
+    if (keys.length === 0) return;
     onIndicatorsChange(
       indicators.map((c) => {
         if (c.id !== config.id) return c;
         const settingsOverrides = { ...c.settingsOverrides };
-        delete settingsOverrides[key];
+        for (const key of keys) delete settingsOverrides[key];
         const next = defaultConfigFor(c.defKey, {
           id: c.id,
           enabled: c.enabled,
@@ -554,6 +419,7 @@ export default function IndicatorLegend({
         setOpenId={setOpenId}
         onCommit={commitSetting}
         onReset={resetSetting}
+        onResetKeys={resetSettings}
         resolveColor={resolveColor}
         onRemove={removeConfig}
         rowsFor={rowsFor}
@@ -573,6 +439,7 @@ export default function IndicatorLegend({
           setOpenId={setOpenId}
           onCommit={commitSetting}
           onReset={resetSetting}
+          onResetKeys={resetSettings}
           resolveColor={resolveColor}
           onRemove={removeConfig}
           rowsFor={rowsFor}

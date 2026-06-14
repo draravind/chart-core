@@ -1,6 +1,7 @@
 import type { IndicatorDef } from '../types';
 import { rollingMax, rollingMin, round2 } from '../talibMath';
 import { drawLines, cellAt, fmt2 } from '../draw';
+import { lineStyleFrom } from '../lineSettings';
 
 export type WillrSettings = { period: number; lineColor: string };
 
@@ -15,7 +16,7 @@ export const willrDef: IndicatorDef<WillrSettings> = {
   pane: { subpane: 'willr' },
   settingsSchema: [
     { key: 'period', label: 'Length', kind: 'number', default: 14, min: 1 },
-    { key: 'lineColor', label: 'Line', kind: 'color', default: 'var(--willr-line)' },
+    { key: 'line', label: 'Line', kind: 'line', default: { color: 'var(--willr-line)', width: 1.3 } },
   ],
   formatParams: (s) => String(s.period),
   warmupBars: (s) => s.period - 1 + Math.max(250, 5 * s.period),
@@ -34,7 +35,7 @@ export const willrDef: IndicatorDef<WillrSettings> = {
   },
   draw: (ctx, series, scale, s, resolveColor) =>
     drawLines(ctx, series, scale, [
-      { key: 'willr', st: { color: resolveColor(s.lineColor), width: 1.3 } },
+      { key: 'willr', st: lineStyleFrom(s, 'line', resolveColor) },
     ]),
   autofitKeys: () => ['willr'],
   domain: () => ({ fixedDomain: [-100, 0], guideLines: [-20, -80] }),

@@ -1,6 +1,7 @@
 import type { IndicatorDef, IndicatorInput } from '../types';
 import { computeRollingHigh } from '../compute';
 import { drawPolyline, drawDots, cellAt, fmt2 } from '../draw';
+import { lineStyleFrom } from '../lineSettings';
 
 export type RsSettings = {
   lookback: number;
@@ -23,7 +24,7 @@ export const rsLineDef: IndicatorDef<RsSettings> = {
   pane: { subpane: 'rs' },
   settingsSchema: [
     { key: 'lookback', label: 'Lookback', kind: 'number', default: 252, min: 1 },
-    { key: 'lineColor', label: 'RS', kind: 'color', default: 'var(--rs-line)' },
+    { key: 'line', label: 'RS', kind: 'line', default: { color: 'var(--rs-line)', width: 1.3 } },
     { key: 'signalColor', label: 'Signal', kind: 'color', default: 'var(--rs-signal)' },
   ],
   formatParams: (s) => String(s.lookback),
@@ -79,7 +80,7 @@ export const rsLineDef: IndicatorDef<RsSettings> = {
       ctx,
       scale,
       rs,
-      { color: resolveColor(s.lineColor), width: 1.3 },
+      lineStyleFrom(s, 'line', resolveColor),
       (g) => !Number.isNaN(rs[g]),
     );
     if (signal)

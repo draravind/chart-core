@@ -6,7 +6,7 @@ import React, {
   useRef,
   useState,
 } from 'react';
-import { BarChart3, MousePointerClick, RotateCcw } from 'lucide-react';
+import { BarChart3, MousePointerClick, RotateCcw, Settings } from 'lucide-react';
 import * as d3 from 'd3';
 import type {
   AutoFitMode,
@@ -21,7 +21,10 @@ import type {
   ResolvedIndicator,
 } from './indicators/types';
 import { getIndicator, SUBPANE_ORDER } from './indicators/registry';
+import type { AppearanceOverrides } from './appearance/types';
+import { effectiveAppearance } from './appearance/registry';
 import IndicatorLegend from './controls/IndicatorLegend';
+import SettingsDialog from './controls/SettingsDialog';
 import StatsPanel from './stats/StatsPanel';
 import { computeStats } from './stats/computeStats';
 import type {
@@ -77,8 +80,8 @@ const DEFAULT_SUBPANE_PAD = 0.08;
 const RIGHT_BUFFER = 18;
 const INFO_SPAN_COUNT = 12;
 const AXIS_STROKE = 'currentColor';
-const AXIS_OPACITY = 0.12;
-const TICK_SIZE = 4;
+// Axis opacity + tick size are now user-editable via the appearance config
+// (APPEARANCE_DEFAULTS.axis); read from `app.axis` at draw time.
 const N_PRICE_TICKS = 10;
 const MUTED_COLOR = 'var(--chart-tooltip-label)';
 
@@ -136,6 +139,13 @@ type Props = {
   statsPosition?: StatsPosition | null;
   onStatsPositionChange?: (p: StatsPosition) => void;
   statsSize?: StatsSize;
+  // User-editable chart appearance — a sparse `AppearanceOverrides` delta the
+  // app persists via `onAppearanceChange` (same controlled-prop + sparse-delta
+  // contract as `indicators`/`onIndicatorsChange`). Absent ⇒ baked defaults.
+  // The gear-triggered Settings dialog only mounts when `onAppearanceChange` is
+  // supplied (no callback ⇒ no way to persist edits).
+  appearance?: AppearanceOverrides;
+  onAppearanceChange?: (next: AppearanceOverrides) => void;
   // App overlay plugins; they portal D3 overlays into the published hosts.
   children?: React.ReactNode;
 };
@@ -178,6 +188,8 @@ const Chart = ({
   statsPosition = null,
   onStatsPositionChange,
   statsSize = 'small',
+  appearance,
+  onAppearanceChange,
   children,
 }: Props) => {
   const wrapperRef = useRef<HTMLDivElement | null>(null);
@@ -200,6 +212,22 @@ const Chart = ({
   }, []);
 
   const dataLength = data?.length ?? 0;
+
+  // Effective appearance (defaults ← sparse overrides). Recomputed each render;
+  // downstream effects key on stable JSON serializations of the slices they
+  // consume so they only re-run when that slice actually changes.
+  const app = useMemo(() => effectiveAppearance(appearance), [appearance]);
+  const appColorsKey = useMemo(() => JSON.stringify(app.colors), [app]);
+  const appBackgroundKey = useMemo(() => JSON.stringify(app.background), [app]);
+  const appCandleKey = useMemo(() => JSON.stringify(app.candle), [app]);
+  const appAxisKey = useMemo(() => JSON.stringify(app.axis), [app]);
+  const appCrosshairKey = useMemo(() => JSON.stringify(app.crosshair), [app]);
+  const appPatternsKey = useMemo(() => JSON.stringify(app.patterns), [app]);
+  // Bumped by the color-injection effect AFTER it recreates the resolver, so the
+  // draw-state effect re-runs and re-resolves the ONCE-cached candle colors.
+  const [colorEpoch, setColorEpoch] = useState(0);
+  // Gear-triggered appearance dialog open state.
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   // The published scale/geometry API — a single stable object whose fields are
   // mutated in place (mirrors the old `handlerStateRef`). Plugins read it via
@@ -421,6 +449,8 @@ const Chart = ({
     chartType: ChartType;
     data: Candle[];
     colors: { positive: string; negative: string };
+    background: { topColor: string; bottomColor: string; radius: number };
+    candle: { wickWidth: number };
     indicators: ResolvedIndicator[];
   } | null>(null);
 
@@ -452,6 +482,8 @@ const Chart = ({
       subpaneScales: scaleApi.subpaneScales,
       data: st.data,
       colors: st.colors,
+      background: st.background,
+      candle: st.candle,
       indicators: st.indicators.map((r) => ({
         config: r.config,
         series: r.series,
@@ -716,17 +748,31 @@ const Chart = ({
     };
   }, []);
 
-  // Color resolver — a probe <span> under the themed wrapper that resolves the
-  // canvas's CSS-var (incl. color-mix()) colors to rgb. Re-created on mount.
+  // Color injection + resolver. Injects `app.colors` as inline `--<key>` custom
+  // properties on the wrapper (so every canvas/SVG element reading a
+  // `var(--chart-*)` picks them up with zero draw-code changes), then RECREATES
+  // the resolver (its per-expression cache can't be invalidated in place) and
+  // bumps `colorEpoch` so the draw-state effect re-resolves the once-cached
+  // candle colors. Re-runs whenever the color overrides change (and on mount;
+  // `appColorsKey` is `'{}'` then, which still creates the base resolver).
   useEffect(() => {
-    if (!wrapperRef.current) return;
-    const resolver = createColorResolver(wrapperRef.current);
+    const wrapper = wrapperRef.current;
+    if (!wrapper) return;
+    const colors = app.colors;
+    const keys = Object.keys(colors);
+    for (const k of keys) wrapper.style.setProperty(`--${k}`, colors[k]);
+    const resolver = createColorResolver(wrapper);
+    colorResolverRef.current?.destroy();
     colorResolverRef.current = resolver;
+    setColorEpoch((e) => e + 1);
     return () => {
+      for (const k of keys) wrapper.style.removeProperty(`--${k}`);
       resolver.destroy();
       colorResolverRef.current = null;
     };
-  }, []);
+    // `app.colors` is captured via the stable `appColorsKey` serialization.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [appColorsKey]);
 
   // Canvas DPR backing-store sizing. CSS px matches the svg box; the backing
   // store is px*dpr with the context pre-scaled by dpr. Re-applies + redraws on
@@ -771,6 +817,11 @@ const Chart = ({
     let pendingFactor = 1;
     let pendingFrame: number | null = null;
     function onWheel(e: WheelEvent) {
+      // Yield the wheel to any open popover/dialog that scrolls its own content.
+      // Without this, the wrapper's preventDefault() cancels the panel's native
+      // scroll and zooms the chart instead. Contract: scroll panels tag their
+      // scroll body with data-chart-wheel-scroll (see CLAUDE.md).
+      if ((e.target as Element | null)?.closest?.('[data-chart-wheel-scroll]')) return;
       e.preventDefault();
       const factor = e.deltaY > 0 ? ZOOM_FACTOR : 1 / ZOOM_FACTOR;
       pendingFactor *= factor;
@@ -1133,13 +1184,22 @@ const Chart = ({
       .current!.attr('width', containerWidth)
       .attr('height', fullHeight + MARGIN.top + MARGIN.bottom);
 
-    // Match the userSpace twin gradient to the bg rect's actual y extent.
+    // Match the userSpace twin gradient to the bg rect's actual y extent, and
+    // drive its stop colors from `app.background` so a customized background and
+    // the overlay handles (which sample this gradient) stay in sync.
     const bgH = fullHeight + MARGIN.top + MARGIN.bottom;
     bgGradientUserRef
       .current!.attr('x1', 0)
       .attr('y1', -MARGIN.top)
       .attr('x2', 0)
       .attr('y2', -MARGIN.top + bgH);
+    bgGradientUserRef
+      .current!.selectAll<SVGStopElement, unknown>('stop')
+      .attr('stop-color', function () {
+        return this.getAttribute('offset') === '0%'
+          ? app.background.topColor
+          : app.background.bottomColor;
+      });
 
     clipRectRef
       .current!.attr('width', width - RIGHT_BUFFER)
@@ -1195,7 +1255,7 @@ const Chart = ({
         d3
           .axisBottom(xScale)
           .tickValues(tickValues)
-          .tickSize(TICK_SIZE)
+          .tickSize(app.axis.tickSize)
           .tickFormat((i) => {
             const d = data[i];
             if (!d) return '';
@@ -1207,7 +1267,7 @@ const Chart = ({
     xAxisGRef
       .current!.selectAll('line')
       .attr('stroke', AXIS_STROKE)
-      .attr('stroke-opacity', AXIS_OPACITY);
+      .attr('stroke-opacity', app.axis.opacity);
 
     crosshairVRef.current!.attr('y2', fullHeight);
     crosshairHRef.current!.attr('x2', width);
@@ -1219,7 +1279,8 @@ const Chart = ({
       .attr('y', 0)
       .attr('width', MARGIN.right)
       .attr('height', priceHeight);
-  }, [layout, containerWidth, data, activeSubpanes]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [layout, containerWidth, data, activeSubpanes, appAxisKey, appBackgroundKey]);
 
   // Effect B — y-scale draw. Runs on priceZoom changes too. Recomputes yPrice,
   // redraws the price axis, publishes the scale api, and repaints the canvas
@@ -1327,14 +1388,14 @@ const Chart = ({
       d3
         .axisRight<d3.NumberValue>(yPrice)
         .tickValues(yTickValues)
-        .tickSize(TICK_SIZE)
+        .tickSize(app.axis.tickSize)
         .tickFormat((d) => priceFormat(Number(d))),
     );
     yPriceAxisGRef.current!.select('.domain').remove();
     yPriceAxisGRef
       .current!.selectAll('line')
       .attr('stroke', AXIS_STROKE)
-      .attr('stroke-opacity', AXIS_OPACITY);
+      .attr('stroke-opacity', app.axis.opacity);
 
     // Per-subpane linear scales. Each pane's scale SHAPE comes from the first
     // config's `def.domain(...)` (fixed/guide/zero/pad — reads settings, so e.g.
@@ -1429,14 +1490,14 @@ const Chart = ({
             d3
               .axisRight<d3.NumberValue>(scale)
               .ticks(3)
-              .tickSize(TICK_SIZE)
+              .tickSize(app.axis.tickSize)
               .tickFormat((d) => tickFmt(Number(d))),
           );
           axisG.select('.domain').remove();
           axisG
             .selectAll('line')
             .attr('stroke', AXIS_STROKE)
-            .attr('stroke-opacity', AXIS_OPACITY);
+            .attr('stroke-opacity', app.axis.opacity);
         }
         const levels = [...(spec?.guideLines ?? [])];
         if (spec?.zeroLine) levels.push(0);
@@ -1507,6 +1568,12 @@ const Chart = ({
         positive: resolveColor('var(--chart-positive)'),
         negative: resolveColor('var(--chart-negative)'),
       },
+      background: {
+        topColor: resolveColor(app.background.topColor),
+        bottomColor: resolveColor(app.background.bottomColor),
+        radius: app.background.radius,
+      },
+      candle: { wickWidth: app.candle.wickWidth },
       indicators: resolvedIndicators,
     };
     redrawSeries();
@@ -1529,6 +1596,10 @@ const Chart = ({
     redrawSeries,
     scaleApi,
     notifyScale,
+    colorEpoch,
+    appBackgroundKey,
+    appCandleKey,
+    appAxisKey,
   ]);
 
   // Effect 3 — Pan transform only. Cheap; runs on panOffset/visibleBars deltas
@@ -1582,8 +1653,27 @@ const Chart = ({
       baseTranslateX: scaleApi.baseTranslateX,
       dataLength: scaleApi.data.length,
       marginTop: MARGIN.top,
+      patternStyle: app.patterns,
+      resolveColor: (v) => colorResolverRef.current?.resolve(v) ?? '#888888',
     });
-  }, [effectivePatterns, layout, scaleApi]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [effectivePatterns, layout, scaleApi, appPatternsKey, colorEpoch]);
+
+  // Re-apply crosshair styling (stroke / opacity / dash) from `app.crosshair`
+  // whenever it changes. The crosshair lines are created once in Effect 1; SVG
+  // accepts var()/currentColor/hex directly, so no resolver round-trip is needed.
+  useEffect(() => {
+    const v = crosshairVRef.current;
+    const h = crosshairHRef.current;
+    if (!v || !h) return;
+    for (const sel of [v, h]) {
+      sel
+        .attr('stroke', app.crosshair.color)
+        .attr('stroke-opacity', app.crosshair.opacity)
+        .attr('stroke-dasharray', app.crosshair.dash);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [appCrosshairKey]);
 
   // Drag on the price-axis hit zone to compress / expand the chart vertically.
   useEffect(() => {
@@ -2006,6 +2096,33 @@ const Chart = ({
             >
               A
             </button>
+          )}
+          {/* Appearance gear — TradingView-faithful bottom-right axis-intersection
+              corner (price gutter × date row). Only when the host can persist. */}
+          {onAppearanceChange && (
+            <>
+              <button
+                type="button"
+                className={styles.settingsGearBtn}
+                title="Chart settings"
+                onMouseDown={(e) => e.stopPropagation()}
+                onClick={() => setSettingsOpen((o) => !o)}
+                style={{ right: 4, bottom: 4 }}
+              >
+                <Settings size={14} />
+              </button>
+              {settingsOpen && (
+                <SettingsDialog
+                  appearance={appearance ?? {}}
+                  onAppearanceChange={onAppearanceChange}
+                  resolveColor={(v) =>
+                    colorResolverRef.current?.resolve(v) ?? '#888888'
+                  }
+                  onClose={() => setSettingsOpen(false)}
+                  style={{ right: MARGIN.right + 4, bottom: MARGIN.bottom + 4 }}
+                />
+              )}
+            </>
           )}
           {children}
         </div>

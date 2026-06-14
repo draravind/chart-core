@@ -13,7 +13,7 @@ source and returns path + key exported symbols + one-line purpose).
 update entries when you happen to touch a file and find them stale.
 
 Regions: [Entry & types](#entry--types) · [Chart core](#chart-core) ·
-[Controls](#controls) · [Indicator framework](#indicator-framework) ·
+[Controls](#controls) · [Appearance](#appearance) · [Indicator framework](#indicator-framework) ·
 [Built-in indicators](#built-in-indicators) · [Patterns](#patterns) ·
 [Utils](#utils) · [Internal](#internal) · [Config / build / tests](#config--build--tests)
 
@@ -127,10 +127,61 @@ Scoped styles for the chart shell: `.chartWrapper`/`.chartWrapperBare`,
   `expanded`/`onExpandedChange`, `subscribeHoverIndex`, `priceFormatter`,
   `resolveColor`. Subscribes to a hover index so only the legend re-renders on
   crosshair move. Live values + dot come from the def's `legend()`; the popover
-  iterates `def.settingsSchema` (number/enum/toggle/color controls reading
+  iterates `def.settingsSchema` (number/enum/toggle/color/**line** controls reading
   `config.settings`), commit/reset route through `defaultConfigFor` over
-  `settingsOverrides`. Internal: `NumberField`, `EnumField`, `ToggleField`,
-  `ColorField` (prop `{label, colorExpr}`), `ParamPopover`, `LegendBlock`.
+  `settingsOverrides`. Field components are imported from `SettingsFields.tsx`
+  (extracted); `case 'line'` renders `LineField` whose four sub-controls each
+  commit/reset a scalar `${key}X` key (no framework change). Internal:
+  `ParamPopover`, `LegendBlock`.
+
+### `src/controls/SettingsFields.tsx`
+
+- Shared settings-field control vocabulary (extracted from `IndicatorLegend`, reused
+  by it + `SettingsDialog`): `NumberField`, `EnumField`, `ToggleField`, `ColorField`
+  (swatch + hex + reset), `SliderField` (0..1 range + readout), `LineField` (grouped
+  TradingView-style row: color swatch · style select · width stepper · opacity
+  slider · group reset, over a `line` field's four `${prefix}X` scalar sub-keys).
+  Depends only on `Chart.module.css` + `toHex6`.
+
+### `src/controls/SettingsDialog.tsx`
+
+- `default SettingsDialog` (React.FC) — gear-triggered appearance dialog. Props:
+  `appearance: AppearanceOverrides`, `onAppearanceChange`, `resolveColor`,
+  `onClose`, `style?`. Sections: **Chart appearance** (candle up/down + wick;
+  background top/bottom/radius; axis color/opacity/tick; crosshair color/opacity/
+  dash; separator/guide) and **Patterns** (one group per `pattern_name`). Each
+  control commits a sparse `AppearanceOverrides` delta via immutable `setIn`;
+  per-field reset prunes the path (`deleteIn`). Mounted inside `Chart` (it owns
+  `resolveColor` off `wrapperRef`), NOT `ChartControls`. Root carries
+  `data-chart-wheel-scroll` (whole panel is a no-zoom zone) and the scroll body
+  uses the shared `.panelScrollBody` class, so the wrapper's native wheel handler
+  yields the wheel instead of zooming the chart (same contract on
+  `IndicatorLegend`'s param popover root).
+
+---
+
+## Appearance
+
+### `src/appearance/types.ts`
+
+- `ChartAppearance` — the global visual contract: `colors: Record<string,string>`
+  (CSS-var name without `--` → value; injected as inline custom props on the
+  wrapper), plus non-color scalars `background {topColor, bottomColor, radius}`,
+  `candle {wickWidth}`, `axis {opacity, tickSize}`, `crosshair {color, opacity,
+  dash}`, and `patterns` (per-pattern styles).
+- `BaseBreakoutStyle` / `ConsolidationStyle` / `HighTightFlagStyle` — disjoint
+  per-pattern field sets (each extends a shared `LabelStyle` chip). `PatternStyles`
+  bundles all three.
+- `AppearanceOverrides = DeepPartial<ChartAppearance>` — the ONLY persisted source
+  (sparse delta); `DeepPartial<T>` is a local recursively-optional utility type.
+
+### `src/appearance/registry.ts`
+
+- `APPEARANCE_DEFAULTS: ChartAppearance` — the single source of baked defaults
+  (migrated literals: bg `#776a5a`/`#6e7b8b` r12, axis 0.12/4, wick 1.25, crosshair
+  currentColor/0.3/'3,3', and the three patterns' consts); `colors` starts `{}`.
+- `effectiveAppearance(overrides?) → ChartAppearance` — pure deep-merge defaults ←
+  overrides (per-field reset = omit the key). The analogue of `effectiveSettings`.
 
 ---
 
@@ -149,8 +200,12 @@ Scoped styles for the chart shell: `.chartWrapper`/`.chartWrapperBare`,
   scale — used by BOTH price + subpane loops), `domain?(series, s) → DomainSpec`
   (subpane scale SHAPE only; absent ⇒ plain autofit), `legend(series, idx, s,
   {priceFmt}) → LegendRow[]` (required), `formatParams?(s)`, `paneHeightFactor?`.
-- `SettingsField` — one typed editable setting: `color | number | enum | toggle`
-  (a `color` default is a `var()` expr; a user override is raw hex).
+- `SettingsField` — one typed editable setting: `color | number | enum | toggle |
+  line`. A `color` default is a `var()` expr; a user override is raw hex. A `line`
+  field's `key` is a PREFIX (default `{color, width, style?, opacity?}`) that
+  EXPANDS into four scalar sub-keys (`${key}Color/Width/Style/Opacity`) in
+  `defaultsFromSchema` — storage stays scalar so the rest of the framework is
+  unchanged. Read back into a `LineStyle` via `lineStyleFrom` (`lineSettings.ts`).
 - `LegendRow` — `{color, value: string|null, label?}` (one live legend row).
 - `DomainSpec` — subpane scale shape: `{fixedDomain?, guideLines?, zeroLine?,
   autofitPadding?, includeZero?, topPadPx?, hideAxis?, tickFormat?}` (replaces the
@@ -174,7 +229,8 @@ Scoped styles for the chart shell: `.chartWrapper`/`.chartWrapperBare`,
   TA-Lib defs, e.g. `ti:ema`; legacy keys unprefixed, e.g. `highs`, `rs`).
 - `listIndicators() → IndicatorDef[]`.
 - `defaultsFromSchema(schema) → Record<string, unknown>` — static defaults off the
-  schema (the single base-settings source).
+  schema (the single base-settings source). A `line` field expands to its four
+  scalar sub-keys here; all other kinds map `f.key → f.default`.
 - `effectiveSettings(def, overrides) → S` — the delta ladder:
   `base → {...base,...overrides} → deriveDefaults(merged) →
   {...base,...derived,...overrides}` (user delta wins over derived). Pure.
@@ -218,6 +274,16 @@ Canvas painters + small legend helpers shared by builtin hooks:
 
 - `MA_TYPE_OPTIONS: {label, value}[]` — enum-field options for the `matype` selector
   (0=SMA, 1=EMA, 2=WMA, 3=DEMA, 4=TEMA); shared by BBANDS/STOCH/STOCHF/STOCHRSI.
+- `LINE_STYLE_OPTIONS: {label, value}[]` — Solid(0)/Dashed(1)/Dotted(2) for the
+  grouped `line` field's style sub-key. `dashFor(style) → number[] | null` maps it
+  to a canvas dash array (solid→null, dashed→[4,3], dotted→[1,2]).
+
+### `src/indicators/lineSettings.ts`
+
+- `lineStyleFrom(s, prefix, resolveColor) → LineStyle` — build a resolved stroke
+  style from a `line` field's four scalar sub-keys at `prefix`
+  (`${prefix}Color/Width/Style/Opacity`); `style`→`dashFor`, color resolved via
+  `resolveColor`. Used by every polyline builtin's `draw`.
 
 ### `src/indicators/subpaneLayout.ts`
 

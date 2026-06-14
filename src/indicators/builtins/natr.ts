@@ -1,6 +1,7 @@
 import type { IndicatorDef } from '../types';
 import { atr, round2 } from '../talibMath';
 import { drawLines, cellAt, fmt2 } from '../draw';
+import { lineStyleFrom } from '../lineSettings';
 
 export type NatrSettings = { period: number; lineColor: string };
 
@@ -12,7 +13,7 @@ export const natrDef: IndicatorDef<NatrSettings> = {
   pane: { subpane: 'natr' },
   settingsSchema: [
     { key: 'period', label: 'Length', kind: 'number', default: 14, min: 1 },
-    { key: 'lineColor', label: 'Line', kind: 'color', default: 'var(--natr-line)' },
+    { key: 'line', label: 'Line', kind: 'line', default: { color: 'var(--natr-line)', width: 1.3 } },
   ],
   formatParams: (s) => String(s.period),
   warmupBars: (s) => s.period + Math.max(250, 5 * s.period),
@@ -29,7 +30,7 @@ export const natrDef: IndicatorDef<NatrSettings> = {
   },
   draw: (ctx, series, scale, s, resolveColor) =>
     drawLines(ctx, series, scale, [
-      { key: 'natr', st: { color: resolveColor(s.lineColor), width: 1.3 } },
+      { key: 'natr', st: lineStyleFrom(s, 'line', resolveColor) },
     ]),
   autofitKeys: () => ['natr'],
   legend: (series, idx, s) => [
