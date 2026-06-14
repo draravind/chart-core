@@ -54,10 +54,81 @@ export type HighTightFlagStyle = LabelStyle & {
   flagFillOpacity: number;
 };
 
+/** gap_up: shaded band between prev-high ↔ gap-low + label. */
+export type GapUpStyle = LabelStyle & {
+  bandFill: string;
+  bandFillOpacity: number;
+};
+
+/** volume_breakout: up-triangle below the bar low + label. */
+export type VolumeBreakoutStyle = LabelStyle & {
+  markerColor: string;
+  markerOpacity: number;
+};
+
+/** golden_cross: dot at the crossover price + label. */
+export type GoldenCrossStyle = LabelStyle & {
+  dotFill: string;
+};
+
+/** nr7: thin high/low range lines + down-arrow + label. */
+export type Nr7Style = LabelStyle & {
+  lineColor: string;
+  lineWidth: number;
+  lineOpacity: number;
+  markerColor: string;
+  markerOpacity: number;
+};
+
+/** unusual_volume: diamond marker at the bar + label. */
+export type UnusualVolumeStyle = LabelStyle & {
+  markerColor: string;
+  markerOpacity: number;
+};
+
+/** volume_dryup: diamond marker at the bar + label. */
+export type VolumeDryupStyle = LabelStyle & {
+  markerColor: string;
+  markerOpacity: number;
+};
+
+/** pocket_pivot: up-arrow at the bar + label. */
+export type PocketPivotStyle = LabelStyle & {
+  markerColor: string;
+  markerOpacity: number;
+};
+
+/** inside_day: mother-bar high/low lines + outlined inside-bar box + label. */
+export type InsideDayStyle = LabelStyle & {
+  lineColor: string;
+  lineWidth: number;
+  lineOpacity: number;
+  boxStroke: string;
+  boxStrokeWidth: number;
+  boxStrokeOpacity: number;
+};
+
+/** pullback_to_ema: dot at (event bar, ema value) + short tick + label. */
+export type PullbackToEmaStyle = LabelStyle & {
+  dotFill: string;
+  lineColor: string;
+  lineWidth: number;
+  lineOpacity: number;
+};
+
 export type PatternStyles = {
   base_breakout: BaseBreakoutStyle;
   consolidation: ConsolidationStyle;
   high_tight_flag: HighTightFlagStyle;
+  gap_up: GapUpStyle;
+  volume_breakout: VolumeBreakoutStyle;
+  golden_cross: GoldenCrossStyle;
+  nr7: Nr7Style;
+  unusual_volume: UnusualVolumeStyle;
+  volume_dryup: VolumeDryupStyle;
+  pocket_pivot: PocketPivotStyle;
+  inside_day: InsideDayStyle;
+  pullback_to_ema: PullbackToEmaStyle;
 };
 
 export type ChartAppearance = {

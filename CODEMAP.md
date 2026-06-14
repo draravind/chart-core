@@ -168,10 +168,12 @@ Scoped styles for the chart shell: `.chartWrapper`/`.chartWrapperBare`,
   (CSS-var name without `--` → value; injected as inline custom props on the
   wrapper), plus non-color scalars `background {topColor, bottomColor, radius}`,
   `candle {wickWidth}`, `axis {opacity, tickSize}`, `crosshair {color, opacity,
-  dash}`, and `patterns` (per-pattern styles).
-- `BaseBreakoutStyle` / `ConsolidationStyle` / `HighTightFlagStyle` — disjoint
-  per-pattern field sets (each extends a shared `LabelStyle` chip). `PatternStyles`
-  bundles all three.
+dash}`, and `patterns` (per-pattern styles).
+- `BaseBreakoutStyle` / `ConsolidationStyle` / `HighTightFlagStyle` / `GapUpStyle` /
+  `VolumeBreakoutStyle` / `GoldenCrossStyle` / `Nr7Style` / `UnusualVolumeStyle` /
+  `VolumeDryupStyle` / `PocketPivotStyle` / `InsideDayStyle` / `PullbackToEmaStyle` —
+  disjoint per-pattern field sets (each extends a shared `LabelStyle` chip).
+  `PatternStyles` bundles all twelve.
 - `AppearanceOverrides = DeepPartial<ChartAppearance>` — the ONLY persisted source
   (sparse delta); `DeepPartial<T>` is a local recursively-optional utility type.
 
@@ -179,7 +181,7 @@ Scoped styles for the chart shell: `.chartWrapper`/`.chartWrapperBare`,
 
 - `APPEARANCE_DEFAULTS: ChartAppearance` — the single source of baked defaults
   (migrated literals: bg `#776a5a`/`#6e7b8b` r12, axis 0.12/4, wick 1.25, crosshair
-  currentColor/0.3/'3,3', and the three patterns' consts); `colors` starts `{}`.
+  currentColor/0.3/'3,3', and all twelve patterns' consts); `colors` starts `{}`.
 - `effectiveAppearance(overrides?) → ChartAppearance` — pure deep-merge defaults ←
   overrides (per-field reset = omit the key). The analogue of `effectiveSettings`.
 
@@ -196,28 +198,28 @@ Scoped styles for the chart shell: `.chartWrapper`/`.chartWrapperBare`,
   its color from period — replaces `defaultLineColor`), `warmupBars(s)`,
   `compute(input, s) → {series, meta?}` (`meta` = the per-instance non-numeric
   payload lane, e.g. Quarterly Results' formatted rows), `draw(ctx, series, scale,
-  s, resolveColor, meta?)`, `autofitKeys?(s) → string[]` (which series drive the
+s, resolveColor, meta?)`, `autofitKeys?(s) → string[]` (which series drive the
   scale — used by BOTH price + subpane loops), `domain?(series, s) → DomainSpec`
   (subpane scale SHAPE only; absent ⇒ plain autofit), `legend(series, idx, s,
-  {priceFmt}) → LegendRow[]` (required), `formatParams?(s)`, `paneHeightFactor?`.
+{priceFmt}) → LegendRow[]` (required), `formatParams?(s)`, `paneHeightFactor?`.
 - `SettingsField` — one typed editable setting: `color | number | enum | toggle |
-  line`. A `color` default is a `var()` expr; a user override is raw hex. A `line`
+line`. A `color` default is a `var()` expr; a user override is raw hex. A `line`
   field's `key` is a PREFIX (default `{color, width, style?, opacity?}`) that
   EXPANDS into four scalar sub-keys (`${key}Color/Width/Style/Opacity`) in
   `defaultsFromSchema` — storage stays scalar so the rest of the framework is
   unchanged. Read back into a `LineStyle` via `lineStyleFrom` (`lineSettings.ts`).
 - `LegendRow` — `{color, value: string|null, label?}` (one live legend row).
 - `DomainSpec` — subpane scale shape: `{fixedDomain?, guideLines?, zeroLine?,
-  autofitPadding?, includeZero?, topPadPx?, hideAxis?, tickFormat?}` (replaces the
+autofitPadding?, includeZero?, topPadPx?, hideAxis?, tickFormat?}` (replaces the
   old `SubpaneScaleHint` + `scaleHintFor`; carries shape only — `autofitKeys` owns
   which series autofit).
 - `IndicatorPane` = `'price' | {subpane: string}`.
 - `IndicatorSeries` = `Record<string, Float64Array>` (one line per key; NaN = gap).
 - `IndicatorInput` — `{o,h,l,c,v: Float64Array; bars; benchmarkClose?;
-  quarterlyResults?; market?; displayStart?}`.
+quarterlyResults?; market?; displayStart?}`.
 - `IndicatorDrawScale` — adds `paneTop?/paneBottom?` (pixel band bounds).
 - `IndicatorConfig` — resolved user instance: `{id, defKey, label, enabled,
-  settings, settingsOverrides}` (`settings` = effective merge; `settingsOverrides`
+settings, settingsOverrides}` (`settings` = effective merge; `settingsOverrides`
   = the only persisted source of truth, sparse deltas).
 - `ResolvedIndicator` — `{config, series, meta?}` (Chart-published; `meta` threads
   the compute payload to `draw`).
@@ -233,7 +235,7 @@ Scoped styles for the chart shell: `.chartWrapper`/`.chartWrapperBare`,
   scalar sub-keys here; all other kinds map `f.key → f.default`.
 - `effectiveSettings(def, overrides) → S` — the delta ladder:
   `base → {...base,...overrides} → deriveDefaults(merged) →
-  {...base,...derived,...overrides}` (user delta wins over derived). Pure.
+{...base,...derived,...overrides}` (user delta wins over derived). Pure.
 - `defaultConfigFor(defKey, overrides?) → IndicatorConfig | undefined` — factory
   from `{id?, enabled?, settingsOverrides?}` → `{settings, settingsOverrides, …}`.
 - `formatIndicatorParams(config) → string` — delegates to the def's `formatParams`
@@ -326,30 +328,30 @@ via the registry import. Each `*Settings` carries the numeric/enum params PLUS a
 a thin wrapper over `talibMath` primitives (compute) + `draw` helpers (render), and
 declares `autofitKeys` (+ a `domain` for bounded/special subpanes) and a `legend`.
 
-| File             | Settings type (params shown; every def also has color fields)   | Computes                                                                              |
-| ---------------- | --------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
-| `sma.ts`         | `SmaSettings {period, lineColor}`                              | Simple moving average                                                                 |
-| `wma.ts`         | `WmaSettings {period, …}`                                      | Linearly-weighted MA                                                                  |
-| `emaTalib.ts`    | `EmaTalibSettings {period, lineColor, labelColor}`            | TA-Lib EMA; period-banded colors via `deriveDefaults` (10/20/50/200)                  |
-| `dema.ts`        | `DemaSettings {period, …}`                                     | Double EMA                                                                            |
-| `tema.ts`        | `TemaSettings {period, …}`                                     | Triple EMA                                                                            |
-| `rsi.ts`         | `RsiSettings {period, lineColor}`                             | Wilder RSI (0–100); `domain` guides at 30/70                                          |
-| `macd.ts`        | `MacdSettings {fast, slow, signal, macd, macdsignal, histUpColor, histDownColor}` | MACD line + signal + histogram (dual-color bars; `histDownColor` is a first-class field, no carrier) |
-| `bbands.ts`      | `BbandsSettings {period, nbdevup, nbdevdn, matype, upperColor, midColor, lowerColor}` | Bollinger Bands (MA ± n·stddev)                                         |
-| `stoch.ts`       | `StochSettings {fastk, slowk, slowk_matype, slowd, slowd_matype, kColor, dColor}` | Slow stochastic %K/%D; guides 20/80                              |
-| `stochf.ts`      | `StochfSettings {fastk, fastd, fastd_matype, kColor, dColor}` | Fast stochastic; guides 20/80                                                         |
-| `stochrsi.ts`    | `StochrsiSettings {timeperiod, fastk, fastd, fastd_matype, kColor, dColor}` | Stochastic of RSI; guides 20/80                                             |
-| `willr.ts`       | `WillrSettings {period, lineColor}`                           | Williams %R (−100..0); guides −20/−80                                                 |
-| `adx.ts`         | `AdxSettings {period, lineColor}`                             | Average directional index (trend strength)                                            |
-| `dx.ts`          | `DxSettings {period, lineColor}`                              | Raw directional index                                                                 |
-| `atr.ts`         | `AtrSettings {period, lineColor}`                             | Average true range (price units); plain-autofit (no `domain`)                         |
-| `natr.ts`        | `NatrSettings {period, lineColor}`                            | Normalized ATR (percent); plain-autofit                                              |
-| `trange.ts`      | `TrangeSettings {lineColor}`                                  | Per-bar true range (**no numeric params**)                                            |
-| `rollingHigh.ts` | `HighsSettings` (local; `color1y/2y/3y/All`)                  | `highsDef` — data-backed 1Y/2Y/3Y/ATH highs read off `bars[].high*` columns           |
-| `rsLine.ts`      | `RsSettings {lookback, lineColor, signalColor}`              | RS line (stock/benchmark, rebased to 100) + signal dots; `autofitKeys: ['rs']` excludes the 0/1 `signal` |
-| `stage2.ts`      | `Stage2Settings {smaPeriod, slopeLookback, slopeMin, minPeriods, bandColor}` | Stage-2 advancing band (green price-pane band; `autofitKeys: []` so it never moves the price domain) |
-| `quarterlyResults.ts` | `QuarterlyResultsSettings {display, epsColor, rpsColor, growthUpColor, growthDownColor, labelColor}` | Quarterly Results subpane (RPS+EPS, core-computed YoY growth); Text/Bars via `display`; formatted rows ride `compute`'s `meta` (no WeakMap); `domain`/`autofitKeys` switch on `display`; `paneHeightFactor 1.7` |
-| `volume.ts`      | `VolumeSettings {smaPeriod, smaFade, milestones, standardOpacity, fadeOpacity, upColor, downColor, labelColor}` | Volume subpane indicator. Custom 4-bucket draw (up/down × above/below SMA, faded opacity); `volumeUp`/`volumeDown` autofit the pane; `volSma`/`volLabel` are data channels; HVE/HVY labels + K/M/B axis (`domain.tickFormat`); reads opacities from settings; `paneHeightFactor 1.154`; reuses `computeVolumeStats` |
+| File                  | Settings type (params shown; every def also has color fields)                                                   | Computes                                                                                                                                                                                                                                                                                                            |
+| --------------------- | --------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `sma.ts`              | `SmaSettings {period, lineColor}`                                                                               | Simple moving average                                                                                                                                                                                                                                                                                               |
+| `wma.ts`              | `WmaSettings {period, …}`                                                                                       | Linearly-weighted MA                                                                                                                                                                                                                                                                                                |
+| `emaTalib.ts`         | `EmaTalibSettings {period, lineColor, labelColor}`                                                              | TA-Lib EMA; period-banded colors via `deriveDefaults` (10/20/50/200)                                                                                                                                                                                                                                                |
+| `dema.ts`             | `DemaSettings {period, …}`                                                                                      | Double EMA                                                                                                                                                                                                                                                                                                          |
+| `tema.ts`             | `TemaSettings {period, …}`                                                                                      | Triple EMA                                                                                                                                                                                                                                                                                                          |
+| `rsi.ts`              | `RsiSettings {period, lineColor}`                                                                               | Wilder RSI (0–100); `domain` guides at 30/70                                                                                                                                                                                                                                                                        |
+| `macd.ts`             | `MacdSettings {fast, slow, signal, macd, macdsignal, histUpColor, histDownColor}`                               | MACD line + signal + histogram (dual-color bars; `histDownColor` is a first-class field, no carrier)                                                                                                                                                                                                                |
+| `bbands.ts`           | `BbandsSettings {period, nbdevup, nbdevdn, matype, upperColor, midColor, lowerColor}`                           | Bollinger Bands (MA ± n·stddev)                                                                                                                                                                                                                                                                                     |
+| `stoch.ts`            | `StochSettings {fastk, slowk, slowk_matype, slowd, slowd_matype, kColor, dColor}`                               | Slow stochastic %K/%D; guides 20/80                                                                                                                                                                                                                                                                                 |
+| `stochf.ts`           | `StochfSettings {fastk, fastd, fastd_matype, kColor, dColor}`                                                   | Fast stochastic; guides 20/80                                                                                                                                                                                                                                                                                       |
+| `stochrsi.ts`         | `StochrsiSettings {timeperiod, fastk, fastd, fastd_matype, kColor, dColor}`                                     | Stochastic of RSI; guides 20/80                                                                                                                                                                                                                                                                                     |
+| `willr.ts`            | `WillrSettings {period, lineColor}`                                                                             | Williams %R (−100..0); guides −20/−80                                                                                                                                                                                                                                                                               |
+| `adx.ts`              | `AdxSettings {period, lineColor}`                                                                               | Average directional index (trend strength)                                                                                                                                                                                                                                                                          |
+| `dx.ts`               | `DxSettings {period, lineColor}`                                                                                | Raw directional index                                                                                                                                                                                                                                                                                               |
+| `atr.ts`              | `AtrSettings {period, lineColor}`                                                                               | Average true range (price units); plain-autofit (no `domain`)                                                                                                                                                                                                                                                       |
+| `natr.ts`             | `NatrSettings {period, lineColor}`                                                                              | Normalized ATR (percent); plain-autofit                                                                                                                                                                                                                                                                             |
+| `trange.ts`           | `TrangeSettings {lineColor}`                                                                                    | Per-bar true range (**no numeric params**)                                                                                                                                                                                                                                                                          |
+| `rollingHigh.ts`      | `HighsSettings` (local; `color1y/2y/3y/All`)                                                                    | `highsDef` — data-backed 1Y/2Y/3Y/ATH highs read off `bars[].high*` columns                                                                                                                                                                                                                                         |
+| `rsLine.ts`           | `RsSettings {lookback, lineColor, signalColor}`                                                                 | RS line (stock/benchmark, rebased to 100) + signal dots; `autofitKeys: ['rs']` excludes the 0/1 `signal`                                                                                                                                                                                                            |
+| `stage2.ts`           | `Stage2Settings {smaPeriod, slopeLookback, slopeMin, minPeriods, bandColor}`                                    | Stage-2 advancing band (green price-pane band; `autofitKeys: []` so it never moves the price domain)                                                                                                                                                                                                                |
+| `quarterlyResults.ts` | `QuarterlyResultsSettings {display, epsColor, rpsColor, growthUpColor, growthDownColor, labelColor}`            | Quarterly Results subpane (RPS+EPS, core-computed YoY growth); Text/Bars via `display`; formatted rows ride `compute`'s `meta` (no WeakMap); `domain`/`autofitKeys` switch on `display`; `paneHeightFactor 1.7`                                                                                                     |
+| `volume.ts`           | `VolumeSettings {smaPeriod, smaFade, milestones, standardOpacity, fadeOpacity, upColor, downColor, labelColor}` | Volume subpane indicator. Custom 4-bucket draw (up/down × above/below SMA, faded opacity); `volumeUp`/`volumeDown` autofit the pane; `volSma`/`volLabel` are data channels; HVE/HVY labels + K/M/B axis (`domain.tickFormat`); reads opacities from settings; `paneHeightFactor 1.154`; reuses `computeVolumeStats` |
 
 ---
 
@@ -375,8 +377,18 @@ Record<string, unknown>}`. Structural mirror of the app's API marker shape.
 ### `src/patterns/renderers/index.ts`
 
 - `RendererFn` = `(detection, target, labelTarget, ctx) => void`.
-- `renderers: Record<string, RendererFn>` — dispatch table keyed by `pattern_name`:
-  `high_tight_flag`, `base_breakout`, `consolidation`.
+- `renderers: Record<string, RendererFn>` — dispatch table keyed by `pattern_name`
+  (12 total): `high_tight_flag`, `base_breakout`, `consolidation`, `gap_up`,
+  `volume_breakout`, `golden_cross`, `nr7`, `unusual_volume`, `volume_dryup`,
+  `pocket_pivot`, `inside_day`, `pullback_to_ema`.
+
+### `src/patterns/renderers/_shared.ts`
+
+- Shared primitives for the nine added renderers (the original three keep their
+  inline copies): `xForBar(idx, ctx)`, `drawLabelChip(labelTarget, {x, y, text,
+  style, rc, center?})` (measured chip), `drawMarker(target, {x, y, kind, color,
+  opacity?, rc})` (`MarkerKind` = `arrowUp|arrowDown|dot|diamond`), `chipHeight`,
+  `MARKER_SIZE`/`LABEL_PADDING_*` consts.
 
 ### `src/patterns/renderers/baseBreakout.ts`
 
@@ -394,6 +406,27 @@ Record<string, unknown>}`. Structural mirror of the app's API marker shape.
 - `renderHighTightFlag(...)` — pole diagonal + flag box + label chip (tier
   High/Low, `pole_gain_pct` score).
 
+### Added pattern renderers (price-pane overlays, all import `_shared`)
+
+- `gapUp.ts` `renderGapUp(...)` — shaded band between `prev_high`↔`gap_low` over the
+  gap bar + small rightward extension; label `Gap up · X%`.
+- `volumeBreakout.ts` `renderVolumeBreakout(...)` — up-triangle below `anchor_low`;
+  label `Vol breakout · Nx`.
+- `goldenCross.ts` `renderGoldenCross(...)` — dot at `(cross_date, cross_price)`
+  (EMA200 at cross); label `Golden cross`.
+- `nr7.ts` `renderNr7(...)` — thin high/low range lines on the bar + down-arrow;
+  label `NR7`.
+- `unusualVolume.ts` `renderUnusualVolume(...)` — diamond at `anchor_low`; label
+  `Unusual vol · Nx`.
+- `volumeDryup.ts` `renderVolumeDryup(...)` — diamond at `anchor_low`; label
+  `Volume dry-up`.
+- `pocketPivot.ts` `renderPocketPivot(...)` — up-arrow at `anchor_low`; label
+  `Pocket pivot`.
+- `insideDay.ts` `renderInsideDay(...)` — mother-bar high/low lines over both bars +
+  outlined inside-bar box; label `Inside day`.
+- `pullbackToEma.ts` `renderPullbackToEma(...)` — dot at `(event_date, ema_value)` +
+  short tick; label `Pullback to {ema_level}`.
+
 ---
 
 ## Price stats
@@ -402,7 +435,7 @@ Record<string, unknown>}`. Structural mirror of the app's API marker shape.
 
 - `StatsMarket` = `'India' | 'US'` — drives Mkt-Cap units/thresholds.
 - `StatsTableData` — app-supplied raw financials: `{sector?, industry?,
-  sharesOutstanding?, freeFloatPercent?, eps?}` (all optional; absent → blanked).
+sharesOutstanding?, freeFloatPercent?, eps?}` (all optional; absent → blanked).
 - `StatsPosition` = `{x, y}` — free-drag placement in pixels from the
   chart-wrapper top-left. `null` prop → default top-right placement.
 - `StatsSize` = `'tiny' | 'small' | 'normal' | 'large'` (default `'small'`).

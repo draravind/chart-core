@@ -109,6 +109,15 @@ export type {
   BaseBreakoutStyle,
   ConsolidationStyle,
   HighTightFlagStyle,
+  GapUpStyle,
+  VolumeBreakoutStyle,
+  GoldenCrossStyle,
+  Nr7Style,
+  UnusualVolumeStyle,
+  VolumeDryupStyle,
+  PocketPivotStyle,
+  InsideDayStyle,
+  PullbackToEmaStyle,
   DeepPartial,
 } from './appearance/types';
 export { APPEARANCE_DEFAULTS, effectiveAppearance } from './appearance/registry';

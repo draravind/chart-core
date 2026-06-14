@@ -243,6 +243,86 @@ export default function SettingsDialog({
         {sliderRow(['patterns', 'high_tight_flag', 'labelBgOpacity'], 'Label bg opacity')}
         {colorRow(['patterns', 'high_tight_flag', 'labelTextColor'], 'Label text')}
         {numberRow(['patterns', 'high_tight_flag', 'labelFontSize'], 'Label font size', { min: 6, max: 24, step: 1 })}
+
+        <div className={styles.settingsGroupTitle}>Gap up</div>
+        {colorRow(['patterns', 'gap_up', 'bandFill'], 'Band fill')}
+        {sliderRow(['patterns', 'gap_up', 'bandFillOpacity'], 'Band opacity')}
+        {colorRow(['patterns', 'gap_up', 'labelBg'], 'Label bg')}
+        {sliderRow(['patterns', 'gap_up', 'labelBgOpacity'], 'Label bg opacity')}
+        {colorRow(['patterns', 'gap_up', 'labelTextColor'], 'Label text')}
+        {numberRow(['patterns', 'gap_up', 'labelFontSize'], 'Label font size', { min: 6, max: 24, step: 1 })}
+
+        <div className={styles.settingsGroupTitle}>Volume breakout</div>
+        {colorRow(['patterns', 'volume_breakout', 'markerColor'], 'Marker')}
+        {sliderRow(['patterns', 'volume_breakout', 'markerOpacity'], 'Marker opacity')}
+        {colorRow(['patterns', 'volume_breakout', 'labelBg'], 'Label bg')}
+        {sliderRow(['patterns', 'volume_breakout', 'labelBgOpacity'], 'Label bg opacity')}
+        {colorRow(['patterns', 'volume_breakout', 'labelTextColor'], 'Label text')}
+        {numberRow(['patterns', 'volume_breakout', 'labelFontSize'], 'Label font size', { min: 6, max: 24, step: 1 })}
+
+        <div className={styles.settingsGroupTitle}>Golden cross</div>
+        {colorRow(['patterns', 'golden_cross', 'dotFill'], 'Dot')}
+        {colorRow(['patterns', 'golden_cross', 'labelBg'], 'Label bg')}
+        {sliderRow(['patterns', 'golden_cross', 'labelBgOpacity'], 'Label bg opacity')}
+        {colorRow(['patterns', 'golden_cross', 'labelTextColor'], 'Label text')}
+        {numberRow(['patterns', 'golden_cross', 'labelFontSize'], 'Label font size', { min: 6, max: 24, step: 1 })}
+
+        <div className={styles.settingsGroupTitle}>NR7</div>
+        {colorRow(['patterns', 'nr7', 'lineColor'], 'Line')}
+        {numberRow(['patterns', 'nr7', 'lineWidth'], 'Line width', { min: 0.5, max: 8, step: 0.1 })}
+        {sliderRow(['patterns', 'nr7', 'lineOpacity'], 'Line opacity')}
+        {colorRow(['patterns', 'nr7', 'markerColor'], 'Marker')}
+        {sliderRow(['patterns', 'nr7', 'markerOpacity'], 'Marker opacity')}
+        {colorRow(['patterns', 'nr7', 'labelBg'], 'Label bg')}
+        {sliderRow(['patterns', 'nr7', 'labelBgOpacity'], 'Label bg opacity')}
+        {colorRow(['patterns', 'nr7', 'labelTextColor'], 'Label text')}
+        {numberRow(['patterns', 'nr7', 'labelFontSize'], 'Label font size', { min: 6, max: 24, step: 1 })}
+
+        <div className={styles.settingsGroupTitle}>Unusual volume</div>
+        {colorRow(['patterns', 'unusual_volume', 'markerColor'], 'Marker')}
+        {sliderRow(['patterns', 'unusual_volume', 'markerOpacity'], 'Marker opacity')}
+        {colorRow(['patterns', 'unusual_volume', 'labelBg'], 'Label bg')}
+        {sliderRow(['patterns', 'unusual_volume', 'labelBgOpacity'], 'Label bg opacity')}
+        {colorRow(['patterns', 'unusual_volume', 'labelTextColor'], 'Label text')}
+        {numberRow(['patterns', 'unusual_volume', 'labelFontSize'], 'Label font size', { min: 6, max: 24, step: 1 })}
+
+        <div className={styles.settingsGroupTitle}>Volume dry-up</div>
+        {colorRow(['patterns', 'volume_dryup', 'markerColor'], 'Marker')}
+        {sliderRow(['patterns', 'volume_dryup', 'markerOpacity'], 'Marker opacity')}
+        {colorRow(['patterns', 'volume_dryup', 'labelBg'], 'Label bg')}
+        {sliderRow(['patterns', 'volume_dryup', 'labelBgOpacity'], 'Label bg opacity')}
+        {colorRow(['patterns', 'volume_dryup', 'labelTextColor'], 'Label text')}
+        {numberRow(['patterns', 'volume_dryup', 'labelFontSize'], 'Label font size', { min: 6, max: 24, step: 1 })}
+
+        <div className={styles.settingsGroupTitle}>Pocket pivot</div>
+        {colorRow(['patterns', 'pocket_pivot', 'markerColor'], 'Marker')}
+        {sliderRow(['patterns', 'pocket_pivot', 'markerOpacity'], 'Marker opacity')}
+        {colorRow(['patterns', 'pocket_pivot', 'labelBg'], 'Label bg')}
+        {sliderRow(['patterns', 'pocket_pivot', 'labelBgOpacity'], 'Label bg opacity')}
+        {colorRow(['patterns', 'pocket_pivot', 'labelTextColor'], 'Label text')}
+        {numberRow(['patterns', 'pocket_pivot', 'labelFontSize'], 'Label font size', { min: 6, max: 24, step: 1 })}
+
+        <div className={styles.settingsGroupTitle}>Inside day</div>
+        {colorRow(['patterns', 'inside_day', 'lineColor'], 'Mother line')}
+        {numberRow(['patterns', 'inside_day', 'lineWidth'], 'Mother line width', { min: 0.5, max: 8, step: 0.1 })}
+        {sliderRow(['patterns', 'inside_day', 'lineOpacity'], 'Mother line opacity')}
+        {colorRow(['patterns', 'inside_day', 'boxStroke'], 'Inside box')}
+        {numberRow(['patterns', 'inside_day', 'boxStrokeWidth'], 'Inside box width', { min: 0.5, max: 8, step: 0.1 })}
+        {sliderRow(['patterns', 'inside_day', 'boxStrokeOpacity'], 'Inside box opacity')}
+        {colorRow(['patterns', 'inside_day', 'labelBg'], 'Label bg')}
+        {sliderRow(['patterns', 'inside_day', 'labelBgOpacity'], 'Label bg opacity')}
+        {colorRow(['patterns', 'inside_day', 'labelTextColor'], 'Label text')}
+        {numberRow(['patterns', 'inside_day', 'labelFontSize'], 'Label font size', { min: 6, max: 24, step: 1 })}
+
+        <div className={styles.settingsGroupTitle}>Pullback to EMA</div>
+        {colorRow(['patterns', 'pullback_to_ema', 'dotFill'], 'Dot')}
+        {colorRow(['patterns', 'pullback_to_ema', 'lineColor'], 'Tick')}
+        {numberRow(['patterns', 'pullback_to_ema', 'lineWidth'], 'Tick width', { min: 0.5, max: 8, step: 0.1 })}
+        {sliderRow(['patterns', 'pullback_to_ema', 'lineOpacity'], 'Tick opacity')}
+        {colorRow(['patterns', 'pullback_to_ema', 'labelBg'], 'Label bg')}
+        {sliderRow(['patterns', 'pullback_to_ema', 'labelBgOpacity'], 'Label bg opacity')}
+        {colorRow(['patterns', 'pullback_to_ema', 'labelTextColor'], 'Label text')}
+        {numberRow(['patterns', 'pullback_to_ema', 'labelFontSize'], 'Label font size', { min: 6, max: 24, step: 1 })}
       </div>
     </div>
   );
