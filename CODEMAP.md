@@ -114,10 +114,13 @@ Scoped styles for the chart shell: `.chartWrapper`/`.chartWrapperBare`,
 ### `src/controls/ChartControls.tsx`
 
 - `default ChartControls` (React.FC) — control panel: range buttons, chart-type
-  toggle, indicator picker (split into overlays vs. oscillators), patterns toggle.
+  toggle, indicator picker (split into overlays vs. oscillators), patterns
+  dropdown (master "Show patterns" + a checkbox per `PATTERN_CATALOG` entry).
   Props: `ranges`, `activeRange`/`onRangeChange`, `chartType`/`onChartTypeChange`,
   `indicators`/`onIndicatorsChange`, `patternsEnabled`/`onPatternsToggle`,
-  `className`. Uses `listIndicators()` + `defaultConfigFor()` to populate/seed.
+  `visiblePatterns`/`onVisiblePatternsChange` (per-pattern visibility; undefined ⇒
+  all visible), `className`. Uses `listIndicators()` + `defaultConfigFor()` to
+  populate/seed.
 
 ### `src/controls/IndicatorLegend.tsx`
 
@@ -373,6 +376,14 @@ setPointer(), destroy()}`.
 
 - `PatternMarker` — `{pattern_name: string; detected_on: string; markers:
 Record<string, unknown>}`. Structural mirror of the app's API marker shape.
+
+### `src/patterns/catalog.ts`
+
+- `PatternCatalogEntry` = `{ name; label }`. `PATTERN_CATALOG: PatternCatalogEntry[]`
+  — the ordered, human-labelled list of all 12 renderable patterns (order mirrors
+  `renderers`); single source for the `ChartControls` patterns dropdown and the
+  consumer's `visiblePatterns` seed. `PATTERN_NAMES = PATTERN_CATALOG.map(e => e.name)`.
+  Map-sync guarded by `tests/patternCatalog.test.ts` (must equal `Object.keys(renderers)`).
 
 ### `src/patterns/renderers/index.ts`
 

@@ -131,7 +131,13 @@ settingsOverrides`). `lineStyleFrom` (`src/indicators/lineSettings.ts`) reads
   `volume_dryup`, `pocket_pivot`, `inside_day`, `pullback_to_ema`. chart-core only
   renders pre-detected markers; detection + marker-JSON are produced upstream
   (daily_scans `scan_cores.py` → finance_website `chart_patterns/orchestrator.py`).
-  Shared chip/marker/`xForBar` helpers live in `renderers/_shared.ts`.
+  Shared chip/marker/`xForBar` helpers live in `renderers/_shared.ts`. The ordered,
+  human-labelled catalog of all 12 (single source for the dropdown) lives in
+  `src/patterns/catalog.ts` (`PATTERN_CATALOG`/`PATTERN_NAMES`). Per-pattern
+  visibility is a controlled `visiblePatterns?: string[]` prop on both `Chart`
+  (filters `effectivePatterns`) and `ChartControls` (the patterns dropdown);
+  `undefined` ⇒ all visible (backward compat), gated behind the `patternsEnabled`
+  master.
 - **Stage 2** — the advancing-trend band indicator: `src/indicators/builtins/stage2.ts`.
 - **RS line** — relative-strength vs. benchmark: `src/indicators/builtins/rsLine.ts`.
 - **Price stats panel** — floating latest-bar fundamentals/ATR table (standalone

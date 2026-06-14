@@ -16,12 +16,53 @@
   left: 0;
   z-index: 10;
   min-width: 180px;
-  max-height: 360px;
-  overflow-y: auto;
   padding: var(--space-1);
   border-radius: var(--radius-md);
-  background: var(--surface-panel-raised);
+  background: var(--surface-dropdown);
   box-shadow: var(--shadow-card);
+  /* Round the scrollbar too: the rounded outline clips this box's contents,
+     but an element's *own* scrollbar paints outside that clip. So the panel
+     only rounds + clips; the inner .pickerScroll does the scrolling, and its
+     scrollbar — being a descendant — is clipped to the rounded outline. */
+  overflow: hidden;
+}
+
+.pickerScroll {
+  /* Grow to fit the rows exactly; only scroll once the list would exceed 80% of
+     the chart's price-pane height (published as --chart-price-height by Chart).
+     Fallback 360px when no chart has mounted yet to set the var. */
+  max-height: calc(0.8 * var(--chart-price-height, 360px));
+  overflow-y: auto;
+  /* Kill the default white track; thin muted thumb on the panel background. */
+  scrollbar-width: thin;
+  scrollbar-color: var(--surface-panel-header) transparent;
+}
+
+.pickerScroll::-webkit-scrollbar {
+  width: 8px;
+}
+
+.pickerScroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.pickerScroll::-webkit-scrollbar-thumb {
+  background: var(--surface-panel-header);
+  border-radius: var(--radius-sm);
+}
+
+.pickerScroll::-webkit-scrollbar-thumb:hover {
+  background: var(--text-muted);
+}
+
+/* Fixed-width slot for the "· N" count in the Indicators/Patterns picker buttons
+   so the toolbar pills don't shift as the count grows 1↔2 digits. Tabular figures
+   keep digit widths equal; right-align grows the number into the reserved space. */
+.pickerCount {
+  display: inline-block;
+  min-width: 2ch;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
 }
 
 .pickerSection {
@@ -44,6 +85,27 @@
 
 .pickerRow:hover {
   background: var(--surface-panel-header);
+}
+
+/* Like .pickerRow but a <label> carrying a right-aligned checkbox (the patterns
+   visibility dropdown). Muted when the checkbox is disabled (master off). */
+.pickerCheckRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.pickerCheckRow:hover {
+  background: var(--surface-panel-header);
+}
+
+.pickerCheckRow:has(input:disabled) {
+  cursor: default;
+  opacity: 0.45;
 }
 
 .pickerLabel {

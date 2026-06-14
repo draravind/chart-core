@@ -128,6 +128,10 @@ type Props = {
   // them and passes them down; core owns mount/update internally).
   patterns?: PatternMarker[];
   patternsEnabled?: boolean;
+  // Per-pattern visibility filter (by `pattern_name`). `undefined` ⇒ all
+  // detected patterns visible (backward compat); a pattern draws only if the
+  // master `patternsEnabled` is on AND its name is in this set.
+  visiblePatterns?: string[];
   // Floating "Price Stats" panel — a latest-bar snapshot of app-supplied
   // fundamentals + price-derived ATR rows. Standalone toggle (not an indicator);
   // the app wires both `statsEnabled` here and the "Stats" pill on ChartControls.
@@ -182,6 +186,7 @@ const Chart = ({
   priceFormatter,
   patterns,
   patternsEnabled,
+  visiblePatterns,
   statsTable,
   statsEnabled,
   statsMarket = 'India',
@@ -747,6 +752,19 @@ const Chart = ({
       observer.disconnect();
     };
   }, []);
+
+  // Publish the live price-pane height as a document-level CSS var so chrome that
+  // is NOT a descendant of the chart (e.g. the toolbar's pattern/indicator
+  // dropdowns, which are siblings of the chart) can size against it —
+  // `max-height: calc(0.8 * var(--chart-price-height))`. Single-chart assumption:
+  // the var is global, so a second concurrent Chart would overwrite it.
+  const pricePaneHeight = layout?.priceHeight ?? null;
+  useEffect(() => {
+    if (pricePaneHeight == null) return;
+    const root = document.documentElement;
+    root.style.setProperty('--chart-price-height', `${pricePaneHeight}px`);
+    return () => root.style.removeProperty('--chart-price-height');
+  }, [pricePaneHeight]);
 
   // Color injection + resolver. Injects `app.colors` as inline `--<key>` custom
   // properties on the wrapper (so every canvas/SVG element reading a
@@ -1633,10 +1651,17 @@ const Chart = ({
 
   // Chart-pattern overlay: read-only; flips between data and [] when the
   // patterns feature toggles, so the keyed join exits all groups on hide.
-  const effectivePatterns = useMemo<PatternMarker[]>(
-    () => (patternsEnabled === false ? [] : patterns ?? []),
-    [patterns, patternsEnabled],
-  );
+  const visibleKey = visiblePatterns
+    ? [...visiblePatterns].sort().join(',')
+    : '*';
+  const effectivePatterns = useMemo<PatternMarker[]>(() => {
+    if (patternsEnabled === false) return [];
+    const all = patterns ?? [];
+    if (!visiblePatterns) return all; // undefined ⇒ all visible
+    const allow = new Set(visiblePatterns);
+    return all.filter((p) => allow.has(p.pattern_name));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [patterns, patternsEnabled, visibleKey]);
 
   useEffect(() => {
     const handle = patternOverlayHandleRef.current;

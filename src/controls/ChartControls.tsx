@@ -8,6 +8,7 @@ import {
   SUBPANE_ORDER,
 } from '../indicators/registry';
 import { cn } from '../internal/cn';
+import { PATTERN_CATALOG, PATTERN_NAMES } from '../patterns/catalog';
 import './controls.css';
 import styles from './ChartControls.module.css';
 
@@ -24,6 +25,10 @@ type Props = {
   // Patterns is Pillar 2, not an indicator — wired as a standalone toggle.
   patternsEnabled: boolean;
   onPatternsToggle: () => void;
+  // Per-pattern visibility. `undefined` ⇒ all patterns visible (backward compat).
+  // Only meaningful when `patternsEnabled` is true.
+  visiblePatterns?: string[];
+  onVisiblePatternsChange?: (names: string[]) => void;
   // Price-stats panel — like Patterns, a standalone toggle (not an indicator).
   statsEnabled: boolean;
   onStatsToggle: () => void;
@@ -51,12 +56,16 @@ export default function ChartControls({
   onIndicatorsChange,
   patternsEnabled,
   onPatternsToggle,
+  visiblePatterns,
+  onVisiblePatternsChange,
   statsEnabled,
   onStatsToggle,
   className,
 }: Props) {
   const [pickerOpen, setPickerOpen] = useState(false);
   const pickerRef = useRef<HTMLDivElement | null>(null);
+  const [patternPickerOpen, setPatternPickerOpen] = useState(false);
+  const patternPickerRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     if (!pickerOpen) return;
@@ -74,6 +83,41 @@ export default function ChartControls({
       document.removeEventListener('keydown', onKey);
     };
   }, [pickerOpen]);
+
+  useEffect(() => {
+    if (!patternPickerOpen) return;
+    const onDown = (e: MouseEvent) => {
+      if (
+        patternPickerRef.current &&
+        !patternPickerRef.current.contains(e.target as Node)
+      )
+        setPatternPickerOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setPatternPickerOpen(false);
+    };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [patternPickerOpen]);
+
+  // Per-pattern visibility helpers. `undefined` visible set ⇒ all visible.
+  const isVisible = (name: string) =>
+    visiblePatterns ? visiblePatterns.includes(name) : true;
+  const visibleCount = visiblePatterns
+    ? visiblePatterns.length
+    : PATTERN_NAMES.length;
+  const togglePattern = (name: string) => {
+    if (!onVisiblePatternsChange) return;
+    const current = visiblePatterns ?? PATTERN_NAMES;
+    const next = current.includes(name)
+      ? current.filter((n) => n !== name)
+      : [...current, name];
+    onVisiblePatternsChange(next);
+  };
 
   const overlays = listIndicators()
     .filter((d) => d.pane === 'price')
@@ -164,29 +208,65 @@ export default function ChartControls({
           )}
           onClick={() => setPickerOpen((o) => !o)}
         >
-          Indicators · {indicators.length}
+          Indicators ·{' '}
+          <span className={styles.pickerCount}>{indicators.length}</span>
         </button>
         {pickerOpen && (
           <div className={styles.pickerPanel}>
-            <div className={styles.pickerSection}>Overlays</div>
-            {overlays.map(renderRow)}
-            <div className={styles.pickerSection}>Oscillators</div>
-            {oscillators.map(renderRow)}
+            <div className={styles.pickerScroll}>
+              <div className={styles.pickerSection}>Overlays</div>
+              {overlays.map(renderRow)}
+              <div className={styles.pickerSection}>Oscillators</div>
+              {oscillators.map(renderRow)}
+            </div>
           </div>
         )}
       </div>
 
-      <div className="pill-toggle-group">
+      <div className={styles.indicatorPicker} ref={patternPickerRef}>
         <button
+          type="button"
           className={cn(
             'pill-toggle-btn',
             'pill-toggle-btn-sm',
             patternsEnabled && 'is-active',
           )}
-          onClick={onPatternsToggle}
+          onClick={() => setPatternPickerOpen((o) => !o)}
         >
-          Patterns
+          Patterns ·{' '}
+          <span className={styles.pickerCount}>
+            {patternsEnabled ? visibleCount : 0}
+          </span>
         </button>
+        {patternPickerOpen && (
+          <div className={styles.pickerPanel}>
+            <div className={styles.pickerScroll}>
+              <label className={styles.pickerCheckRow}>
+                <span className={styles.pickerLabel}>Show patterns</span>
+                <input
+                  type="checkbox"
+                  checked={patternsEnabled}
+                  onChange={onPatternsToggle}
+                />
+              </label>
+              <div className={styles.pickerSection}>Patterns</div>
+              {PATTERN_CATALOG.map(({ name, label }) => (
+                <label key={name} className={styles.pickerCheckRow}>
+                  <span className={styles.pickerLabel}>{label}</span>
+                  <input
+                    type="checkbox"
+                    disabled={!patternsEnabled || !onVisiblePatternsChange}
+                    checked={isVisible(name)}
+                    onChange={() => togglePattern(name)}
+                  />
+                </label>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div className="pill-toggle-group">
         <button
           className={cn(
             'pill-toggle-btn',

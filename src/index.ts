@@ -11,6 +11,8 @@ export {
 } from './utils/chartCalculations';
 export type { VolumeLabel, VolumeStats } from './utils/chartCalculations';
 export type { PatternMarker } from './patterns/types';
+export { PATTERN_CATALOG, PATTERN_NAMES } from './patterns/catalog';
+export type { PatternCatalogEntry } from './patterns/catalog';
 export type {
   StatsTableData,
   StatsMarket,
