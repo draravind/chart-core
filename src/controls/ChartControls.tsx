@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import type { ChartType, RangeKey } from '../types';
+import type { ChartType } from '../types';
 import type { IndicatorConfig, IndicatorDef } from '../indicators/types';
 import {
   listIndicators,
@@ -13,9 +13,6 @@ import './controls.css';
 import styles from './ChartControls.module.css';
 
 type Props = {
-  ranges: RangeKey[];
-  activeRange: RangeKey;
-  onRangeChange: (r: RangeKey) => void;
   chartType: ChartType;
   onChartTypeChange: (t: ChartType) => void;
   // Active indicator instances (one per drawn config). The picker appends new
@@ -47,9 +44,6 @@ function subpaneKey(def: IndicatorDef): string {
 }
 
 export default function ChartControls({
-  ranges,
-  activeRange,
-  onRangeChange,
   chartType,
   onChartTypeChange,
   indicators,
@@ -159,22 +153,6 @@ export default function ChartControls({
 
   return (
     <div className={cn(styles.chartControls, className)}>
-      <div className="pill-toggle-group">
-        {ranges.map((r) => (
-          <button
-            key={r}
-            className={cn(
-              'pill-toggle-btn',
-              'pill-toggle-btn-sm',
-              r === activeRange && 'is-active',
-            )}
-            onClick={() => onRangeChange(r)}
-          >
-            {r}
-          </button>
-        ))}
-      </div>
-
       <div className="pill-toggle-group">
         <button
           className={cn(

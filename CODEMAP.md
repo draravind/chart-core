@@ -27,7 +27,8 @@ Public barrel — the only import surface for consumers (never deep-import). Re-
 
 - `export * from './types'` → `Candle`, `QuarterlyResult`, `ChartType`, `AutoFitMode`,
   `RangeKey`, `RANGES`, `ChartScaleReason`, `ChartScaleApi`.
-- From `utils/chartCalculations`: `RANGE_DAYS`, `formatPrice`, `formatVolume`,
+- From `utils/chartCalculations`: `RANGE_DAYS`, `MIN_BAR_STEP_PX`,
+  `MIN_VISIBLE_BARS`, `maxVisibleBarsForWidth`, `formatPrice`, `formatVolume`,
   `formatVolumeTick`, `computeVolumeStats`, types `VolumeLabel`, `VolumeStats`.
 - From `patterns/types`: `PatternMarker`.
 - From `stats/types`: `StatsTableData`, `StatsMarket`, `StatsPosition`, `StatsSize`
@@ -49,7 +50,7 @@ Public barrel — the only import surface for consumers (never deep-import). Re-
 - Per-indicator `*Settings` types from each builtin (`SmaSettings` …
   `TrangeSettings`, plus `RsSettings`, `Stage2Settings`,
   `QuarterlyResultsSettings`).
-- `Chart` (default), `ChartControls` (default).
+- `Chart` (default), `ChartControls` (default), `ZoomSlider` (default).
 - From `context`: `useChartScale`, `useChartOverlayHost`, `useChartGeometry`,
   `useReportOverlayPriceBounds`, `useBackgroundPointerDown`, type `ChartOverlayLayer`.
 
@@ -61,7 +62,8 @@ Public barrel — the only import surface for consumers (never deep-import). Re-
 - `QuarterlyResult` — one reported fiscal period: `{label, date, eps?, rps?}`
   (consumed by the `results` subpane indicator via the `quarterlyResults` Chart prop).
 - `ChartType` = `'candlestick' | 'bar'`; `AutoFitMode` = `'price' | 'priceAndOverlays'`.
-- `RangeKey` = `'3M' | '6M' | '1Y'`; `RANGES` — the three keys as a const array.
+- `RangeKey` = `'3M' | '6M' | '1Y' | '2Y' | '3Y' | '5Y'`; `RANGES` — the six keys
+  as a const array (the zoom-slider's named range marks).
 - `ChartScaleReason` = `'pan' | 'rescale'`.
 - `ChartScaleApi` — the stable, mutated-in-place geometry object overlay plugins
   read: `data`, `xScale`, `yPrice`, `subpaneScales` (Map), `ySub` (deprecated),
@@ -77,6 +79,9 @@ Public barrel — the only import surface for consumers (never deep-import). Re-
 
 - `default Chart` (React.FC) — the main chart component. Props include `data`,
   `warmupSeed`, `benchmarkClose`, `visibleBars`/`onVisibleBarsChange`,
+  `onMaxVisibleBarsChange` (surfaces the width-derived zoom-out cap; chart-core
+  also self-enforces it — clamps the wheel, corrects a too-wide prop post-measure,
+  and caps all draw geometry via a render-scope `cappedVisibleBars`),
   `panOffset`/`onPanOffsetChange`, `chartType`, `indicators`/`onIndicatorsChange`,
   `autoFitMode`/`onAutoFitModeChange`, `infoBarExpanded`/`onInfoBarExpandedChange`,
   `symbol`, `bare`, `priceFormatter`, `patterns`, `patternsEnabled`,
@@ -113,14 +118,27 @@ Scoped styles for the chart shell: `.chartWrapper`/`.chartWrapperBare`,
 
 ### `src/controls/ChartControls.tsx`
 
-- `default ChartControls` (React.FC) — control panel: range buttons, chart-type
-  toggle, indicator picker (split into overlays vs. oscillators), patterns
-  dropdown (master "Show patterns" + a checkbox per `PATTERN_CATALOG` entry).
-  Props: `ranges`, `activeRange`/`onRangeChange`, `chartType`/`onChartTypeChange`,
-  `indicators`/`onIndicatorsChange`, `patternsEnabled`/`onPatternsToggle`,
-  `visiblePatterns`/`onVisiblePatternsChange` (per-pattern visibility; undefined ⇒
-  all visible), `className`. Uses `listIndicators()` + `defaultConfigFor()` to
-  populate/seed.
+- `default ChartControls` (React.FC) — control panel: chart-type toggle, indicator
+  picker (split into overlays vs. oscillators), patterns dropdown (master "Show
+  patterns" + a checkbox per `PATTERN_CATALOG` entry), stats toggle. The old range
+  pills were removed — zoom is now the `ZoomSlider` the host mounts in its header.
+  Props: `chartType`/`onChartTypeChange`, `indicators`/`onIndicatorsChange`,
+  `patternsEnabled`/`onPatternsToggle`, `visiblePatterns`/`onVisiblePatternsChange`
+  (per-pattern visibility; undefined ⇒ all visible), `statsEnabled`/`onStatsToggle`,
+  `className`. Uses `listIndicators()` + `defaultConfigFor()` to populate/seed.
+
+### `src/controls/ZoomSlider.tsx`
+
+- `default ZoomSlider` (React.FC) — range-input zoom control with named range
+  marks (3M/6M/1Y/2Y/3Y/5Y), replacing the old range pills. Props:
+  `visibleBars`, `onVisibleBarsChange: (n) => void`, `maxVisibleBars` (the
+  readability cap surfaced by Chart's `onMaxVisibleBarsChange`), `onPanReset?`.
+  `min = MIN_VISIBLE_BARS`, `max = maxVisibleBars`; only marks whose
+  `RANGE_DAYS[mark] ≤ maxVisibleBars` render (D4 — no greyed marks). Landing on a
+  mark's bar count calls `onPanReset?.()` (mirrors the old pill behavior). The
+  track is **log-scaled** (the input operates in `ln(bars)` space, `step="any"`)
+  so the roughly-doubling marks (66/132/252/504…) spread evenly instead of
+  crowding the left edge.
 
 ### `src/controls/IndicatorLegend.tsx`
 
@@ -489,7 +507,13 @@ sharesOutstanding?, freeFloatPercent?, eps?}` (all optional; absent → blanked)
 ### `src/utils/chartCalculations.ts`
 
 - `RangeKey` (structurally identical to `types.ts`'s; canonical one is from types),
-  `RANGE_DAYS: Record<RangeKey, number>` (66/132/252 trading days).
+  `RANGE_DAYS: Record<RangeKey, number>` (66/132/252/504/756/1260 trading days).
+- Zoom-cap (readability) helpers — chart-core owns + enforces the zoom-out cap:
+  `MIN_BAR_STEP_PX = 2` (min px per bar slot), `MIN_VISIBLE_BARS = 10` (zoom-in
+  floor), `rawMaxVisibleBars(containerWidth) → floor((w − 78) / 2)` (raw pixel cap),
+  `maxVisibleBarsForWidth(containerWidth) → number` (largest `RANGE_DAYS` mark ≤ raw
+  cap; falls back to raw on a too-narrow screen). The `78` = `MARGIN.right(60) +
+  RIGHT_BUFFER(18)` in `Chart.tsx` (kept in sync, documented there).
 - `formatPrice(value) → string` (en-IN, 2dp); `formatVolume(value) → string`
   (B/M/K, 2dp); `formatVolumeTick(value) → string` (B/M/K, integer ticks).
 - `VolumeLabel` = `{index, text: 'HVE' | 'HVY'}`; `VolumeStats` = `{sma, labels}`.

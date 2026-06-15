@@ -4,6 +4,9 @@ export * from './types';
 // avoid an ambiguous barrel re-export.
 export {
   RANGE_DAYS,
+  MIN_BAR_STEP_PX,
+  MIN_VISIBLE_BARS,
+  maxVisibleBarsForWidth,
   formatPrice,
   formatVolume,
   formatVolumeTick,
@@ -128,6 +131,7 @@ export { lineStyleFrom } from './indicators/lineSettings';
 
 export { default as ChartControls } from './controls/ChartControls';
 export { default as SettingsDialog } from './controls/SettingsDialog';
+export { default as ZoomSlider } from './controls/ZoomSlider';
 
 export { default as Chart } from './Chart';
 export {

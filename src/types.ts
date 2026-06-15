@@ -38,8 +38,8 @@ export type ChartType = 'candlestick' | 'bar';
 
 export type AutoFitMode = 'price' | 'priceAndOverlays';
 
-export type RangeKey = '3M' | '6M' | '1Y';
-export const RANGES: RangeKey[] = ['3M', '6M', '1Y'];
+export type RangeKey = '3M' | '6M' | '1Y' | '2Y' | '3Y' | '5Y';
+export const RANGES: RangeKey[] = ['3M', '6M', '1Y', '2Y', '3Y', '5Y'];
 
 // The published, app-readable scale/geometry API — today's `HandlerState`
 // (StockChart.tsx) plus a reason-tagged subscriber list. The object identity is

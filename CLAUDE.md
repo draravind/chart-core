@@ -50,7 +50,8 @@ The split is intentional: the routing table + glossary here are **pay-always**
 | Resize/persist subpane heights (drag dividers)                                | `src/Chart.tsx` (`subpaneHeights`/`onSubpaneHeightsChange`, divider handles) + `applySubpaneDrag` in `src/indicators/subpaneLayout.ts`                                                                                                                                                      |
 | Add/adjust the Quarterly Results pane                                         | `src/indicators/builtins/quarterlyResults.ts`; `quarterlyResults` Chart prop; `--qr-*` tokens; `tests/quarterlyResults.test.ts`                                                                                                                                                             |
 | Adjust volume (bars/HVE-HVY/K-M-B axis)                                       | `src/indicators/builtins/volume.ts` (registered subpane indicator, key `volume`); `tests/volume.test.ts`; math in `src/utils/chartCalculations.ts` (`computeVolumeStats`)                                                                                                                   |
-| Add/adjust a chart control                                                    | `src/controls/ChartControls.tsx`                                                                                                                                                                                                                                                            |
+| Add/adjust a chart control                                                    | `src/controls/ChartControls.tsx`; zoom is the `src/controls/ZoomSlider.tsx` slider (replaced the range pills)                                                                                                                                                                              |
+| Change the zoom-out cap / zoom slider / range marks                            | cap math in `src/utils/chartCalculations.ts` (`MIN_BAR_STEP_PX`, `maxVisibleBarsForWidth`); enforced in `src/Chart.tsx` (`cappedVisibleBars` + correction effect + `onMaxVisibleBarsChange`); UI in `src/controls/ZoomSlider.tsx`; `tests/zoomCap.test.ts`                                  |
 | Fix a legend entry / live values                                              | `src/controls/IndicatorLegend.tsx`                                                                                                                                                                                                                                                          |
 | Adjust the price-stats panel                                                  | `src/stats/` (`computeStats.ts` math, `StatsPanel.tsx` panel, `stats.module.css`); `--stats-*` tokens in `src/styles/chart-core.css`; `tests/stats.test.ts`                                                                                                                                 |
 | Add an overlay/annotation plugin                                              | `src/context.tsx` hooks (`useChartScale`, `useChartOverlayHost`) + `src/patterns/mountChartPatternOverlay.ts`                                                                                                                                                                               |
@@ -112,6 +113,22 @@ settingsOverrides`). `lineStyleFrom` (`src/indicators/lineSettings.ts`) reads
 - **Subpane** — a named oscillator pane below the price pane (RSI, MACD…); layout in
   `src/indicators/subpaneLayout.ts`. Heights are user-draggable (divider handles in
   `Chart.tsx`, math in `applySubpaneDrag`), persisted via `subpaneHeights`.
+- **RangeKey / range presets** — the named view widths
+  `'3M'|'6M'|'1Y'|'2Y'|'3Y'|'5Y'` (declared identically in `src/types.ts` and
+  `src/utils/chartCalculations.ts`; barrel re-exports the `types.ts` one) with bar
+  counts in `RANGE_DAYS` (66/132/252/504/756/1260 trading days). They are the
+  `ZoomSlider` marks (the old range pills are gone).
+- **Zoom-out cap (readability)** — chart-core is the only layer that knows its live
+  pixel width and the candle-spacing formula, so it OWNS and ENFORCES the upper
+  limit on zoom-out. `maxVisibleBarsForWidth(containerWidth)`
+  (`src/utils/chartCalculations.ts`) = largest `RANGE_DAYS` mark that fits while each
+  bar slot stays ≥ `MIN_BAR_STEP_PX` (2px); `MIN_VISIBLE_BARS` (10) is the zoom-in
+  floor. The cap is dynamic (rises on wider monitors → 3Y/5Y marks appear). `Chart.tsx`
+  enforces it three ways: the wheel clamps to `maxBarsRef.current`, a post-measure
+  correction effect clamps a too-wide host/persisted `visibleBars`, and a render-scope
+  `cappedVisibleBars` feeds all three draw-geometry sites (layout memo, pan Effect 3,
+  scaleApi publish) so no sub-readable frame ever paints. `onMaxVisibleBarsChange`
+  surfaces the cap to the host (which can't read `containerWidth`) for the slider bound.
 - **Quarterly results pane** — the `results` fundamentals subpane (RPS+EPS, core-
   computed YoY growth; Text/Bars modes): `src/indicators/builtins/quarterlyResults.ts`;
   fed by the `quarterlyResults` Chart prop (`QuarterlyResult[]` in `src/types.ts`).

@@ -40,7 +40,12 @@ import {
   computeSubpaneDomain,
   type SubpaneBand,
 } from './indicators/subpaneLayout';
-import { formatPrice, formatVolume } from './utils/chartCalculations';
+import {
+  formatPrice,
+  formatVolume,
+  maxVisibleBarsForWidth,
+  MIN_VISIBLE_BARS,
+} from './utils/chartCalculations';
 import { toColumns } from './utils/toColumns';
 import { drawSeries } from './utils/drawSeries';
 import {
@@ -107,6 +112,10 @@ type Props = {
   onSubpaneHeightsChange?: (h: Record<string, number>) => void;
   visibleBars: number;
   onVisibleBarsChange?: (n: number | ((prev: number) => number)) => void;
+  // Surfaces the readability-derived zoom-out cap (mark-snapped, width-dependent)
+  // so the host can bound a zoom slider. chart-core owns + enforces the cap; this
+  // is purely informational for UI that can't read containerWidth directly.
+  onMaxVisibleBarsChange?: (n: number) => void;
   panOffset: number;
   onPanOffsetChange: (n: number | ((prev: number) => number)) => void;
   chartType: ChartType;
@@ -172,6 +181,7 @@ const Chart = ({
   onSubpaneHeightsChange,
   visibleBars,
   onVisibleBarsChange,
+  onMaxVisibleBarsChange,
   panOffset,
   onPanOffsetChange,
   chartType,
@@ -302,6 +312,21 @@ const Chart = ({
     return out;
   }, [indicators]);
 
+  // Readability-derived zoom-out cap (D1/D4/D5): the largest named range that
+  // fits the live measured width while each bar slot stays >= MIN_BAR_STEP_PX.
+  // chart-core owns + enforces this; the wheel/correction effects read it.
+  const maxVisibleBars = useMemo(
+    () => maxVisibleBarsForWidth(containerWidth),
+    [containerWidth],
+  );
+  // Single render-scope clamp applied at every geometry site below so a too-wide
+  // host/persisted `visibleBars` never paints sub-readable candles for a frame
+  // (the correction effect that fixes the prop only runs post-paint).
+  const cappedVisibleBars = Math.max(
+    MIN_VISIBLE_BARS,
+    Math.min(visibleBars, maxVisibleBars),
+  );
+
   // Geometry that depends on data + viewport but NOT on priceZoom. Hoisted
   // out of the draw effect so the y-zoom path skips re-running x-scale,
   // candle data joins, volume bars, x-axis, separators, etc.
@@ -311,12 +336,12 @@ const Chart = ({
       300,
       (containerHeight || 466) - MARGIN.top - MARGIN.bottom,
     );
-    const minOffset = -(visibleBars - 1);
-    const maxOffset = Math.max(0, data.length - visibleBars);
+    const minOffset = -(cappedVisibleBars - 1);
+    const maxOffset = Math.max(0, data.length - cappedVisibleBars);
     const effectiveOffset = Math.max(minOffset, Math.min(panOffset, maxOffset));
     const visStart = Math.max(
       0,
-      Math.floor(data.length - visibleBars - effectiveOffset),
+      Math.floor(data.length - cappedVisibleBars - effectiveOffset),
     );
     const visEnd = Math.min(
       data.length,
@@ -324,7 +349,7 @@ const Chart = ({
     );
     const visibleSlice = data.slice(visStart, visEnd);
     if (visibleSlice.length === 0) return null;
-    const bufferBars = Math.ceil(visibleBars);
+    const bufferBars = Math.ceil(cappedVisibleBars);
     const renderStart = Math.max(0, visStart - bufferBars);
     const renderEnd = Math.min(data.length, visEnd + bufferBars);
     const renderSlice = data.slice(renderStart, renderEnd);
@@ -339,8 +364,9 @@ const Chart = ({
       userHeights: paneHeightsState ?? undefined,
     });
     const width = containerWidth - MARGIN.left - MARGIN.right;
-    const step = (width - RIGHT_BUFFER) / visibleBars;
-    const baseTranslateX = (effectiveOffset + visibleBars - data.length) * step;
+    const step = (width - RIGHT_BUFFER) / cappedVisibleBars;
+    const baseTranslateX =
+      (effectiveOffset + cappedVisibleBars - data.length) * step;
     const xScale = d3
       .scaleBand<number>()
       .domain(xDomain)
@@ -348,9 +374,9 @@ const Chart = ({
       .paddingInner(0.3)
       .paddingOuter(0);
     const bandwidth = xScale.bandwidth();
-    const visibleBarsInt = Math.floor(visibleBars);
+    const visibleBarsInt = Math.floor(cappedVisibleBars);
     const visibleStartIdx = Math.round(
-      data.length - visibleBars - effectiveOffset,
+      data.length - cappedVisibleBars - effectiveOffset,
     );
     return {
       totalHeight,
@@ -374,7 +400,7 @@ const Chart = ({
     };
   }, [
     data,
-    visibleBars,
+    cappedVisibleBars,
     panOffset,
     containerWidth,
     containerHeight,
@@ -604,6 +630,18 @@ const Chart = ({
   useEffect(() => {
     panOffsetRef.current = panOffset;
   }, [panOffset]);
+  // Live mirrors so the wheel/correction closures (deps kept narrow) read the
+  // current cap + visibleBars setter instead of a stale-`containerWidth` capture.
+  const maxBarsRef = useRef(maxVisibleBars);
+  maxBarsRef.current = maxVisibleBars;
+  const onVisibleBarsChangeRef = useRef(onVisibleBarsChange);
+  useEffect(() => {
+    onVisibleBarsChangeRef.current = onVisibleBarsChange;
+  }, [onVisibleBarsChange]);
+  const onMaxVisibleBarsChangeRef = useRef(onMaxVisibleBarsChange);
+  useEffect(() => {
+    onMaxVisibleBarsChangeRef.current = onMaxVisibleBarsChange;
+  }, [onMaxVisibleBarsChange]);
   const pendingFrameRef = useRef<number | null>(null);
   const pendingDxRef = useRef<number>(0);
   const chartGroupRef = useRef<SVGGElement | null>(null);
@@ -848,7 +886,14 @@ const Chart = ({
           pendingFrame = null;
           const f = pendingFactor;
           pendingFactor = 1;
-          onVisibleBarsChange!((prev) => prev * f);
+          // Clamp to the readability cap (read live from maxBarsRef — the closure
+          // deps stay [onVisibleBarsChange], so containerWidth would be stale).
+          onVisibleBarsChange!((prev) =>
+            Math.min(
+              maxBarsRef.current,
+              Math.max(MIN_VISIBLE_BARS, prev * f),
+            ),
+          );
         });
       }
     }
@@ -868,6 +913,27 @@ const Chart = ({
       Math.max(minOffset, Math.min(maxOffset, prev)),
     );
   }, [data?.length, visibleBars]);
+
+  // Cap-correction effect (mirrors the pan-clamp above): self-correct a too-large
+  // host/persisted `visibleBars` when the window shrinks past the readability cap,
+  // and floor a too-small one. Guard on containerWidth === 0 — before measurement
+  // maxVisibleBarsForWidth(0) returns the MIN_VISIBLE_BARS fallback and would
+  // wrongly clamp to 10. Host needs no geometry knowledge; chart-core owns the cap.
+  useEffect(() => {
+    if (containerWidth === 0 || !onVisibleBarsChange) return;
+    if (visibleBars > maxVisibleBars || visibleBars < MIN_VISIBLE_BARS) {
+      onVisibleBarsChangeRef.current?.((prev) =>
+        Math.min(maxVisibleBars, Math.max(MIN_VISIBLE_BARS, prev)),
+      );
+    }
+  }, [maxVisibleBars, visibleBars, containerWidth, onVisibleBarsChange]);
+
+  // Surface the cap to the host (it can't read containerWidth directly) so it can
+  // bound a zoom slider. Skip the pre-measurement fallback.
+  useEffect(() => {
+    if (containerWidth === 0 || !onMaxVisibleBarsChange) return;
+    onMaxVisibleBarsChangeRef.current?.(maxVisibleBars);
+  }, [maxVisibleBars, containerWidth, onMaxVisibleBarsChange]);
 
   // Reset price-axis zoom when the user switches symbols. Done at render
   // time to avoid a cascading render via an effect.
@@ -1543,7 +1609,7 @@ const Chart = ({
     scaleApi.yPrice = yPrice;
     scaleApi.step = step;
     scaleApi.bandwidth = bandwidth;
-    scaleApi.visibleBars = visibleBars;
+    scaleApi.visibleBars = cappedVisibleBars;
     scaleApi.visibleBarsInt = visibleBarsInt;
     scaleApi.visibleStartIdx = visibleStartIdx;
     scaleApi.priceHeight = priceHeight;
@@ -1607,7 +1673,7 @@ const Chart = ({
     priceZoom,
     chartType,
     data,
-    visibleBars,
+    cappedVisibleBars,
     autoFitMode,
     overlayPriceBounds,
     containerWidth,
@@ -1625,12 +1691,13 @@ const Chart = ({
   useEffect(() => {
     if (dataLength === 0 || !chartGroupRef.current) return;
     if (containerWidth === 0) return;
-    const minOffset = -(visibleBars - 1);
-    const maxOffset = Math.max(0, dataLength - visibleBars);
+    const minOffset = -(cappedVisibleBars - 1);
+    const maxOffset = Math.max(0, dataLength - cappedVisibleBars);
     const effectiveOffset = Math.max(minOffset, Math.min(panOffset, maxOffset));
     const width = containerWidth - MARGIN.left - MARGIN.right;
-    const step = (width - RIGHT_BUFFER) / visibleBars;
-    const baseTranslateX = (effectiveOffset + visibleBars - dataLength) * step;
+    const step = (width - RIGHT_BUFFER) / cappedVisibleBars;
+    const baseTranslateX =
+      (effectiveOffset + cappedVisibleBars - dataLength) * step;
     chartGroupRef.current.setAttribute(
       'transform',
       `translate(${baseTranslateX},0)`,
@@ -1641,7 +1708,7 @@ const Chart = ({
     redrawSeries();
   }, [
     panOffset,
-    visibleBars,
+    cappedVisibleBars,
     dataLength,
     containerWidth,
     scaleApi,
