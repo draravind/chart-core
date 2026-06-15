@@ -127,28 +127,45 @@ function drawCandles(ctx: CanvasRenderingContext2D, p: DrawSeriesParams): void {
   for (const b of negBodies) ctx.fillRect(b.x, b.y, b.w, b.h);
 }
 
+export type BarSegments = {
+  stem: { x: number; yHigh: number; yLow: number };
+  openTick: { x0: number; x1: number; y: number };
+  closeTick: { x0: number; x1: number; y: number };
+};
+
+// All y's snapped identically so a tick whose price equals an extreme lands
+// exactly on the stem end; ticks terminate at the stem center cx so they meet
+// the stem horizontally too.
+export function barSegments(
+  d: Pick<Candle, 'open' | 'high' | 'low' | 'close'>,
+  x0: number,
+  bandwidth: number,
+  yPrice: (v: number) => number,
+): BarSegments {
+  const snap = (v: number) => Math.round(yPrice(v)) + 0.5;
+  const cx = Math.round(x0 + bandwidth / 2) + 0.5;
+  return {
+    stem: { x: cx, yHigh: snap(d.high), yLow: snap(d.low) },
+    openTick: { x0, x1: cx, y: snap(d.open) },
+    closeTick: { x0: cx, x1: x0 + bandwidth, y: snap(d.close) },
+  };
+}
+
 function drawBars(ctx: CanvasRenderingContext2D, p: DrawSeriesParams): void {
   const { xScale, yPrice, bandwidth, renderStart, renderSlice, colors } = p;
-  const tickLen = bandwidth / 2;
   const posPath = new Path2D();
   const negPath = new Path2D();
   for (let i = 0; i < renderSlice.length; i++) {
     const g = i + renderStart;
     const d = renderSlice[i];
-    const x0 = xScale(g)!;
-    const cx = Math.round(x0 + bandwidth / 2) + 0.5;
+    const seg = barSegments(d, xScale(g)!, bandwidth, yPrice);
     const path = d.close >= d.open ? posPath : negPath;
-    // stem
-    path.moveTo(cx, yPrice(d.high));
-    path.lineTo(cx, yPrice(d.low));
-    // open tick (left)
-    const yo = Math.round(yPrice(d.open)) + 0.5;
-    path.moveTo(x0, yo);
-    path.lineTo(x0 + tickLen, yo);
-    // close tick (right)
-    const yc = Math.round(yPrice(d.close)) + 0.5;
-    path.moveTo(x0 + tickLen, yc);
-    path.lineTo(x0 + bandwidth, yc);
+    path.moveTo(seg.stem.x, seg.stem.yHigh);
+    path.lineTo(seg.stem.x, seg.stem.yLow);
+    path.moveTo(seg.openTick.x0, seg.openTick.y);
+    path.lineTo(seg.openTick.x1, seg.openTick.y);
+    path.moveTo(seg.closeTick.x0, seg.closeTick.y);
+    path.lineTo(seg.closeTick.x1, seg.closeTick.y);
   }
   ctx.lineWidth = p.candle.wickWidth;
   ctx.strokeStyle = colors.positive;
