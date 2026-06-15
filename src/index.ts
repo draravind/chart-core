@@ -129,6 +129,26 @@ export { APPEARANCE_DEFAULTS, effectiveAppearance } from './appearance/registry'
 export { LINE_STYLE_OPTIONS, dashFor } from './indicators/settingsOptions';
 export { lineStyleFrom } from './indicators/lineSettings';
 
+// Drawing tools — interactive, persisted annotations (controlled via the
+// `drawings`/`onDrawingsChange` Chart props). The mount handle + renderers stay
+// internal (like the pattern overlay); only the data model + helpers are public.
+export type {
+  DrawingShape,
+  DrawingType,
+  DrawingTool,
+  DrawingAnchor,
+  DrawingStyle,
+  TrendLineDrawing,
+  HorizontalLineDrawing,
+  VerticalLineDrawing,
+  HorizontalRayDrawing,
+  RayDrawing,
+  TextDrawing,
+  RulerDrawing,
+} from './drawings/types';
+export { normalizeDrawing } from './drawings/types';
+export { DRAWING_DEFAULTS, effectiveDrawingStyle } from './drawings/defaults';
+
 export { default as ChartControls } from './controls/ChartControls';
 export { default as SettingsDialog } from './controls/SettingsDialog';
 export { default as ZoomSlider } from './controls/ZoomSlider';

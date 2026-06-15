@@ -48,7 +48,15 @@ export default function StatsPanel({
 }: Props) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const panelRef = useRef<HTMLDivElement | null>(null);
-  const [livePos, setLivePos] = useState<StatsPosition | null>(position);
+  // Measured geometry — the ONLY thing an effect writes (genuine DOM read).
+  const [measured, setMeasured] = useState<{
+    hostW: number;
+    hostH: number;
+    panelW: number;
+    panelH: number;
+  } | null>(null);
+  // Transient local position during/after a drag; null = defer to the prop/default.
+  const [dragOverride, setDragOverride] = useState<StatsPosition | null>(null);
   const [dragging, setDragging] = useState(false);
   const dragStateRef = useRef<{
     pointerId: number;
@@ -57,19 +65,6 @@ export default function StatsPanel({
     startX: number;
     startY: number;
   } | null>(null);
-
-  // Mirror of `livePos` for imperative reads in the drag handlers — drag-end
-  // must fire `onPositionChange` OUTSIDE the state updater (updaters must be
-  // pure; StrictMode double-invokes them, which would double-fire the persist).
-  const livePosRef = useRef<StatsPosition | null>(position);
-  useEffect(() => {
-    livePosRef.current = livePos;
-  }, [livePos]);
-
-  // Sync from the persisted prop when not dragging (e.g. pref cleared/loaded).
-  useEffect(() => {
-    if (!dragStateRef.current) setLivePos(position);
-  }, [position]);
 
   const measure = () => {
     const host = hostRef.current;
@@ -85,41 +80,59 @@ export default function StatsPanel({
     };
   };
 
-  // Default placement when nothing is persisted — local only, never persisted.
+  // Effect 1 — measure on mount + track resizes (the only DOM-sync effect).
   useLayoutEffect(() => {
-    if (livePos !== null) return;
-    const m = measure();
-    if (!m) return;
-    setLivePos(defaultStatsPosition(m.hostW, m.panelW, marginRight));
-  }, [livePos, marginRight]);
-
-  // Re-clamp when the host or the panel itself resizes (the panel grows when
-  // async fundamentals arrive, and on statsSize changes). While nothing is
-  // persisted, re-derive the default instead so the panel tracks its growing
-  // width and stays left of the axis gutter. Local only — never persisted.
-  const hasPersisted = position !== null;
-  useEffect(() => {
     const host = hostRef.current;
     const panel = panelRef.current;
     if (!host || !panel) return;
-    const ro = new ResizeObserver(() => {
-      if (dragStateRef.current) return;
+    const sync = () => {
       const m = measure();
       if (!m) return;
-      setLivePos((pos) => {
-        if (pos === null) return pos;
-        return hasPersisted
-          ? clampStatsPosition(pos, m.hostW, m.hostH, m.panelW, m.panelH)
-          : defaultStatsPosition(m.hostW, m.panelW, marginRight);
-      });
-    });
+      // Skip no-op updates: ResizeObserver fires an initial callback on observe()
+      // with unchanged geometry; a fresh object would force a wasted re-render.
+      setMeasured((prev) =>
+        prev &&
+        prev.hostW === m.hostW &&
+        prev.hostH === m.hostH &&
+        prev.panelW === m.panelW &&
+        prev.panelH === m.panelH
+          ? prev
+          : m,
+      );
+    };
+    sync(); // synchronous seed before first paint → no flicker
+    const ro = new ResizeObserver(sync);
     ro.observe(host);
     ro.observe(panel);
     return () => ro.disconnect();
-  }, [hasPersisted, marginRight]);
+  }, []);
+
+  // Effect 2 — drop the stale local override when the persisted prop changes.
+  // An invalidation, not a copy: when the parent persists our drop the override
+  // clears with no visible change; when the prop is cleared externally we fall
+  // back to the default. Guarded so it never fires mid-drag.
+  useEffect(() => {
+    if (!dragStateRef.current) setDragOverride(null);
+  }, [position]);
+
+  // Derived during render — no effects, no stored position.
+  const defaultPos = measured
+    ? defaultStatsPosition(measured.hostW, measured.panelW, marginRight)
+    : null;
+  const rawPos = dragOverride ?? position ?? defaultPos; // live drag > persisted > default
+  const effectivePos =
+    rawPos && measured
+      ? clampStatsPosition(
+          rawPos,
+          measured.hostW,
+          measured.hostH,
+          measured.panelW,
+          measured.panelH,
+        )
+      : rawPos;
 
   const onPointerDown = (e: ReactPointerEvent<HTMLDivElement>) => {
-    if (!livePos) return;
+    if (!effectivePos) return;
     e.stopPropagation();
     e.preventDefault();
     panelRef.current?.setPointerCapture(e.pointerId);
@@ -127,8 +140,8 @@ export default function StatsPanel({
       pointerId: e.pointerId,
       mx: e.clientX,
       my: e.clientY,
-      startX: livePos.x,
-      startY: livePos.y,
+      startX: effectivePos.x,
+      startY: effectivePos.y,
     };
     setDragging(true);
   };
@@ -137,38 +150,50 @@ export default function StatsPanel({
     const drag = dragStateRef.current;
     if (!drag || e.pointerId !== drag.pointerId) return;
     e.stopPropagation();
-    const m = measure();
-    if (!m) return;
+    if (!measured) return;
     const next = clampStatsPosition(
       {
         x: drag.startX + (e.clientX - drag.mx),
         y: drag.startY + (e.clientY - drag.my),
       },
-      m.hostW,
-      m.hostH,
-      m.panelW,
-      m.panelH,
+      measured.hostW,
+      measured.hostH,
+      measured.panelW,
+      measured.panelH,
     );
-    livePosRef.current = next;
-    setLivePos(next);
+    setDragOverride(next);
   };
 
   const onPointerUp = (e: ReactPointerEvent<HTMLDivElement>) => {
     const drag = dragStateRef.current;
     if (!drag || e.pointerId !== drag.pointerId) return;
     e.stopPropagation();
+    if (!measured) return;
+    const dropped = clampStatsPosition(
+      {
+        x: drag.startX + (e.clientX - drag.mx),
+        y: drag.startY + (e.clientY - drag.my),
+      },
+      measured.hostW,
+      measured.hostH,
+      measured.panelW,
+      measured.panelH,
+    );
+    setDragOverride(dropped);
+    onPositionChange?.(dropped);
     dragStateRef.current = null;
     setDragging(false);
     panelRef.current?.releasePointerCapture(e.pointerId);
-    const m = measure();
-    const pos = livePosRef.current;
-    if (pos === null) return;
-    const clamped = m
-      ? clampStatsPosition(pos, m.hostW, m.hostH, m.panelW, m.panelH)
-      : pos;
-    livePosRef.current = clamped;
-    setLivePos(clamped);
-    onPositionChange?.(clamped);
+  };
+
+  // Cancelled gesture: keep the last move as a local override, do NOT persist.
+  const onPointerCancel = (e: ReactPointerEvent<HTMLDivElement>) => {
+    const drag = dragStateRef.current;
+    if (!drag || e.pointerId !== drag.pointerId) return;
+    e.stopPropagation();
+    dragStateRef.current = null;
+    setDragging(false);
+    panelRef.current?.releasePointerCapture(e.pointerId);
   };
 
   if (model.rows.length === 0) return null;
@@ -179,14 +204,14 @@ export default function StatsPanel({
         ref={panelRef}
         className={`${styles.statsPanel} ${SIZE_CLASS[size]} ${dragging ? styles.dragging : ''}`}
         style={
-          livePos
-            ? { left: livePos.x, top: livePos.y }
+          effectivePos
+            ? { left: effectivePos.x, top: effectivePos.y }
             : { visibility: 'hidden' }
         }
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
-        onPointerCancel={onPointerUp}
+        onPointerCancel={onPointerCancel}
       >
         <table className={styles.statsTable}>
           <tbody>

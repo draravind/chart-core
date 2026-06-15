@@ -56,6 +56,7 @@ The split is intentional: the routing table + glossary here are **pay-always**
 | Adjust the price-stats panel                                                  | `src/stats/` (`computeStats.ts` math, `StatsPanel.tsx` panel, `stats.module.css`); `--stats-*` tokens in `src/styles/chart-core.css`; `tests/stats.test.ts`                                                                                                                                 |
 | Add an overlay/annotation plugin                                              | `src/context.tsx` hooks (`useChartScale`, `useChartOverlayHost`) + `src/patterns/mountChartPatternOverlay.ts`                                                                                                                                                                               |
 | Add a new pattern shape                                                       | `src/patterns/renderers/` (new renderer, reuse `_shared.ts` for chip/marker/`xForBar`) + register in `renderers/index.ts`; add a `*Style` to `appearance/types.ts` + default in `registry.ts` + section in `SettingsDialog.tsx` + barrel export in `index.ts`; smoke test in `tests/patternRenderers.test.ts` |
+| Add/adjust a user drawing tool (trend/h-v line, ray, text, ruler)             | `src/drawings/` (pure: `types`/`defaults`/`projection`/`hitTest`/`rulerStats`/`interaction`; D3 mount `mountChartDrawingOverlay.ts` + `renderers/*`; popup `DrawingStylePopup.tsx`); wired in `Chart.tsx` (mousedown 3-branch, document drag effect, mount + pan/rescale) + `ChartControls.tsx` (Draw ▾ dropdown); `tests/drawing*.test.ts` |
 | Fix candle/bar rendering                                                      | `src/Chart.tsx`, `src/utils/drawSeries.ts` (volume is now the `volume` indicator, not here)                                                                                                                                                                                                 |
 | Map a date ↔ bar index                                                        | `src/utils/dateBarIndex.ts`                                                                                                                                                                                                                                                                 |
 | Change price/volume formatting or range presets                               | `src/utils/chartCalculations.ts`                                                                                                                                                                                                                                                            |
@@ -159,5 +160,18 @@ settingsOverrides`). `lineStyleFrom` (`src/indicators/lineSettings.ts`) reads
 - **RS line** — relative-strength vs. benchmark: `src/indicators/builtins/rsLine.ts`.
 - **Price stats panel** — floating latest-bar fundamentals/ATR table (standalone
   toggle, not an indicator): `src/stats/`.
+- **Drawing tools** — interactive, persisted annotations (trend lines, h/v lines,
+  h/diagonal rays, text boxes, ruler): `src/drawings/`. Built as a CORE layer
+  mounted by `Chart` (like the pattern overlay) because only `Chart` can suppress
+  its own pan-drag `mousedown` to claim the gesture. Anchors are `{date, price}`
+  (survive warmup/reslice). Controlled via `drawings`/`onDrawingsChange` (fires once
+  per placement/edit-commit/delete, never per drag frame; selection + in-flight
+  draft are ephemeral `Chart` state) + `activeDrawingTool`/`onActiveDrawingToolChange`
+  (host-held ephemeral, shared with `ChartControls`'s "Draw ▾" dropdown, like
+  `patternsEnabled`). All shapes are `pointer-events:none`; the overlayRect keeps the
+  mousedown and `mountChartDrawingOverlay`'s `hitTest` does manual detection.
+  Defaults live in `src/drawings/defaults.ts` + `--chart-drawing*` tokens, NOT in
+  `ChartAppearance`. The `ruler` is a persistent drawing (saved/movable/deletable),
+  not a transient measure.
 - **Dist branch** — the CI-built, consumer-installed output branch (see dist-branch
   gotcha above and README).

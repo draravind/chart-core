@@ -74,6 +74,12 @@
   /* Dashed guide / zero lines drawn in the subpanes. */
   --subpane-guide: #888888;
 
+  /* User drawing tools (trend/h/v lines, rays, text, ruler). Per-shape `style`
+   * overrides win; these are the zero-config defaults. */
+  --chart-drawing: #3b82f6;
+  --chart-drawing-bg: #1e293b;
+  --chart-drawing-handle: #ffffff;
+
   /* Price-stats panel — threshold bands + chrome. Consumed directly in CSS
    * (the panel is HTML, not canvas). `up`/`down` reuse the price-change colors;
    * `strong` is lime, `neutral` amber. */

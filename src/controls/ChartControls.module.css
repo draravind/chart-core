@@ -135,3 +135,43 @@
   background: var(--color-dark-700);
   color: var(--text-primary);
 }
+
+/* Draw dropdown — one clickable row per tool (icon + label). */
+.drawToolRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  padding: var(--space-1) var(--space-2);
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  font-family: inherit;
+  font-size: var(--text-xs);
+  text-align: left;
+  cursor: pointer;
+  transition: background-color var(--transition-fast), color var(--transition-fast);
+}
+
+.drawToolRow:hover {
+  background: var(--surface-panel-header);
+  color: var(--text-primary);
+}
+
+.drawToolRow:disabled {
+  opacity: 0.45;
+  cursor: default;
+  background: transparent;
+}
+
+.drawToolRowActive {
+  background: var(--surface-panel-header);
+  color: var(--text-primary);
+}
+
+.drawToolDivider {
+  height: 1px;
+  margin: var(--space-1) var(--space-2);
+  background: color-mix(in srgb, var(--text-muted) 18%, transparent);
+}

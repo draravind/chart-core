@@ -61,6 +61,27 @@ import {
 } from './patterns/mountChartPatternOverlay';
 import type { PatternMarker } from './patterns/types';
 import {
+  mountChartDrawingOverlay,
+  type ChartDrawingOverlayHandle,
+} from './drawings/mountChartDrawingOverlay';
+import type { DrawingShape, DrawingTool } from './drawings/types';
+import { normalizeDrawing } from './drawings/types';
+import {
+  reduceDrawing,
+  type DraftState,
+} from './drawings/interaction';
+import {
+  dateForX,
+  priceForY,
+  projectAnchor,
+  xForDate,
+  yForPrice,
+  type ProjScale,
+} from './drawings/projection';
+import type { DrawingAnchor } from './drawings/types';
+import type { Hit } from './drawings/hitTest';
+import DrawingStylePopup from './drawings/DrawingStylePopup';
+import {
   createChartScaleApi,
   ChartScaleProvider,
   ChartOverlayProvider,
@@ -159,6 +180,16 @@ type Props = {
   // supplied (no callback ⇒ no way to persist edits).
   appearance?: AppearanceOverrides;
   onAppearanceChange?: (next: AppearanceOverrides) => void;
+  // User drawing tools (controlled, same contract as `indicators`). `drawings`
+  // is the persisted shape array the host owns; `onDrawingsChange` fires ONCE per
+  // placement / edit-commit / delete (never per drag frame). `activeDrawingTool`
+  // is host-held ephemeral state (default 'cursor') passed to BOTH Chart and
+  // ChartControls — exactly like `patternsEnabled`. The style popup only mounts
+  // when `onDrawingsChange` is supplied (no callback ⇒ no way to persist edits).
+  drawings?: DrawingShape[];
+  onDrawingsChange?: (next: DrawingShape[]) => void;
+  activeDrawingTool?: DrawingTool;
+  onActiveDrawingToolChange?: (t: DrawingTool) => void;
   // App overlay plugins; they portal D3 overlays into the published hosts.
   children?: React.ReactNode;
 };
@@ -171,6 +202,70 @@ type Sel<E extends d3.BaseType = d3.BaseType> = d3.Selection<
   null,
   undefined
 >;
+
+// Replace one endpoint (handle drag) — pure. Index 0 → `a`, 1 → `b`; single-
+// anchor shapes ignore the index. hline/vline carry the relevant scalar only.
+function setDrawingEndpoint(
+  origin: DrawingShape,
+  index: number,
+  anchor: DrawingAnchor,
+): DrawingShape {
+  switch (origin.type) {
+    case 'trendline':
+    case 'ray':
+    case 'ruler':
+      return index === 0 ? { ...origin, a: anchor } : { ...origin, b: anchor };
+    case 'hray':
+    case 'text':
+      return { ...origin, a: anchor };
+    case 'hline':
+      return { ...origin, price: anchor.price };
+    case 'vline':
+      return { ...origin, date: anchor.date };
+    default:
+      return origin;
+  }
+}
+
+// Shift one anchor by a pixel delta (translate-invariant: viewport delta equals
+// local-space delta). Project → add delta → invert back to {date, price}.
+function shiftDrawingAnchor(
+  a: DrawingAnchor,
+  dxPx: number,
+  dyPx: number,
+  s: ProjScale,
+): DrawingAnchor {
+  const p = projectAnchor(a, s);
+  return { date: dateForX(p.x + dxPx, s), price: priceForY(p.y + dyPx, s) };
+}
+
+// Whole-shape move (body drag) — pure.
+function shiftDrawing(
+  origin: DrawingShape,
+  dxPx: number,
+  dyPx: number,
+  s: ProjScale,
+): DrawingShape {
+  switch (origin.type) {
+    case 'trendline':
+    case 'ray':
+    case 'ruler':
+      return {
+        ...origin,
+        a: shiftDrawingAnchor(origin.a, dxPx, dyPx, s),
+        b: shiftDrawingAnchor(origin.b, dxPx, dyPx, s),
+      };
+    case 'hray':
+    case 'text':
+      return { ...origin, a: shiftDrawingAnchor(origin.a, dxPx, dyPx, s) };
+    case 'hline':
+      return { ...origin, price: priceForY(yForPrice(origin.price, s) + dyPx, s) };
+    case 'vline':
+      return { ...origin, date: dateForX(xForDate(origin.date, s) + dxPx, s) };
+    default:
+      return origin;
+  }
+}
 
 const Chart = ({
   data,
@@ -205,6 +300,10 @@ const Chart = ({
   statsSize = 'small',
   appearance,
   onAppearanceChange,
+  drawings,
+  onDrawingsChange,
+  activeDrawingTool = 'cursor',
+  onActiveDrawingToolChange,
   children,
 }: Props) => {
   const wrapperRef = useRef<HTMLDivElement | null>(null);
@@ -695,6 +794,292 @@ const Chart = ({
   const patternOverlayContainerRef = useRef<SVGGElement | null>(null);
   const patternOverlayHandleRef = useRef<ChartPatternOverlayHandle | null>(null);
 
+  // Drawing-tools overlay — interactive, persisted. Single persistent handle
+  // driven from the same pan/rescale sites as the pattern overlay. Interaction
+  // refs are read live by the imperative pointer handlers so they never rebind.
+  const drawingOverlayContainerRef = useRef<SVGGElement | null>(null);
+  const drawingOverlayHandleRef = useRef<ChartDrawingOverlayHandle | null>(null);
+  const activeToolRef = useRef<DrawingTool>(activeDrawingTool);
+  useEffect(() => {
+    activeToolRef.current = activeDrawingTool;
+  }, [activeDrawingTool]);
+  const draftRef = useRef<DraftState>({ phase: 'idle' });
+  const draftPointerRef = useRef<DrawingAnchor | null>(null);
+  const selectedIdRef = useRef<string | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const selectDrawing = useCallback((id: string | null) => {
+    selectedIdRef.current = id;
+    setSelectedId(id);
+  }, []);
+  // Working copy held during a drag (mutated per frame for instant feedback);
+  // null when idle. `onDrawingsChange` fires only on mouseup (one commit/gesture).
+  const workingDrawingsRef = useRef<DrawingShape[] | null>(null);
+  // In-flight drag bookkeeping (start pointer + the grabbed shape).
+  const drawingDragRef = useRef<{
+    id: string;
+    grab: Hit;
+    startMx: number;
+    startMy: number;
+    origin: DrawingShape;
+  } | null>(null);
+  const onDrawingsChangeRef = useRef(onDrawingsChange);
+  useEffect(() => {
+    onDrawingsChangeRef.current = onDrawingsChange;
+  }, [onDrawingsChange]);
+  const onActiveDrawingToolChangeRef = useRef(onActiveDrawingToolChange);
+  useEffect(() => {
+    onActiveDrawingToolChangeRef.current = onActiveDrawingToolChange;
+  }, [onActiveDrawingToolChange]);
+
+  const effectiveDrawings = useMemo<DrawingShape[]>(
+    () =>
+      (drawings ?? [])
+        .map(normalizeDrawing)
+        .filter((d): d is DrawingShape => d !== null),
+    [drawings],
+  );
+  // Live mirror so the document-level pointer handlers read the latest set
+  // without rebinding (their effects keep narrow deps).
+  const effectiveDrawingsRef = useRef(effectiveDrawings);
+  effectiveDrawingsRef.current = effectiveDrawings;
+
+  // ProjScale snapshot from the live scale api (read on every pointer event).
+  const buildProjScale = useCallback(
+    (): ProjScale => ({
+      xScale: scaleApi.xScale,
+      yPrice: scaleApi.yPrice,
+      step: scaleApi.step,
+      bandwidth: scaleApi.bandwidth,
+      dataLength: scaleApi.data.length,
+      width: scaleApi.width,
+      priceHeight: scaleApi.priceHeight,
+      data: scaleApi.data,
+    }),
+    [scaleApi],
+  );
+
+  // Map a viewport pointer (chart-inner space) to a {date, price} anchor. x is
+  // detranslated by the pan offset (overlay shapes live in pre-translate local
+  // space); y is not panned.
+  const pointerToAnchor = useCallback(
+    (mx: number, my: number): DrawingAnchor => {
+      const s = buildProjScale();
+      return {
+        date: dateForX(mx - scaleApi.baseTranslateX, s),
+        price: priceForY(my, s),
+      };
+    },
+    [buildProjScale, scaleApi],
+  );
+
+  // Stable imperative re-render of the drawing overlay from the live refs. Used
+  // by both the React drawings-update effect and the document pointer handlers.
+  const renderDrawings = useCallback(() => {
+    const handle = drawingOverlayHandleRef.current;
+    if (!handle || scaleApi.data.length === 0) return;
+    handle.update({
+      drawings: workingDrawingsRef.current ?? effectiveDrawingsRef.current,
+      draft: draftRef.current,
+      draftPointer: draftPointerRef.current,
+      selectedId: selectedIdRef.current,
+      xScale: scaleApi.xScale,
+      yPrice: scaleApi.yPrice,
+      step: scaleApi.step,
+      bandwidth: scaleApi.bandwidth,
+      dataLength: scaleApi.data.length,
+      width: scaleApi.width,
+      priceHeight: scaleApi.priceHeight,
+      data: scaleApi.data,
+      baseTranslateX: scaleApi.baseTranslateX,
+      marginTop: MARGIN.top,
+      resolveColor: (v) => colorResolverRef.current?.resolve(v) ?? '#888888',
+    });
+  }, [scaleApi]);
+
+  // Persist a placed/edited shape (replace-by-id, else append).
+  const commitDrawing = useCallback((shape: DrawingShape) => {
+    const list = effectiveDrawingsRef.current;
+    const i = list.findIndex((s) => s.id === shape.id);
+    const next = i === -1 ? [...list, shape] : list.map((s) => (s.id === shape.id ? shape : s));
+    onDrawingsChangeRef.current?.(next);
+  }, []);
+
+  const makeDrawingId = () =>
+    typeof crypto !== 'undefined' && crypto.randomUUID
+      ? crypto.randomUUID()
+      : `d-${Date.now()}-${Math.round(Math.random() * 1e9)}`;
+
+  // Tool active: place an anchor. 1-click tools commit immediately; 2-click tools
+  // enter a placing draft (rubber-band preview) until the second click. On commit
+  // the tool snaps back to 'cursor' and the new shape is selected.
+  const placeAnchorAt = useCallback(
+    (mx: number, my: number) => {
+      const anchor = pointerToAnchor(mx, my);
+      const res = reduceDrawing(
+        draftRef.current,
+        { type: 'down', anchor },
+        { tool: activeToolRef.current, makeId: makeDrawingId },
+      );
+      draftRef.current = res.draft;
+      if (res.selectId !== undefined) selectDrawing(res.selectId);
+      if (res.commit) {
+        draftPointerRef.current = null;
+        commitDrawing(res.commit);
+        if (activeToolRef.current !== 'cursor') {
+          activeToolRef.current = 'cursor';
+          onActiveDrawingToolChangeRef.current?.('cursor');
+        }
+      }
+      renderDrawings();
+    },
+    [pointerToAnchor, selectDrawing, commitDrawing, renderDrawings],
+  );
+
+  // Cursor mode + hit: select + start a drag (whole-shape or endpoint).
+  const beginDragAt = useCallback(
+    (target: { id: string; hit: Hit }, mx: number, my: number) => {
+      const shape = effectiveDrawingsRef.current.find((s) => s.id === target.id);
+      if (!shape) return;
+      const anchor = pointerToAnchor(mx, my);
+      const res = reduceDrawing(
+        draftRef.current,
+        { type: 'down', anchor, target: { id: target.id, hit: target.hit, shape } },
+        { tool: 'cursor', makeId: makeDrawingId },
+      );
+      draftRef.current = res.draft;
+      if (res.selectId !== undefined) selectDrawing(res.selectId);
+      if (res.draft.phase === 'dragging' && shape.locked !== true) {
+        drawingDragRef.current = {
+          id: shape.id,
+          grab: res.draft.grab,
+          startMx: mx,
+          startMy: my,
+          origin: shape,
+        };
+        workingDrawingsRef.current = effectiveDrawingsRef.current.slice();
+        if (wrapperRef.current) wrapperRef.current.style.cursor = 'grabbing';
+      }
+      renderDrawings();
+    },
+    [pointerToAnchor, selectDrawing, renderDrawings],
+  );
+
+  const selectedShape = useMemo<DrawingShape | null>(
+    () =>
+      selectedId
+        ? effectiveDrawings.find((s) => s.id === selectedId) ?? null
+        : null,
+    [selectedId, effectiveDrawings],
+  );
+
+  // Drawing selection clears via the existing background-pointerdown fan-out
+  // (only the pure-miss path runs it), matching overlay-plugin deselect.
+  useEffect(() => {
+    const cb = () => selectDrawing(null);
+    const subs = bgPointerDownSubsRef.current;
+    subs.add(cb);
+    return () => {
+      subs.delete(cb);
+    };
+  }, [selectDrawing]);
+
+  // Keyboard: Escape cancels an in-flight draft/drag; Delete/Backspace removes
+  // the selected drawing (ignored while typing in a field).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        if (
+          draftRef.current.phase !== 'idle' ||
+          drawingDragRef.current ||
+          draftPointerRef.current
+        ) {
+          const res = reduceDrawing(
+            draftRef.current,
+            { type: 'escape' },
+            { tool: activeToolRef.current, makeId: makeDrawingId },
+          );
+          draftRef.current = res.draft;
+          draftPointerRef.current = null;
+          drawingDragRef.current = null;
+          workingDrawingsRef.current = null;
+          renderDrawings();
+        }
+        return;
+      }
+      if ((e.key === 'Delete' || e.key === 'Backspace') && selectedIdRef.current) {
+        const t = e.target as HTMLElement | null;
+        if (
+          t &&
+          (t.tagName === 'INPUT' ||
+            t.tagName === 'TEXTAREA' ||
+            t.isContentEditable)
+        )
+          return;
+        const id = selectedIdRef.current;
+        onDrawingsChangeRef.current?.(
+          effectiveDrawingsRef.current.filter((s) => s.id !== id),
+        );
+        selectDrawing(null);
+      }
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [selectDrawing, renderDrawings]);
+
+  // Document-level drag/placing follow-through (mirrors the pan drag effect). A
+  // grabbed shape mutates a LOCAL working copy per frame (no persist); a placing
+  // draft tracks the live pointer for the rubber-band preview; mouseup commits a
+  // drag once via `onDrawingsChange`.
+  useEffect(() => {
+    const onMove = (e: MouseEvent) => {
+      const root = rootGRef.current;
+      if (!root) return;
+      const drag = drawingDragRef.current;
+      if (drag) {
+        const [mx, my] = d3.pointer(e, root.node());
+        const s = buildProjScale();
+        const moved =
+          drag.grab && drag.grab.kind === 'handle'
+            ? setDrawingEndpoint(drag.origin, drag.grab.index, pointerToAnchor(mx, my))
+            : shiftDrawing(drag.origin, mx - drag.startMx, my - drag.startMy, s);
+        workingDrawingsRef.current = effectiveDrawingsRef.current.map((sh) =>
+          sh.id === drag.id ? moved : sh,
+        );
+        renderDrawings();
+        return;
+      }
+      if (draftRef.current.phase === 'placing') {
+        const [mx, my] = d3.pointer(e, root.node());
+        draftPointerRef.current = pointerToAnchor(mx, my);
+        renderDrawings();
+      }
+    };
+    const onUp = () => {
+      const drag = drawingDragRef.current;
+      if (!drag) return;
+      drawingDragRef.current = null;
+      const moved =
+        workingDrawingsRef.current?.find((s) => s.id === drag.id) ?? null;
+      const res = reduceDrawing(
+        draftRef.current,
+        { type: 'up', working: moved },
+        { tool: 'cursor', makeId: makeDrawingId },
+      );
+      draftRef.current = res.draft;
+      workingDrawingsRef.current = null;
+      // Drop the grabbing cursor; the next hover move restores grab/default.
+      if (wrapperRef.current) wrapperRef.current.style.cursor = '';
+      if (res.commit) commitDrawing(res.commit);
+      renderDrawings();
+    };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+    return () => {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+    };
+  }, [buildProjScale, pointerToAnchor, renderDrawings, commitDrawing]);
+
   // Reactive overlay hosts published to app plugins (Fix #1). Set after Effect
   // 1 mounts the host <g>s, cleared on unmount.
   const [tradeHost, setTradeHost] = useState<SVGGElement | null>(null);
@@ -710,6 +1095,9 @@ const Chart = ({
     max: number;
   } | null>(null);
 
+  // TODO(drawings v1): drawings are annotations, not data, so they do NOT
+  // contribute to the auto-fit y-domain. If a future version wants "fit to
+  // drawings", funnel their projected price extents through this same reporter.
   const reportOverlayPriceBounds = useCallback(
     (layer: ChartOverlayLayer, bounds: { min: number; max: number } | null) => {
       const setter = layer === 'trade' ? setTradeBounds : setTriggerBounds;
@@ -969,6 +1357,7 @@ const Chart = ({
         scaleApi.baseTranslateX = s.baseTx;
         notifyScale('pan');
         patternOverlayHandleRef.current?.setTransform(s.baseTx);
+        drawingOverlayHandleRef.current?.setTransform(s.baseTx);
         redrawSeries();
       }
     };
@@ -994,6 +1383,7 @@ const Chart = ({
           scaleApi.baseTranslateX = tx;
           notifyScale('pan');
           patternOverlayHandleRef.current?.setTransform(tx);
+          drawingOverlayHandleRef.current?.setTransform(tx);
           redrawSeries();
         });
       }
@@ -1190,6 +1580,18 @@ const Chart = ({
       .style('cursor', 'ns-resize')
       .style('pointer-events', 'all') as Sel<SVGRectElement>;
 
+    // Drawing-tools overlay container — appended ABOVE candles/crosshair (after
+    // the y-axis hit rect) but BELOW the trade/trigger hosts. NOT the pattern
+    // container (which paints beneath candles). Shapes are pointer-events: none,
+    // so the overlayRect keeps the mousedown; hit-testing is manual.
+    drawingOverlayContainerRef.current = g
+      .append('g')
+      .attr('class', 'chart-drawing-overlays-container')
+      .node();
+    drawingOverlayHandleRef.current = mountChartDrawingOverlay(
+      drawingOverlayContainerRef.current!,
+    );
+
     // Overlay hosts: created here in their exact z-order slots (trigger beneath
     // trade) and published reactively so app plugins can mount into them.
     const triggerHostNode = g
@@ -1236,6 +1638,9 @@ const Chart = ({
       patternOverlayHandleRef.current?.destroy();
       patternOverlayHandleRef.current = null;
       patternOverlayContainerRef.current = null;
+      drawingOverlayHandleRef.current?.destroy();
+      drawingOverlayHandleRef.current = null;
+      drawingOverlayContainerRef.current = null;
     };
   }, []);
 
@@ -1631,6 +2036,19 @@ const Chart = ({
       dataLength: data.length,
     });
 
+    // Drawing overlay rides the same rescale (full re-project of every shape).
+    drawingOverlayHandleRef.current?.updateScales({
+      xScale,
+      yPrice,
+      step,
+      bandwidth,
+      dataLength: data.length,
+      width,
+      priceHeight,
+      data,
+      baseTranslateX,
+    });
+
     // Cache the draw-state for the canvas series + paint it now (covers data /
     // layout / y-scale / indicator / chartType changes — the pan path reuses
     // this with only a fresh baseTranslateX).
@@ -1705,6 +2123,7 @@ const Chart = ({
     scaleApi.baseTranslateX = baseTranslateX;
     notifyScale('pan');
     patternOverlayHandleRef.current?.setTransform(baseTranslateX);
+    drawingOverlayHandleRef.current?.setTransform(baseTranslateX);
     redrawSeries();
   }, [
     panOffset,
@@ -1750,6 +2169,14 @@ const Chart = ({
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [effectivePatterns, layout, scaleApi, appPatternsKey, colorEpoch]);
+
+  // Drawing overlay: re-render on the persisted set / selection / layout / color
+  // changes. In-flight draft + drag previews are pushed imperatively by the
+  // pointer handlers (which read refs), so they aren't deps here.
+  useEffect(() => {
+    renderDrawings();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [effectiveDrawings, selectedId, layout, scaleApi, colorEpoch, renderDrawings]);
 
   // Re-apply crosshair styling (stroke / opacity / dash) from `app.crosshair`
   // whenever it changes. The crosshair lines are created once in Effect 1; SVG
@@ -1980,10 +2407,28 @@ const Chart = ({
 
     overlay.on('mousedown', function (event: MouseEvent) {
       event.preventDefault();
-      // Bare-chart click deselects any active overlay selection (plugins
-      // subscribe to this signal).
-      for (const cb of bgPointerDownSubsRef.current) cb();
       if (scaleApi.data.length === 0) return;
+      const root = rootGRef.current;
+      const [mx, my] = root ? d3.pointer(event, root.node()) : [0, 0];
+
+      // 1) A drawing tool is active → place an anchor; never pans, never
+      //    deselects.
+      if (activeToolRef.current !== 'cursor') {
+        placeAnchorAt(mx, my);
+        return;
+      }
+
+      // 2) Cursor mode and the pointer hit a drawing → select / start a drag;
+      //    never pans, never deselects.
+      const target = drawingOverlayHandleRef.current?.hitTest(mx, my) ?? null;
+      if (target) {
+        beginDragAt(target, mx, my);
+        return;
+      }
+
+      // 3) Pure miss in cursor mode → existing behaviour: bare-chart click
+      //    deselects overlays + drawings (subscribers), then inits the pan drag.
+      for (const cb of bgPointerDownSubsRef.current) cb();
       dragStateRef.current = {
         active: true,
         startX: event.clientX,
@@ -2013,9 +2458,26 @@ const Chart = ({
     svgSel
       .on('mousemove.crosshair', function (event: MouseEvent) {
         if (dragStateRef.current.active) return;
+        const wrapper = wrapperRef.current;
+        // A shape is being dragged → keep the grabbing cursor, skip the crosshair.
+        // Checked FIRST: a drag's draft phase is 'dragging' (not 'idle'), so the
+        // tool/placement guard below would otherwise stomp the grabbing cursor.
+        if (drawingDragRef.current) return;
+        // Drawing tool active or a placement in flight → crosshair cursor and no
+        // chart crosshair lines (the drawing layer owns the gesture).
+        if (activeToolRef.current !== 'cursor' || draftRef.current.phase !== 'idle') {
+          if (wrapper) wrapper.style.cursor = 'crosshair';
+          return;
+        }
         const root = rootGRef.current;
         if (!root) return;
         const [mx, my] = d3.pointer(event, root.node());
+        // Hover affordance: an open-hand cursor over a drawing (it is draggable in
+        // cursor mode); otherwise restore the default chart cursor.
+        if (wrapper) {
+          const overDrawing = drawingOverlayHandleRef.current?.hitTest(mx, my);
+          wrapper.style.cursor = overDrawing ? 'grab' : '';
+        }
         crosshairLastPosRef.current = { mx, my };
         if (crosshairRafRef.current == null) {
           crosshairRafRef.current = requestAnimationFrame(updateCrosshair);
@@ -2023,6 +2485,9 @@ const Chart = ({
       })
       .on('mouseleave.crosshair', function (event: MouseEvent) {
         if (dragStateRef.current.active) return;
+        // Drop any hover (open-hand) cursor when the pointer leaves the chart.
+        if (!drawingDragRef.current && wrapperRef.current)
+          wrapperRef.current.style.cursor = '';
         if (crosshairRafRef.current != null) {
           cancelAnimationFrame(crosshairRafRef.current);
           crosshairRafRef.current = null;
@@ -2058,7 +2523,7 @@ const Chart = ({
         crosshairRafRef.current = null;
       }
     };
-  }, [scaleApi]);
+  }, [scaleApi, placeAnchorAt, beginDragAt]);
 
   if (!data || data.length === 0) {
     return (
@@ -2215,6 +2680,25 @@ const Chart = ({
                 />
               )}
             </>
+          )}
+          {/* Per-drawing style popup — pinned to the wrapper's bottom-left corner
+              (v1 fixed-corner placement). Only when the host can persist edits. */}
+          {onDrawingsChange && selectedShape && (
+            <DrawingStylePopup
+              shape={selectedShape}
+              onChange={(next) => commitDrawing(next)}
+              onDelete={() => {
+                onDrawingsChange(
+                  effectiveDrawings.filter((s) => s.id !== selectedShape.id),
+                );
+                selectDrawing(null);
+              }}
+              resolveColor={(v) =>
+                colorResolverRef.current?.resolve(v) ?? '#888888'
+              }
+              onClose={() => selectDrawing(null)}
+              style={{ left: 8, bottom: MARGIN.bottom + 8 }}
+            />
           )}
           {children}
         </div>

@@ -51,6 +51,10 @@ Public barrel — the only import surface for consumers (never deep-import). Re-
   `TrangeSettings`, plus `RsSettings`, `Stage2Settings`,
   `QuarterlyResultsSettings`).
 - `Chart` (default), `ChartControls` (default), `ZoomSlider` (default).
+- From `drawings/types`: `DrawingShape`, `DrawingType`, `DrawingTool`,
+  `DrawingAnchor`, `DrawingStyle`, the per-type drawing types, `normalizeDrawing`;
+  from `drawings/defaults`: `DRAWING_DEFAULTS`, `effectiveDrawingStyle`. (The mount
+  handle + renderers stay internal, like the pattern overlay.)
 - From `context`: `useChartScale`, `useChartOverlayHost`, `useChartGeometry`,
   `useReportOverlayPriceBounds`, `useBackgroundPointerDown`, type `ChartOverlayLayer`.
 
@@ -455,6 +459,73 @@ Record<string, unknown>}`. Structural mirror of the app's API marker shape.
   outlined inside-bar box; label `Inside day`.
 - `pullbackToEma.ts` `renderPullbackToEma(...)` — dot at `(event_date, ema_value)` +
   short tick; label `Pullback to {ema_level}`.
+
+---
+
+## Drawing tools
+
+Interactive, persisted annotations. Pure math + a D3 mount handle (mirrors the
+pattern overlay), driven by `Chart` from the same pan/rescale sites. Controlled
+via the `drawings`/`onDrawingsChange` + `activeDrawingTool`/`onActiveDrawingToolChange`
+Chart props. All shapes are `pointer-events:none`; hit detection is manual.
+
+### `src/drawings/types.ts`
+
+- `DrawingAnchor` = `{date, price}` (date-anchored, survives warmup/reslice).
+- `DrawingShape` = discriminated union on `type`: `trendline`/`ray`/`ruler` (`{a,b}`),
+  `hline` (`{price}`), `vline` (`{date}`), `hray`/`text` (`{a}`). `DrawingBase` adds
+  `id`, `locked?`, `style?: DrawingStyle`, `v?` (version tag).
+- `DrawingType` / `DrawingTool` (= `DrawingType | 'cursor'`).
+- `normalizeDrawing(raw) → DrawingShape | null` — read-tolerance: validates anchors,
+  drops malformed payloads, ROUND-TRIPS unknown `type`s (forward-compat).
+
+### `src/drawings/defaults.ts`
+
+- `DRAWING_DEFAULTS` + `effectiveDrawingStyle(style?)` — pure sparse merge over the
+  `--chart-drawing*` token colors. Defaults live here, NOT in `ChartAppearance`.
+
+### `src/drawings/projection.ts`
+
+- `ProjScale` snapshot; `xForDate`/`yForPrice` (out-of-range x clamps to the nearest
+  end bar, never NaN), `dateForX` (snaps clicks into the in-data range)/`priceForY`,
+  `projectAnchor`, `extendRay` (clips a forward ray to the price-pane box).
+
+### `src/drawings/hitTest.ts`
+
+- `HANDLE_RADIUS`/`HIT_TOLERANCE`; `Hit` = `{kind:'handle',index}|{kind:'body'}|null`.
+  `distToSegment`, `hitSegment` (two-endpoint), `hitAnchoredSegment` (hray),
+  `hitHLine`/`hitVLine`/`hitTextBox`. Pure, on already-projected pixels.
+
+### `src/drawings/rulerStats.ts`
+
+- `computeRulerStats(a,b,data) → {bars, priceDelta, pricePct, startDate, endDate,
+  direction}` — order-independent bars, signed delta/%.
+
+### `src/drawings/interaction.ts`
+
+- `DraftState` (`idle`/`placing`/`dragging`); `reduceDrawing(state, ev, ctx) →
+  {draft, commit?, selectId?, consumedPointer}` — the clicks-per-tool +
+  pan-suppression state machine. `clicksFor`/`buildDrawing` helpers. The drag MOVE
+  math lives in `Chart` (needs live scale); this owns place/start/commit/escape.
+
+### `src/drawings/mountChartDrawingOverlay.ts`
+
+- `mountChartDrawingOverlay(parent) → ChartDrawingOverlayHandle`
+  (`update`/`updateScales`/`setTransform`/`setPointer`/`hitTest`/`destroy`). Three
+  layers: clipped+panned (bodies), un-panned (`hline`), unclipped+panned (handles/
+  chips/text). Per-frame wipe-and-rebuild; caches hit closures for `hitTest`.
+
+### `src/drawings/renderers/{index,_shared,trendline,ray,hline,vline,hray,ruler,text}.ts`
+
+- `drawDrawing(shape, layers, ctx) → DrawnHit` dispatch; each renderer draws into
+  the right layer and returns a `(mx,my,tx)` hit closure. `_shared` has
+  `dashArray`/`applyLine`/`drawHandle`. Unknown types draw nothing.
+
+### `src/drawings/DrawingStylePopup.tsx`
+
+- Per-drawing style popup (reuses `SettingsFields`); carries `data-chart-wheel-scroll`.
+  Edits route through `onChange` (replace-by-id). `src/drawings/drawings.module.css`
+  = popup chrome.
 
 ---
 
