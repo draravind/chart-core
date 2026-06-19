@@ -25,6 +25,7 @@ import type { AppearanceOverrides } from './appearance/types';
 import { effectiveAppearance } from './appearance/registry';
 import IndicatorLegend from './controls/IndicatorLegend';
 import SettingsDialog from './controls/SettingsDialog';
+import AutoFitMenu from './controls/AutoFitMenu';
 import StatsPanel from './stats/StatsPanel';
 import { computeStats } from './stats/computeStats';
 import type {
@@ -147,6 +148,11 @@ type Props = {
   onIndicatorsChange: (indicators: IndicatorConfig[]) => void;
   autoFitMode: AutoFitMode;
   onAutoFitModeChange: (m: AutoFitMode) => void;
+  // Group keys excluded from the "price + overlays" auto-fit. Vocabulary:
+  // 'trade' / 'trigger' for the overlay sketches, or an indicator's defKey
+  // (e.g. 'ti:ema') for that whole indicator kind. Default [] = include all.
+  autoFitExcluded: string[];
+  onAutoFitExcludedChange: (next: string[]) => void;
   infoBarExpanded: boolean;
   onInfoBarExpandedChange: (v: boolean | ((prev: boolean) => boolean)) => void;
   symbol: string | null;
@@ -284,6 +290,8 @@ const Chart = ({
   onIndicatorsChange,
   autoFitMode,
   onAutoFitModeChange,
+  autoFitExcluded,
+  onAutoFitExcludedChange,
   infoBarExpanded,
   onInfoBarExpandedChange,
   symbol,
@@ -703,7 +711,10 @@ const Chart = ({
   // not cause the button to flicker out.
   const [yAxisHovered, setYAxisHovered] = useState(false);
   const [autoFitHovered, setAutoFitHovered] = useState(false);
-  const showAutoFitBtn = yAxisHovered || autoFitHovered;
+  // Right-click checklist popover for choosing which groups feed the
+  // price+overlays auto-fit. Keeps the button mounted while open.
+  const [autoFitMenuOpen, setAutoFitMenuOpen] = useState(false);
+  const showAutoFitBtn = yAxisHovered || autoFitHovered || autoFitMenuOpen;
   const dragStateRef = useRef<{
     active: boolean;
     startX: number;
@@ -1119,17 +1130,36 @@ const Chart = ({
   const overlayPriceBounds = useMemo<{ min: number; max: number } | null>(() => {
     const mins: number[] = [];
     const maxs: number[] = [];
-    if (tradeBounds) {
+    if (tradeBounds && !autoFitExcluded.includes('trade')) {
       mins.push(tradeBounds.min);
       maxs.push(tradeBounds.max);
     }
-    if (triggerBounds) {
+    if (triggerBounds && !autoFitExcluded.includes('trigger')) {
       mins.push(triggerBounds.min);
       maxs.push(triggerBounds.max);
     }
     if (mins.length === 0) return null;
     return { min: Math.min(...mins), max: Math.max(...maxs) };
-  }, [tradeBounds, triggerBounds]);
+  }, [tradeBounds, triggerBounds, autoFitExcluded]);
+
+  // Rows the auto-fit exclusion popover offers — derived from what actually
+  // contributes to the price+overlays fit right now: one entry per distinct
+  // price-pane indicator kind, plus trade/trigger overlays when present.
+  const autoFitContributors = useMemo<{ key: string; label: string }[]>(() => {
+    const rows: { key: string; label: string }[] = [];
+    const seen = new Set<string>();
+    for (const { config } of resolvedIndicators) {
+      const def = getIndicator(config.defKey);
+      if (!def || typeof def.pane === 'object') continue;
+      if (seen.has(config.defKey)) continue;
+      seen.add(config.defKey);
+      rows.push({ key: config.defKey, label: def.longLabel ?? def.label });
+    }
+    if (tradeBounds != null) rows.push({ key: 'trade', label: 'Trade overlays' });
+    if (triggerBounds != null)
+      rows.push({ key: 'trigger', label: 'Trigger overlays' });
+    return rows;
+  }, [resolvedIndicators, tradeBounds, triggerBounds]);
 
   // Bare-chart-background mousedown subscribers (plugins clear their selection).
   const bgPointerDownSubsRef = useRef<Set<() => void>>(new Set());
@@ -1189,7 +1219,9 @@ const Chart = ({
     if (pricePaneHeight == null) return;
     const root = document.documentElement;
     root.style.setProperty('--chart-price-height', `${pricePaneHeight}px`);
-    return () => root.style.removeProperty('--chart-price-height');
+    return () => {
+      root.style.removeProperty('--chart-price-height');
+    };
   }, [pricePaneHeight]);
 
   // Color injection + resolver. Injects `app.colors` as inline `--<key>` custom
@@ -1807,6 +1839,8 @@ const Chart = ({
       for (const { config, series } of resolvedIndicators) {
         const def = getIndicator(config.defKey);
         if (!def || typeof def.pane === 'object') continue;
+        // User excluded this indicator kind from the price+overlays fit.
+        if (autoFitExcluded.includes(config.defKey)) continue;
         // Only the def's `autofitKeys` series drive the price domain (replaces
         // the old implicit `width !== 0` set). Stage 2 returns [] — its 1/NaN
         // band flag never collapses the log price domain. A def without
@@ -2093,6 +2127,7 @@ const Chart = ({
     data,
     cappedVisibleBars,
     autoFitMode,
+    autoFitExcluded,
     overlayPriceBounds,
     containerWidth,
     redrawSeries,
@@ -2631,7 +2666,14 @@ const Chart = ({
                     ? 'Auto-fit: price + overlays (click for price-only)'
                     : 'Auto-fit: price-only (click to include overlays)'
               }
+              // stopPropagation mirrors the gear button so the menu's
+              // click-outside listener doesn't fire on the button itself,
+              // letting onContextMenu toggle the menu cleanly.
+              onMouseDown={(e) => e.stopPropagation()}
               onClick={() => {
+                // A left-click changes mode/zoom, making the exclusion menu
+                // stale — close it so it doesn't linger or pin the button.
+                setAutoFitMenuOpen(false);
                 if (priceZoom !== 1) {
                   setPriceZoom(1);
                   return;
@@ -2639,6 +2681,12 @@ const Chart = ({
                 onAutoFitModeChange(
                   autoFitMode === 'priceAndOverlays' ? 'price' : 'priceAndOverlays',
                 );
+              }}
+              onContextMenu={(e) => {
+                e.preventDefault();
+                // Menu only meaningful in price+overlays mode with auto-fit active.
+                if (autoFitMode === 'priceAndOverlays' && priceZoom === 1)
+                  setAutoFitMenuOpen((o) => !o);
               }}
               onMouseEnter={() => setAutoFitHovered(true)}
               onMouseLeave={() => setAutoFitHovered(false)}
@@ -2653,6 +2701,21 @@ const Chart = ({
             >
               A
             </button>
+          )}
+          {autoFitMenuOpen &&
+            autoFitMode === 'priceAndOverlays' &&
+            priceZoom === 1 && (
+            <AutoFitMenu
+              contributors={autoFitContributors}
+              excluded={autoFitExcluded}
+              onExcludedChange={onAutoFitExcludedChange}
+              onClose={() => setAutoFitMenuOpen(false)}
+              style={{
+                top: priceBottomPx - 30,
+                right: MARGIN.right - 26,
+                transform: 'translateY(-100%)',
+              }}
+            />
           )}
           {/* Appearance gear — TradingView-faithful bottom-right axis-intersection
               corner (price gutter × date row). Only when the host can persist. */}

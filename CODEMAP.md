@@ -183,6 +183,17 @@ Scoped styles for the chart shell: `.chartWrapper`/`.chartWrapperBare`,
   yields the wheel instead of zooming the chart (same contract on
   `IndicatorLegend`'s param popover root).
 
+### `src/controls/AutoFitMenu.tsx`
+
+- `default AutoFitMenu` (React.FC) — right-click checklist for the "A" auto-fit
+  button; picks which contributor groups feed the price+overlays fit. Props:
+  `contributors: {key,label}[]`, `excluded: string[]`, `onExcludedChange`,
+  `onClose`, `style?`. Checked = included; toggling a row adds/removes its group
+  key from the persisted `excluded` set (`'trade'`/`'trigger'`/an indicator
+  `defKey`). Mirrors `SettingsDialog`'s click-outside (`mousedown`) + Escape close
+  handling. Mounted inside `Chart` next to the "A" button; opened via the button's
+  `onContextMenu` (only in `priceAndOverlays` mode with `priceZoom === 1`).
+
 ---
 
 ## Appearance
