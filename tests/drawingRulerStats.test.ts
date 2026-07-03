@@ -69,12 +69,23 @@ describe('computeRulerStats', () => {
     expect(Number.isFinite(r.pricePct)).toBe(true);
   });
 
-  it('returns zero bars when a date is out of range', () => {
+  it('returns zero bars when a date is before the first bar', () => {
     const r = computeRulerStats(
       { date: '1999-01-01', price: 100 },
       { date: data[3].date, price: 110 },
       data,
     );
     expect(r.bars).toBe(0);
+  });
+
+  it('measures a meaningful span to an endpoint past the last bar', () => {
+    // Last bar is 2024-02-12 (index 11); 2024-02-15 is 3 median-steps past it
+    // (effective index 14). From index 9 → 14 that is 5 bars.
+    const r = computeRulerStats(
+      { date: data[9].date, price: 100 },
+      { date: '2024-02-15', price: 110 },
+      data,
+    );
+    expect(r.bars).toBe(5);
   });
 });

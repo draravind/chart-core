@@ -1,6 +1,21 @@
 import type { Candle } from '../types';
-import { barIndexForDate } from '../utils/dateBarIndex';
+import { barIndexForDate, extraBarsForFutureDate } from '../utils/dateBarIndex';
 import type { DrawingAnchor } from './types';
+
+// Bar index of an anchor, extended past the last candle so a ruler dragged into
+// future space still measures a meaningful span. Null only when the anchor sits
+// before the first bar (left-clamp region), matching the pre-future behavior.
+function effectiveBarIndex(
+  data: readonly Candle[],
+  date: string,
+): number | null {
+  const idx = barIndexForDate(data, date);
+  if (idx != null) return idx;
+  if (data.length > 0 && date > data[data.length - 1].date) {
+    return data.length - 1 + extraBarsForFutureDate(data, date);
+  }
+  return null;
+}
 
 // PURE ruler measurement between two anchors. `bars` counts trading-bar span
 // (order-independent); `priceDelta`/`pricePct` are signed from `a` to `b`.
@@ -18,8 +33,8 @@ export function computeRulerStats(
   b: DrawingAnchor,
   data: readonly Candle[],
 ): RulerStats {
-  const ia = barIndexForDate(data, a.date);
-  const ib = barIndexForDate(data, b.date);
+  const ia = effectiveBarIndex(data, a.date);
+  const ib = effectiveBarIndex(data, b.date);
   const bars = ia != null && ib != null ? Math.abs(ib - ia) : 0;
   const priceDelta = b.price - a.price;
   const pricePct = a.price !== 0 ? (priceDelta / a.price) * 100 : 0;

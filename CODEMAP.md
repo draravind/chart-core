@@ -497,9 +497,12 @@ Chart props. All shapes are `pointer-events:none`; hit detection is manual.
 
 ### `src/drawings/projection.ts`
 
-- `ProjScale` snapshot; `xForDate`/`yForPrice` (out-of-range x clamps to the nearest
-  end bar, never NaN), `dateForX` (snaps clicks into the in-data range)/`priceForY`,
-  `projectAnchor`, `extendRay` (clips a forward ray to the price-pane box).
+- `ProjScale` snapshot; `xForDate`/`yForPrice` (`xForDate` left-clamps before the
+  first bar but PROJECTS past the last bar into future empty space via
+  `extraBarsForFutureDate * step`, never NaN), `dateForX` (left-clamps, else snaps
+  to a real bar, else synthesizes a future date capped at ~`ceil(width/step)`
+  bars)/`priceForY`, `projectAnchor`, `extendRay` (clips a forward ray to the
+  price-pane box).
 
 ### `src/drawings/hitTest.ts`
 
@@ -607,6 +610,11 @@ sharesOutstanding?, freeFloatPercent?, eps?}` (all optional; absent → blanked)
 - `barIndexForDate(data, isoDate) → number | null` — binary search; nearest
   preceding bar on miss; null if out of range.
 - `dateForBarIndex(data, idx) → string` — ISO date for an index, clamped.
+- `medianStepMs(data, lookback=20) → number` — median calendar-day gap (ms) of
+  recent bars (weekend/holiday-robust); 1-day fallback under 2 bars.
+- `futureDateForExtraBars(data, extraBars) → string` / `extraBarsForFutureDate(data,
+  isoDate) → number` — inverse pair mapping bar-offsets past the last candle to
+  zero-padded ISO dates; power the drawing projection's future-space anchors.
 
 ### `src/utils/drawSeries.ts`
 

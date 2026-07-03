@@ -10,6 +10,7 @@ import {
   extendRay,
   type ProjScale,
 } from '../src/drawings/projection';
+import { futureDateForExtraBars } from '../src/utils/dateBarIndex';
 
 const N = 20;
 const STEP = 10;
@@ -63,20 +64,43 @@ describe('drawing projection', () => {
     }
   });
 
-  it('xForDate clamps out-of-range dates to the nearest end bar (never NaN)', () => {
+  it('xForDate left-clamps before the first bar but projects past the last', () => {
     const s = makeScale();
     const before = xForDate('2020-01-01', s);
-    const after = xForDate('2030-01-01', s);
     expect(Number.isFinite(before)).toBe(true);
-    expect(Number.isFinite(after)).toBe(true);
+    // Left of the first bar still clamps to bar 0.
     expect(before).toBeCloseTo((s.xScale(0) ?? 0) + s.bandwidth / 2, 6);
-    expect(after).toBeCloseTo((s.xScale(N - 1) ?? 0) + s.bandwidth / 2, 6);
+
+    // A date one median-step (1 day here) past the last bar projects exactly one
+    // step to the right of the last bar's center — into the empty future space.
+    const lastX = (s.xScale(N - 1) ?? 0) + s.bandwidth / 2;
+    const oneDayPast = xForDate('2024-01-21', s); // day after 2024-01-20
+    expect(oneDayPast).toBeCloseTo(lastX + STEP, 6);
+    expect(oneDayPast).toBeGreaterThan(lastX);
   });
 
-  it('dateForX snaps clicks outside the data range to the end bars', () => {
+  it('dateForX left-clamps but synthesizes a capped future date to the right', () => {
     const s = makeScale();
+    // Left of the data still snaps to the first bar.
     expect(dateForX(-9999, s)).toBe(s.data[0].date);
-    expect(dateForX(99999, s)).toBe(s.data[N - 1].date);
+
+    // A click one step right of the last bar's center → the next calendar day.
+    const lastX = (s.xScale(N - 1) ?? 0) + s.bandwidth / 2;
+    expect(dateForX(lastX + STEP, s)).toBe('2024-01-21');
+
+    // A click far to the right is capped at ~ceil(width/step) bars past the last
+    // (here width=200, step=10 → 20), not clamped back to the last bar.
+    const capped = dateForX(99999, s);
+    expect(capped > s.data[N - 1].date).toBe(true);
+    const maxBars = Math.ceil(s.width / s.step);
+    expect(capped).toBe(futureDateForExtraBars(s.data, maxBars));
+  });
+
+  it('xForDate ∘ dateForX round-trips for a future anchor within the cap', () => {
+    const s = makeScale();
+    const futureDate = futureDateForExtraBars(s.data, 5);
+    const x = xForDate(futureDate, s);
+    expect(dateForX(x, s)).toBe(futureDate);
   });
 
   it('yForPrice ∘ priceForY round-trips', () => {

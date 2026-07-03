@@ -1,7 +1,11 @@
 import type * as d3 from 'd3';
 
 import type { Candle } from '../types';
-import { barIndexForDate } from '../utils/dateBarIndex';
+import {
+  barIndexForDate,
+  extraBarsForFutureDate,
+  futureDateForExtraBars,
+} from '../utils/dateBarIndex';
 import type { DrawingAnchor } from './types';
 
 // PURE anchor <-> pixel math. All x values are in the PANNED inner-group's local
@@ -20,17 +24,18 @@ export type ProjScale = {
 };
 
 // Center x of the bar a date anchors to. In range: `xScale(idx) + bandwidth/2`.
-// Out of range (`barIndexForDate` returns null both before the first and after
-// the last bar) it CLAMPS to the nearest end bar's center — never NaN. A
-// `{date, price}` anchor cannot represent future empty space, so the right clamp
-// is the last bar; ray *extension* into future space is handled by `extendRay`.
+// Before the first bar it CLAMPS to bar 0. Past the last bar a `{date, price}`
+// anchor CAN live in the empty future space: we project it `extraBars * step`
+// to the right of the last bar's center (the same step spacing candles use), so
+// a trendline endpoint dropped to the right of the last candle stays put.
 export function xForDate(date: string, s: ProjScale): number {
   if (s.dataLength === 0) return 0;
   const idx = barIndexForDate(s.data, date);
   if (idx != null) return (s.xScale(idx) ?? 0) + s.bandwidth / 2;
-  // Out of range: clamp to nearest end bar.
   if (date < s.data[0].date) return (s.xScale(0) ?? 0) + s.bandwidth / 2;
-  return (s.xScale(s.dataLength - 1) ?? 0) + s.bandwidth / 2;
+  // Beyond the last bar: project into the empty future space.
+  const lastX = (s.xScale(s.dataLength - 1) ?? 0) + s.bandwidth / 2;
+  return lastX + extraBarsForFutureDate(s.data, date) * s.step;
 }
 
 export function yForPrice(price: number, s: ProjScale): number {
@@ -38,16 +43,21 @@ export function yForPrice(price: number, s: ProjScale): number {
   return Number.isFinite(y) ? y : s.priceHeight;
 }
 
-// Inverse of `xForDate`: snap a local x to the nearest real bar's date. Cannot
-// return a future date (v1 restricts placement to the in-data range). The bar
-// center for index j is `base + j*step + bandwidth/2` (paddingOuter is 0, so
-// `base = xScale(0)`); invert and clamp into `[0, dataLength-1]`.
+// Inverse of `xForDate`: snap a local x to a bar date. The bar center for index
+// j is `base + j*step + bandwidth/2` (paddingOuter is 0, so `base = xScale(0)`).
+// Left of bar 0 clamps to bar 0. Right of the last bar returns a SYNTHESIZED
+// future date `extraBars` median-steps past the last candle, capped to the
+// empty region panning can expose (~one screen of bars), so drawings can be
+// placed/dragged into future space but not off to infinity.
 export function dateForX(x: number, s: ProjScale): string {
   if (s.dataLength === 0) return '';
   const base = s.xScale(0) ?? 0;
   let j = Math.round((x - base - s.bandwidth / 2) / s.step);
-  j = Math.max(0, Math.min(s.dataLength - 1, j));
-  return s.data[j].date;
+  if (j < 0) j = 0;
+  if (j <= s.dataLength - 1) return s.data[j].date;
+  const maxFutureBars = Math.max(0, Math.ceil(s.width / s.step));
+  const extraBars = Math.min(j - (s.dataLength - 1), maxFutureBars);
+  return futureDateForExtraBars(s.data, extraBars);
 }
 
 export function priceForY(y: number, s: ProjScale): number {
