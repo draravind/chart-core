@@ -10,6 +10,7 @@ describe('barSegments', () => {
     [12, 8],
     [137, 5],
     [0, 11],
+    [12.6, 8], // fractional origin — the sub-pixel case the fix targets
   ] as const) {
     describe(`x0=${x0} bandwidth=${bandwidth}`, () => {
       it('joins open tick to stem bottom when open == low', () => {
@@ -63,15 +64,26 @@ describe('barSegments', () => {
         expect(seg.closeTick.x0).toBe(seg.stem.x);
       });
 
-      it('ticks span the full band', () => {
+      it('ticks span the snapped band, left edge rounded', () => {
         const seg = barSegments(
           { open: 150, high: 250, low: 100, close: 200 },
           x0,
           bandwidth,
           yPrice,
         );
-        expect(seg.openTick.x0).toBe(x0);
-        expect(seg.closeTick.x1).toBe(x0 + bandwidth);
+        expect(seg.openTick.x0).toBe(Math.round(x0));
+      });
+
+      it('open and close ticks are equal length (symmetric)', () => {
+        const seg = barSegments(
+          { open: 150, high: 250, low: 100, close: 200 },
+          x0,
+          bandwidth,
+          yPrice,
+        );
+        const left = seg.stem.x - seg.openTick.x0;
+        const right = seg.closeTick.x1 - seg.stem.x;
+        expect(left).toBe(right);
       });
 
       it('doji: open == close keeps both ticks at the same y', () => {

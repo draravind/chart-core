@@ -143,11 +143,18 @@ export function barSegments(
   yPrice: (v: number) => number,
 ): BarSegments {
   const snap = (v: number) => Math.round(yPrice(v)) + 0.5;
-  const cx = Math.round(x0 + bandwidth / 2) + 0.5;
+  // Snap the band to an odd width so a true middle column exists for the stem,
+  // then derive the center from the rounded left edge — exactly as drawCandles
+  // does. Rounding the center independently of the tick endpoints is what let
+  // the two ticks drift to unequal lengths under zoom/pan.
+  let bw = Math.max(1, Math.round(bandwidth));
+  if (bw % 2 === 0) bw = Math.max(1, bw - 1);
+  const bx = Math.round(x0);
+  const cx = bx + Math.floor(bw / 2) + 0.5;
   return {
     stem: { x: cx, yHigh: snap(d.high), yLow: snap(d.low) },
-    openTick: { x0, x1: cx, y: snap(d.open) },
-    closeTick: { x0: cx, x1: x0 + bandwidth, y: snap(d.close) },
+    openTick: { x0: bx, x1: cx, y: snap(d.open) },
+    closeTick: { x0: cx, x1: bx + bw, y: snap(d.close) },
   };
 }
 
