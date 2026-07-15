@@ -434,7 +434,7 @@ const Chart = ({
     Math.min(visibleBars, maxVisibleBars),
   );
 
-  // Geometry that depends on data + viewport but NOT on priceZoom. Hoisted
+  // Geometry that depends on data + viewport but NOT on priceView. Hoisted
   // out of the draw effect so the y-zoom path skips re-running x-scale,
   // candle data joins, volume bars, x-axis, separators, etc.
   const layout = useMemo(() => {
@@ -698,13 +698,17 @@ const Chart = ({
     [onSubpaneHeightsChange],
   );
 
-  // Multiplicative price-axis zoom. >1 = compressed log-domain (zoom in),
-  // <1 = expanded log-domain (zoom out). Resets when the symbol changes.
-  const [priceZoom, setPriceZoom] = useState<number>(1);
-  const priceZoomRef = useRef(priceZoom);
+  // Manual price domain [loPrice, hiPrice] in price units (what
+  // d3.scaleLog().domain() consumes and scaleApi.yPrice.domain() returns).
+  // null = auto-fit (data-derived). Non-null = frozen range used verbatim as
+  // the scale domain; gestures mutate it, a reset clears it. Resets when the
+  // symbol changes. This is the industry-standard fixed-range model.
+  const [priceView, setPriceView] = useState<[number, number] | null>(null);
+  const priceViewRef = useRef(priceView);
   useEffect(() => {
-    priceZoomRef.current = priceZoom;
-  }, [priceZoom]);
+    priceViewRef.current = priceView;
+  }, [priceView]);
+  const isAutoFit = priceView === null;
 
   // Hover tracking for the autofit button. Tracked on both the SVG y-axis
   // hit-rect and the HTML button itself so transitioning between the two does
@@ -723,6 +727,12 @@ const Chart = ({
     step: number;
     minOff: number;
     maxOff: number;
+    startY: number;
+    panY: boolean;
+    startLoLog: number;
+    startHiLog: number;
+    pxPerLog: number;
+    panCapLog: number;
   }>({
     active: false,
     startX: 0,
@@ -731,6 +741,12 @@ const Chart = ({
     step: 1,
     minOff: 0,
     maxOff: 0,
+    startY: 0,
+    panY: false,
+    startLoLog: 0,
+    startHiLog: 0,
+    pxPerLog: 1,
+    panCapLog: 0,
   });
   const onPanOffsetChangeRef = useRef(onPanOffsetChange);
   useEffect(() => {
@@ -754,6 +770,11 @@ const Chart = ({
   }, [onMaxVisibleBarsChange]);
   const pendingFrameRef = useRef<number | null>(null);
   const pendingDxRef = useRef<number>(0);
+  const pendingDyRef = useRef<number>(0);
+  // True while a body drag is in flight, so Effect B keeps using the live
+  // (uncommitted) horizontal translate instead of snapping X back when a
+  // per-frame setPriceView (Y pan) re-runs it mid-drag.
+  const dragActiveRef = useRef(false);
   const chartGroupRef = useRef<SVGGElement | null>(null);
 
   // Long-lived d3 selections built once in Effect 1.
@@ -1355,12 +1376,12 @@ const Chart = ({
     onMaxVisibleBarsChangeRef.current?.(maxVisibleBars);
   }, [maxVisibleBars, containerWidth, onMaxVisibleBarsChange]);
 
-  // Reset price-axis zoom when the user switches symbols. Done at render
-  // time to avoid a cascading render via an effect.
+  // Reset the manual price range when the user switches symbols. Done at
+  // render time to avoid a cascading render via an effect.
   const [prevSymbolForZoom, setPrevSymbolForZoom] = useState(symbol);
   if (prevSymbolForZoom !== symbol) {
     setPrevSymbolForZoom(symbol);
-    if (priceZoom !== 1) setPriceZoom(1);
+    if (priceView !== null) setPriceView(null);
   }
 
   useEffect(() => {
@@ -1368,6 +1389,7 @@ const Chart = ({
       const s = dragStateRef.current;
       if (!s.active) return;
       s.active = false;
+      dragActiveRef.current = false;
       if (wrapperRef.current) wrapperRef.current.style.cursor = '';
       if (pendingFrameRef.current != null) {
         cancelAnimationFrame(pendingFrameRef.current);
@@ -1402,6 +1424,7 @@ const Chart = ({
       }
       const dx = e.clientX - s.startX;
       pendingDxRef.current = dx;
+      if (s.panY) pendingDyRef.current = e.clientY - s.startY;
       if (pendingFrameRef.current == null) {
         pendingFrameRef.current = requestAnimationFrame(() => {
           pendingFrameRef.current = null;
@@ -1417,6 +1440,16 @@ const Chart = ({
           patternOverlayHandleRef.current?.setTransform(tx);
           drawingOverlayHandleRef.current?.setTransform(tx);
           redrawSeries();
+          if (s.panY) {
+            // Drag down → domain shifts up → content follows the cursor 1:1
+            // (y_new = y_old + pendingDy). Translate the frozen log-range.
+            let d = pendingDyRef.current / s.pxPerLog;
+            d = Math.max(-s.panCapLog, Math.min(s.panCapLog, d));
+            setPriceView([
+              Math.exp(s.startLoLog + d),
+              Math.exp(s.startHiLog + d),
+            ]);
+          }
         });
       }
     };
@@ -1677,7 +1710,7 @@ const Chart = ({
   }, []);
 
   // Effect A — layout / static draw. Runs on layout / chartType / indicators
-  // changes. Does NOT depend on priceZoom — y-scale-dependent attrs (candle
+  // changes. Does NOT depend on priceView — y-scale-dependent attrs (candle
   // y/height, EMA path d, price axis, scale api) are set in Effect B.
   useEffect(() => {
     if (!data || !layout || !svgRef.current) return;
@@ -1803,7 +1836,7 @@ const Chart = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [layout, containerWidth, data, activeSubpanes, appAxisKey, appBackgroundKey]);
 
-  // Effect B — y-scale draw. Runs on priceZoom changes too. Recomputes yPrice,
+  // Effect B — y-scale draw. Runs on priceView changes too. Recomputes yPrice,
   // redraws the price axis, publishes the scale api, and repaints the canvas
   // series (candles/volume/indicators) for the new y-scale.
   useEffect(() => {
@@ -1829,57 +1862,67 @@ const Chart = ({
       visibleStartIdx,
     } = layout;
 
-    let priceMin = d3.min(visibleSlice, (d) => d.low) ?? 0;
-    let priceMax = d3.max(visibleSlice, (d) => d.high) ?? 1;
-    if (autoFitMode === 'priceAndOverlays') {
-      // Expand the price domain over the in-browser indicator series across the
-      // visible window (replaces the old b.ema/b.high column reads). Subpane
-      // indicators (RS line) live on their own scale — their ratio values must
-      // NOT pollute the price-pane domain, so skip them here.
-      for (const { config, series } of resolvedIndicators) {
-        const def = getIndicator(config.defKey);
-        if (!def || typeof def.pane === 'object') continue;
-        // User excluded this indicator kind from the price+overlays fit.
-        if (autoFitExcluded.includes(config.defKey)) continue;
-        // Only the def's `autofitKeys` series drive the price domain (replaces
-        // the old implicit `width !== 0` set). Stage 2 returns [] — its 1/NaN
-        // band flag never collapses the log price domain. A def without
-        // `autofitKeys` falls back to every series it computed.
-        const keys = def.autofitKeys?.(config.settings) ?? Object.keys(series);
-        for (const key of keys) {
-          const arr = series[key];
-          if (!arr) continue;
-          for (let g = visStart; g < visEnd && g < arr.length; g++) {
-            const v = arr[g];
-            // Skip non-positive overlay values (e.g. a BBANDS lower band can dip
-            // ≤0 for volatile/low-priced inputs) — they would poison the log fold
-            // (Math.log(priceMin)) below into NaN/−∞.
-            if (!Number.isNaN(v) && v > 0) {
-              if (v < priceMin) priceMin = v;
-              if (v > priceMax) priceMax = v;
+    let domainLow: number, domainHigh: number;
+    if (priceView) {
+      // MANUAL: use the frozen range verbatim — no center, no padding, no data
+      // recompute. Skips the whole data-fit block below (perf: a manual
+      // pan/zoom re-runs this effect every frame and must not re-loop the
+      // indicators × visible bars each time).
+      [domainLow, domainHigh] = priceView;
+    } else {
+      // AUTO: existing data + overlay-bounds fit with asymmetric padding.
+      let priceMin = d3.min(visibleSlice, (d) => d.low) ?? 0;
+      let priceMax = d3.max(visibleSlice, (d) => d.high) ?? 1;
+      if (autoFitMode === 'priceAndOverlays') {
+        // Expand the price domain over the in-browser indicator series across the
+        // visible window (replaces the old b.ema/b.high column reads). Subpane
+        // indicators (RS line) live on their own scale — their ratio values must
+        // NOT pollute the price-pane domain, so skip them here.
+        for (const { config, series } of resolvedIndicators) {
+          const def = getIndicator(config.defKey);
+          if (!def || typeof def.pane === 'object') continue;
+          // User excluded this indicator kind from the price+overlays fit.
+          if (autoFitExcluded.includes(config.defKey)) continue;
+          // Only the def's `autofitKeys` series drive the price domain (replaces
+          // the old implicit `width !== 0` set). Stage 2 returns [] — its 1/NaN
+          // band flag never collapses the log price domain. A def without
+          // `autofitKeys` falls back to every series it computed.
+          const keys =
+            def.autofitKeys?.(config.settings) ?? Object.keys(series);
+          for (const key of keys) {
+            const arr = series[key];
+            if (!arr) continue;
+            for (let g = visStart; g < visEnd && g < arr.length; g++) {
+              const v = arr[g];
+              // Skip non-positive overlay values (e.g. a BBANDS lower band can dip
+              // ≤0 for volatile/low-priced inputs) — they would poison the log fold
+              // (Math.log(priceMin)) below into NaN/−∞.
+              if (!Number.isNaN(v) && v > 0) {
+                if (v < priceMin) priceMin = v;
+                if (v > priceMax) priceMax = v;
+              }
             }
           }
         }
+        if (overlayPriceBounds) {
+          priceMin = Math.min(priceMin, overlayPriceBounds.min);
+          priceMax = Math.max(priceMax, overlayPriceBounds.max);
+        }
       }
-      if (priceZoom === 1 && overlayPriceBounds) {
-        priceMin = Math.min(priceMin, overlayPriceBounds.min);
-        priceMax = Math.max(priceMax, overlayPriceBounds.max);
-      }
+      const logMin = Math.log(priceMin);
+      const logMax = Math.log(priceMax);
+      const logCenter = (logMin + logMax) / 2;
+      const halfRange = (logMax - logMin) / 2;
+      const adjLogMin = logCenter - halfRange;
+      const adjLogMax = logCenter + halfRange;
+      const logSpan = adjLogMax - adjLogMin;
+      const logPadBottom = logSpan * 0.06 || 0.01;
+      const topPadFactor =
+        autoFitMode === 'priceAndOverlays' ? 0.04 : 0.12;
+      const logPadTop = logSpan * topPadFactor || 0.01;
+      domainLow = Math.exp(adjLogMin - logPadBottom);
+      domainHigh = Math.exp(adjLogMax + logPadTop);
     }
-    const logMin = Math.log(priceMin);
-    const logMax = Math.log(priceMax);
-    const logCenter = (logMin + logMax) / 2;
-    const baseHalfRange = (logMax - logMin) / 2;
-    const adjHalfRange = baseHalfRange / Math.max(0.01, priceZoom);
-    const adjLogMin = logCenter - adjHalfRange;
-    const adjLogMax = logCenter + adjHalfRange;
-    const logSpan = adjLogMax - adjLogMin;
-    const logPadBottom = logSpan * 0.06 || 0.01;
-    const topPadFactor =
-      priceZoom === 1 && autoFitMode === 'priceAndOverlays' ? 0.04 : 0.12;
-    const logPadTop = logSpan * topPadFactor || 0.01;
-    const domainLow = Math.exp(adjLogMin - logPadBottom);
-    const domainHigh = Math.exp(adjLogMax + logPadTop);
     const yPrice = d3
       .scaleLog()
       .domain([Math.max(1, domainLow), domainHigh])
@@ -1924,7 +1967,7 @@ const Chart = ({
     // config's `def.domain(...)` (fixed/guide/zero/pad — reads settings, so e.g.
     // Results' display enum picks text vs. bars); the autofit lines come from
     // every config's `def.autofitKeys(...)` series across the visible window.
-    // Range targets the pane band [bottom, top]. Independent of priceZoom.
+    // Range targets the pane band [bottom, top]. Independent of priceView.
     const subpaneScales = new Map<string, d3.ScaleLinear<number, number>>();
     const paneSpecs = new Map<string, DomainSpec | undefined>();
     const paneIndicators = new Map<string, ResolvedIndicator[]>();
@@ -2041,6 +2084,15 @@ const Chart = ({
       subGuidesGroupRef.current!.style('display', 'none');
     }
 
+    // During a body drag the committed pan offset (`baseTranslateX`) lags the
+    // live cursor — the uncommitted translate lives on scaleApi.baseTranslateX,
+    // set per-frame by the drag rAF. A per-frame setPriceView (Y pan) re-runs
+    // this effect mid-drag; publishing the stale committed X would snap the
+    // chart back horizontally. Use the live value while a drag is active.
+    const liveTx = dragActiveRef.current
+      ? scaleApi.baseTranslateX
+      : baseTranslateX;
+
     // Publish geometry to the scale api (in place) + notify subscribers.
     scaleApi.data = data;
     scaleApi.subpaneScales = subpaneScales;
@@ -2053,7 +2105,7 @@ const Chart = ({
     scaleApi.visibleStartIdx = visibleStartIdx;
     scaleApi.priceHeight = priceHeight;
     scaleApi.width = width;
-    scaleApi.baseTranslateX = baseTranslateX;
+    scaleApi.baseTranslateX = liveTx;
     scaleApi.dataLength = data.length;
     scaleApi.indicators = resolvedIndicators;
     notifyScale('rescale');
@@ -2064,7 +2116,7 @@ const Chart = ({
       yPrice,
       step,
       bandwidth,
-      baseTranslateX,
+      baseTranslateX: liveTx,
       width,
       priceHeight,
       dataLength: data.length,
@@ -2080,7 +2132,7 @@ const Chart = ({
       width,
       priceHeight,
       data,
-      baseTranslateX,
+      baseTranslateX: liveTx,
     });
 
     // Cache the draw-state for the canvas series + paint it now (covers data /
@@ -2122,7 +2174,7 @@ const Chart = ({
   }, [
     layout,
     resolvedIndicators,
-    priceZoom,
+    priceView,
     chartType,
     data,
     cappedVisibleBars,
@@ -2229,25 +2281,30 @@ const Chart = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [appCrosshairKey]);
 
-  // Drag on the price-axis hit zone to compress / expand the chart vertically.
+  // Drag on the price-axis hit zone to zoom the price range about its center.
+  // Seeds the frozen range from the live domain on the first touch (no visual
+  // jump at the auto→manual handoff), then scales it in log space.
   useEffect(() => {
-    const Y_ZOOM_PIXELS_PER_E_FOLD = 200;
-    const MIN_PRICE_ZOOM = 0.1;
-    const MAX_PRICE_ZOOM = 20;
+    const PIXELS_PER_E_FOLD = 200;
+    const MIN_HALF = 0.002; // extreme zoom-in  (~0.4% range)
+    const MAX_HALF = 4; // extreme zoom-out (~e^8 range)
     let active = false;
     let startY = 0;
-    let startZoom = 1;
+    let startLoLog = 0;
+    let startHiLog = 0;
     let raf: number | null = null;
     let lastDy = 0;
 
     const flush = () => {
       raf = null;
-      const factor = Math.exp(-lastDy / Y_ZOOM_PIXELS_PER_E_FOLD);
-      const next = Math.max(
-        MIN_PRICE_ZOOM,
-        Math.min(MAX_PRICE_ZOOM, startZoom * factor),
+      // drag up → lastDy<0 → factor>1 → zoom in (matches the old feel).
+      const factor = Math.exp(-lastDy / PIXELS_PER_E_FOLD);
+      const center = (startLoLog + startHiLog) / 2;
+      const half = Math.max(
+        MIN_HALF,
+        Math.min(MAX_HALF, (startHiLog - startLoLog) / 2 / factor),
       );
-      setPriceZoom(next);
+      setPriceView([Math.exp(center - half), Math.exp(center + half)]);
     };
     const endDrag = () => {
       if (!active) return;
@@ -2278,13 +2335,17 @@ const Chart = ({
         event.stopPropagation();
         active = true;
         startY = event.clientY;
-        startZoom = priceZoomRef.current;
+        // Seed the range once: the frozen view if already manual, else the live
+        // auto domain (price units) so the grab is continuous.
+        const seed = priceViewRef.current ?? scaleApi.yPrice.domain();
+        startLoLog = Math.log(seed[0]);
+        startHiLog = Math.log(seed[1]);
         if (wrapperRef.current) wrapperRef.current.style.cursor = 'ns-resize';
       });
       hit.on('dblclick', function (event: MouseEvent) {
         event.preventDefault();
         event.stopPropagation();
-        setPriceZoom(1);
+        setPriceView(null);
       });
       hit.on('mouseenter', function () {
         setYAxisHovered(true);
@@ -2310,6 +2371,8 @@ const Chart = ({
           .on('mouseleave', null);
       if (raf != null) cancelAnimationFrame(raf);
     };
+    // scaleApi is a stable singleton (built once from scaleRef); read inline.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Effect 4 — Bind crosshair / drag-init handlers once. The handlers read
@@ -2464,6 +2527,22 @@ const Chart = ({
       // 3) Pure miss in cursor mode → existing behaviour: bare-chart click
       //    deselects overlays + drawings (subscribers), then inits the pan drag.
       for (const cb of bgPointerDownSubsRef.current) cb();
+      // Vertical pan is active only when the price scale is already manual
+      // (auto-fit off) — while auto-fit is on, body drag stays X-only so
+      // time-scrolling never drifts vertically. Seed the vertical basis from
+      // the frozen range.
+      const manual = priceViewRef.current;
+      const panY = manual !== null;
+      let startLoLog = 0;
+      let startHiLog = 0;
+      let pxPerLog = 1;
+      let panCapLog = 0;
+      if (panY && manual) {
+        startLoLog = Math.log(manual[0]);
+        startHiLog = Math.log(manual[1]);
+        pxPerLog = scaleApi.priceHeight / (startHiLog - startLoLog);
+        panCapLog = (startHiLog - startLoLog) * 3; // up to ~3 screen-heights away
+      }
       dragStateRef.current = {
         active: true,
         startX: event.clientX,
@@ -2472,8 +2551,16 @@ const Chart = ({
         step: scaleApi.step,
         minOff: -(scaleApi.visibleBars - 1),
         maxOff: Math.max(0, scaleApi.data.length - scaleApi.visibleBars),
+        startY: event.clientY,
+        panY,
+        startLoLog,
+        startHiLog,
+        pxPerLog,
+        panCapLog,
       };
       pendingDxRef.current = 0;
+      pendingDyRef.current = 0;
+      dragActiveRef.current = true;
       if (crosshairRafRef.current != null) {
         cancelAnimationFrame(crosshairRafRef.current);
         crosshairRafRef.current = null;
@@ -2658,9 +2745,9 @@ const Chart = ({
           {priceBottomPx > 0 && showAutoFitBtn && (
             <button
               type="button"
-              className={`${styles.autoFitBtn} ${priceZoom === 1 ? styles.autoFitBtnActive : ''}`}
+              className={`${styles.autoFitBtn} ${isAutoFit ? styles.autoFitBtnActive : ''}`}
               title={
-                priceZoom !== 1
+                !isAutoFit
                   ? 'Auto-fit price scale (off — drag y-axis to enable)'
                   : autoFitMode === 'priceAndOverlays'
                     ? 'Auto-fit: price + overlays (click for price-only)'
@@ -2671,11 +2758,11 @@ const Chart = ({
               // letting onContextMenu toggle the menu cleanly.
               onMouseDown={(e) => e.stopPropagation()}
               onClick={() => {
-                // A left-click changes mode/zoom, making the exclusion menu
+                // A left-click changes mode/range, making the exclusion menu
                 // stale — close it so it doesn't linger or pin the button.
                 setAutoFitMenuOpen(false);
-                if (priceZoom !== 1) {
-                  setPriceZoom(1);
+                if (!isAutoFit) {
+                  setPriceView(null);
                   return;
                 }
                 onAutoFitModeChange(
@@ -2685,7 +2772,7 @@ const Chart = ({
               onContextMenu={(e) => {
                 e.preventDefault();
                 // Menu only meaningful in price+overlays mode with auto-fit active.
-                if (autoFitMode === 'priceAndOverlays' && priceZoom === 1)
+                if (autoFitMode === 'priceAndOverlays' && isAutoFit)
                   setAutoFitMenuOpen((o) => !o);
               }}
               onMouseEnter={() => setAutoFitHovered(true)}
@@ -2694,7 +2781,7 @@ const Chart = ({
                 top: priceBottomPx - 26,
                 right: MARGIN.right - 26,
                 color:
-                  priceZoom === 1 && autoFitMode === 'priceAndOverlays'
+                  isAutoFit && autoFitMode === 'priceAndOverlays'
                     ? '#22c55e'
                     : undefined,
               }}
@@ -2704,7 +2791,7 @@ const Chart = ({
           )}
           {autoFitMenuOpen &&
             autoFitMode === 'priceAndOverlays' &&
-            priceZoom === 1 && (
+            isAutoFit && (
             <AutoFitMenu
               contributors={autoFitContributors}
               excluded={autoFitExcluded}
