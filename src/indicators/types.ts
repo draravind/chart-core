@@ -130,6 +130,20 @@ export type IndicatorDrawScale = {
    *  draw lay out text rows + clip to its band. Present for every pane. */
   paneTop?: number;
   paneBottom?: number;
+  /** Device dots per CSS px, per axis (from the backing-store size, NOT
+   *  `devicePixelRatio`). Only needed to paint in bitmap space. */
+  hRatio: number;
+  vRatio: number;
+  /** Absolute device-dot origin of THIS (panned) coordinate space — add it to a
+   *  ratio-scaled CSS coordinate to get a backing-store coordinate. */
+  originX: number;
+  originY: number;
+  /** The device-dot column the price bar at `g` occupies. A histogram subpane
+   *  (volume, MACD) fills exactly this so its columns share the bar's pixels.
+   *  Required, not optional: it is constructed in one place, so the compiler
+   *  proves the wiring instead of a fallback silently repainting the old
+   *  fractional geometry. */
+  barSlot: (globalIdx: number) => { left: number; width: number };
 };
 
 /**

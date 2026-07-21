@@ -318,9 +318,19 @@ const Chart = ({
   const svgRef = useRef<SVGSVGElement | null>(null);
   // Canvas series layer (volume/candles/indicators). Sits beneath the SVG.
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const canvasCtxRef = useRef<{ ctx: CanvasRenderingContext2D; dpr: number } | null>(
-    null,
-  );
+  const canvasCtxRef = useRef<{
+    ctx: CanvasRenderingContext2D;
+    hRatio: number;
+    vRatio: number;
+  } | null>(null);
+  // Device-pixel-exact backing store. `suggested` is recorded by the observer
+  // and applied at PAINT time — assigning canvas.width/height clears the bitmap,
+  // so doing it in the resize callback would show a blank frame.
+  const bitmapRef = useRef<{
+    cssWidth: number;
+    cssHeight: number;
+    suggested: { width: number; height: number } | null;
+  }>({ cssWidth: 0, cssHeight: 0, suggested: null });
   const colorResolverRef = useRef<ColorResolver | null>(null);
   const [containerWidth, setContainerWidth] = useState(0);
   const [containerHeight, setContainerHeight] = useState(0);
@@ -592,14 +602,33 @@ const Chart = ({
     indicators: ResolvedIndicator[];
   } | null>(null);
 
+  // Adopt the backing-store size the observer last measured. Called at the top
+  // of every paint (see `redrawSeries`) — never from the observer itself.
+  const applySuggestedBitmapSize = useCallback(() => {
+    const c = canvasRef.current;
+    const cc = canvasCtxRef.current;
+    const b = bitmapRef.current;
+    if (!c || !cc || !b.suggested) return;
+    const { width, height } = b.suggested;
+    b.suggested = null;
+    if (c.width !== width) c.width = width;
+    if (c.height !== height) c.height = height;
+    // Per-axis scale from the ACTUAL sizes, never devicePixelRatio — that is
+    // what keeps a fractional element width or a fractional density exact.
+    cc.hRatio = b.cssWidth > 0 ? width / b.cssWidth : 1;
+    cc.vRatio = b.cssHeight > 0 ? height / b.cssHeight : 1;
+  }, []);
+
   // Stable redraw entrypoint. Reads the cached draw-state + live scale fields
   // (xScale/yPrice from the last rescale, baseTranslateX which moves on pan).
   const redrawSeries = useCallback(() => {
     const cc = canvasCtxRef.current;
     const st = drawStateRef.current;
     if (!cc || !st) return;
+    applySuggestedBitmapSize();
     drawSeries(cc.ctx, {
-      dpr: cc.dpr,
+      hRatio: cc.hRatio,
+      vRatio: cc.vRatio,
       cssWidth: st.cssWidth,
       cssHeight: st.cssHeight,
       marginLeft: MARGIN.left,
@@ -610,6 +639,7 @@ const Chart = ({
       fullHeight: st.fullHeight,
       priceHeight: st.priceHeight,
       bandwidth: st.bandwidth,
+      step: scaleApi.step,
       baseTranslateX: scaleApi.baseTranslateX,
       renderStart: st.renderStart,
       renderEnd: st.renderEnd,
@@ -629,7 +659,7 @@ const Chart = ({
       })),
       resolveColor: (v) => colorResolverRef.current?.resolve(v) ?? '#888888',
     });
-  }, [scaleApi]);
+  }, [scaleApi, applySuggestedBitmapSize]);
 
   const priceBottomPx = useMemo(
     () => (layout ? MARGIN.top + layout.priceHeight : 0),
@@ -1271,39 +1301,75 @@ const Chart = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [appColorsKey]);
 
-  // Canvas DPR backing-store sizing. CSS px matches the svg box; the backing
-  // store is px*dpr with the context pre-scaled by dpr. Re-applies + redraws on
-  // a devicePixelRatio change (browser zoom / cross-monitor drag) which a
-  // ResizeObserver won't catch, via a re-armed resolution media query.
+  // Canvas backing-store sizing. CSS px matches the svg box; the BITMAP size is
+  // the browser's own device-pixel content box, so it is exact even when the
+  // element's width or the display density is fractional (browser zoom, scaled
+  // external monitor) — `round(cssW * devicePixelRatio)` is not, and a mismatch
+  // makes the compositor resample the whole canvas, softening every bar however
+  // exactly it was drawn. Same technique as TradingView's `fancy-canvas`, minus
+  // the dependency. Re-measures on a devicePixelRatio change (which a
+  // ResizeObserver won't report) via a re-armed resolution media query.
   const layoutTotalHeight = layout?.totalHeight ?? null;
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas || layoutTotalHeight == null || containerWidth === 0) return;
     const cssW = containerWidth;
     const cssH = layoutTotalHeight + MARGIN.top + MARGIN.bottom;
-    let mql: MediaQueryList | null = null;
+    canvas.style.width = `${cssW}px`;
+    canvas.style.height = `${cssH}px`;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    if (!canvasCtxRef.current || canvasCtxRef.current.ctx !== ctx) {
+      canvasCtxRef.current = { ctx, hRatio: 1, vRatio: 1 };
+    }
 
-    const onChange = () => apply();
-    function apply() {
-      const c = canvas;
+    function measure(entry?: ResizeObserverEntry) {
+      const c = canvasRef.current;
       if (!c) return;
-      const dpr = window.devicePixelRatio || 1;
-      c.style.width = `${cssW}px`;
-      c.style.height = `${cssH}px`;
-      c.width = Math.round(cssW * dpr);
-      c.height = Math.round(cssH * dpr);
-      const ctx = c.getContext('2d');
-      if (ctx) {
-        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-        canvasCtxRef.current = { ctx, dpr };
-        redrawSeries();
+      const box = entry?.devicePixelContentBoxSize?.[0];
+      let w: number;
+      let h: number;
+      if (box) {
+        w = box.inlineSize;
+        h = box.blockSize;
+      } else {
+        // Equivalent fallback where `device-pixel-content-box` is unsupported:
+        // round each EDGE independently, reproducing the compositor's snapping.
+        // That is what absorbs a sub-pixel position; `round(w * ratio)` can't.
+        const ratio = window.devicePixelRatio || 1;
+        const r = c.getBoundingClientRect();
+        w = Math.round(r.left * ratio + r.width * ratio) - Math.round(r.left * ratio);
+        h = Math.round(r.top * ratio + r.height * ratio) - Math.round(r.top * ratio);
       }
+      bitmapRef.current = {
+        cssWidth: cssW,
+        cssHeight: cssH,
+        suggested: { width: Math.max(1, w), height: Math.max(1, h) },
+      };
+      redrawSeries();
+    }
+
+    const ro = new ResizeObserver((entries) => measure(entries[0]));
+    try {
+      ro.observe(canvas, { box: 'device-pixel-content-box' });
+    } catch {
+      ro.observe(canvas);
+    }
+    measure();
+
+    let mql: MediaQueryList | null = null;
+    const onChange = () => {
+      measure();
+      arm();
+    };
+    function arm() {
       if (mql) mql.removeEventListener('change', onChange);
-      mql = window.matchMedia(`(resolution: ${dpr}dppx)`);
+      mql = window.matchMedia(`(resolution: ${window.devicePixelRatio || 1}dppx)`);
       mql.addEventListener('change', onChange);
     }
-    apply();
+    arm();
     return () => {
+      ro.disconnect();
       if (mql) mql.removeEventListener('change', onChange);
     };
   }, [containerWidth, layoutTotalHeight, redrawSeries]);

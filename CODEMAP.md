@@ -203,8 +203,11 @@ Scoped styles for the chart shell: `.chartWrapper`/`.chartWrapperBare`,
 - `ChartAppearance` — the global visual contract: `colors: Record<string,string>`
   (CSS-var name without `--` → value; injected as inline custom props on the
   wrapper), plus non-color scalars `background {topColor, bottomColor, radius}`,
-  `candle {wickWidth}`, `axis {opacity, tickSize}`, `crosshair {color, opacity,
-dash}`, and `patterns` (per-pattern styles).
+  `candle {wickWidth}` (1.0 CSS px, quantised to whole device dots at draw),
+  `axis {opacity, tickSize}`, `crosshair {color, opacity, dash}`, and `patterns`
+  (per-pattern styles). The OHLC-bar geometry law is deliberately NOT here — it
+  is baked in `registry.ts` (see `BAR_THICKNESS_STEPS`), since it describes
+  renderer behaviour rather than a per-user preference.
 - `BaseBreakoutStyle` / `ConsolidationStyle` / `HighTightFlagStyle` / `GapUpStyle` /
   `VolumeBreakoutStyle` / `GoldenCrossStyle` / `Nr7Style` / `UnusualVolumeStyle` /
   `VolumeDryupStyle` / `PocketPivotStyle` / `InsideDayStyle` / `PullbackToEmaStyle` —
@@ -216,10 +219,14 @@ dash}`, and `patterns` (per-pattern styles).
 ### `src/appearance/registry.ts`
 
 - `APPEARANCE_DEFAULTS: ChartAppearance` — the single source of baked defaults
-  (migrated literals: bg `#776a5a`/`#6e7b8b` r12, axis 0.12/4, wick 1.25, crosshair
+  (migrated literals: bg `#776a5a`/`#6e7b8b` r12, axis 0.12/4, wick 1.0, crosshair
   currentColor/0.3/'3,3', and all twelve patterns' consts); `colors` starts `{}`.
 - `effectiveAppearance(overrides?) → ChartAppearance` — pure deep-merge defaults ←
   overrides (per-field reset = omit the key). The analogue of `effectiveSettings`.
+- `BAR_THICKNESS_STEPS` / `BAR_STUB_FRACTION` — the OHLC-bar geometry law, read by
+  `drawSeries.barMetrics`. Baked constants, NOT part of `ChartAppearance` and not
+  user-editable: they describe renderer behaviour, not per-user taste. Each is
+  written exactly once; retuning means editing here and republishing.
 
 ---
 
@@ -253,7 +260,11 @@ autofitPadding?, includeZero?, topPadPx?, hideAxis?, tickFormat?}` (replaces the
 - `IndicatorSeries` = `Record<string, Float64Array>` (one line per key; NaN = gap).
 - `IndicatorInput` — `{o,h,l,c,v: Float64Array; bars; benchmarkClose?;
 quarterlyResults?; market?; displayStart?}`.
-- `IndicatorDrawScale` — adds `paneTop?/paneBottom?` (pixel band bounds).
+- `IndicatorDrawScale` — adds `paneTop?/paneBottom?` (pixel band bounds), plus the
+  device-space wiring: `hRatio`/`vRatio` (dots per CSS px), `originX`/`originY`
+  (absolute device origin of the panned pane space) and `barSlot(g) →
+  {left, width}` in device dots — all required, so a histogram subpane can paint
+  on the price bar's own column.
 - `IndicatorConfig` — resolved user instance: `{id, defKey, label, enabled,
 settings, settingsOverrides}` (`settings` = effective merge; `settingsOverrides`
   = the only persisted source of truth, sparse deltas).
@@ -302,7 +313,8 @@ Canvas painters + small legend helpers shared by builtin hooks:
 - `drawLines(ctx, series, scale, lines: {key, st}[])` — default multi-line painter
   (caller passes only real lines — no width-0 skip).
 - `drawHistogram(ctx, scale, values, style, negColor?)` — bars from zero, dual
-  color (MACD).
+  color (MACD). Painted in bitmap space on `scale.barSlot(g)` — the price bar's
+  own device column — not on `bandwidth`.
 - `drawGuideLines(ctx, scale, levels[], color, opts?)` — dashed horizontal guides
   (RSI 30/70, MACD zero line).
 - `drawDots(ctx, scale, values, style, marked, radius?)` — markers on selected bars
@@ -623,9 +635,23 @@ sharesOutstanding?, freeFloatPercent?, eps?}` (all optional; absent → blanked)
   painted via `drawIndicators`); applies background gradient, `#chart-viewport`
   clip, and pan transform; clears the backing store each call. `drawIndicators`
   calls `def.draw(ctx, series, scale, config.settings, resolveColor, meta)`.
-- `SeriesColors` = `{positive, negative}`; `DrawSeriesParams` — dpr, dimensions,
-  scales (`xScale`, `yPrice`, `subpaneScales`), render slice bounds, chart type,
-  colors, indicators, color resolver.
+  The candle/bar pass runs in DEVICE-PIXEL space (`fillRect` on whole dots, clip
+  bounds rounded to whole dots) so nothing antialiases; indicator lines stay in
+  CSS space and stay antialiased, since they are diagonal.
+- `barMetrics(step, hRatio, steps, stubFraction) → {markW, sideW, drawTicks}` —
+  the whole bar zoom law in one pure function, in device dots: thickness climbs
+  the ladder (floored at 1 CSS px, capped by the ladder's length), stub reach is
+  a slot fraction independent of thickness (floored at one stem width), stubs
+  switch off below 3 CSS px of spacing. `barRects(d, cx, m, yDev)` turns that into
+  the stem + stub rectangles; `barSlotAt` is the shared column histogram subpanes
+  paint into.
+  The ladder + stub fraction come from the baked `BAR_THICKNESS_STEPS` /
+  `BAR_STUB_FRACTION` constants in `appearance/registry` — not from appearance,
+  not user-tunable, and each written exactly once.
+- `SeriesColors` = `{positive, negative}`; `DrawSeriesParams` — `hRatio`/`vRatio`
+  (device dots per CSS px, per axis, from the real backing-store size), dimensions,
+  scales (`xScale`, `yPrice`, `subpaneScales`), `bandwidth` + `step`, render slice
+  bounds, chart type, colors, `candle` appearance, indicators, color resolver.
 
 ### `src/utils/resolveChartColors.ts`
 

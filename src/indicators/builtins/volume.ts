@@ -111,20 +111,26 @@ const draw: IndicatorDef<VolumeSettings>['draw'] = (
   ctx.rect(-1e6, paneTop, 2e6, paneBottom - paneTop);
   ctx.clip();
 
-  const yBottom = scale.y(0);
+  // Columns are painted in BITMAP space on the price bar's own device slot, so
+  // each one is crisp and sits exactly under its bar. The pane clip above was
+  // set in CSS space but survives the transform change.
+  const yBottom = Math.round(scale.originY + scale.y(0) * scale.vRatio);
+  const minH = Math.max(1, Math.floor(scale.vRatio));
+  ctx.save();
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
   for (let g = renderStart; g < renderEnd; g++) {
     const d = data[g];
     if (!d || d.volume <= 0) continue; // matches the legacy `vol <= 0` skip
-    const x = xScale(g)!;
-    const yTop = scale.y(d.volume);
-    const h = yBottom - yTop;
+    const { left, width } = scale.barSlot(g);
+    const yTop = Math.round(scale.originY + scale.y(d.volume) * scale.vRatio);
     const up = d.close >= d.open;
     const sma = volSma?.[g];
     const faded = sma !== undefined && Number.isFinite(sma) && d.volume < sma;
     ctx.fillStyle = up ? upColor : downColor;
     ctx.globalAlpha = faded ? s.fadeOpacity : s.standardOpacity;
-    ctx.fillRect(x, yTop, bandwidth, h);
+    ctx.fillRect(left, yTop, width, Math.max(minH, yBottom - yTop));
   }
+  ctx.restore();
   ctx.globalAlpha = 1;
 
   // HVE/HVY milestone labels, centered above their bar (matching the legacy SVG

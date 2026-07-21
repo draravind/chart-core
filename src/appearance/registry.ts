@@ -6,13 +6,30 @@ import type { AppearanceOverrides, ChartAppearance } from './types';
 // migrated here, so zero-config visuals stay byte-identical.
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// OHLC bar geometry law. Baked constants, NOT user preferences — these describe
+// how the renderer behaves, not a per-user taste, so they live in code and ship
+// with the package. To retune, edit here and republish.
+// ---------------------------------------------------------------------------
+
+/**
+ * Bar thickness ladder — device bar-spacings (at a reference density of 2) at
+ * which the stem gains one dot. Base is 2 dots (1 CSS px, the floor); the cap is
+ * implied by the list's length. Read by `drawSeries.barMetrics`.
+ */
+export const BAR_THICKNESS_STEPS: readonly number[] = [13, 27, 34, 40, 47, 54];
+
+/** How far an open/close stub reaches from the bar centre, as a fraction of the
+ *  slot. Independent of thickness; floored at one stem width by `barMetrics`. */
+export const BAR_STUB_FRACTION = 0.35;
+
 export const APPEARANCE_DEFAULTS: ChartAppearance = {
   // Absent ⇒ inherit the CSS var as authored in chart-core.css.
   colors: {},
   // Background gradient — drawSeries.ts: bottom #776a5a → top #6e7b8b, radius 12.
   background: { topColor: '#6e7b8b', bottomColor: '#776a5a', radius: 12 },
-  // Candle wick stroke width — drawSeries.ts.
-  candle: { wickWidth: 1.25 },
+  // Candle wick width, CSS px — quantised to whole device dots at draw time.
+  candle: { wickWidth: 1.0 },
   // Axis tick lines — Chart.tsx AXIS_OPACITY / TICK_SIZE.
   axis: { opacity: 0.12, tickSize: 4 },
   // Crosshair lines — Chart.tsx (currentColor / 0.3 / '3,3').

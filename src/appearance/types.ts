@@ -142,6 +142,10 @@ export type ChartAppearance = {
   // Non-CSS-var scalars threaded explicitly into draw code:
   background: { topColor: string; bottomColor: string; radius: number };
   candle: { wickWidth: number };
+  // NOTE: the OHLC bar geometry law (thickness ladder + stub reach) is NOT here
+  // — it is baked in `registry.ts` as `BAR_THICKNESS_STEPS` /
+  // `BAR_STUB_FRACTION`, since it describes renderer behaviour rather than a
+  // per-user preference.
   axis: { opacity: number; tickSize: number };
   crosshair: { color: string; opacity: number; dash: string };
   // Per-pattern typed styles (the three renderers have disjoint field sets).

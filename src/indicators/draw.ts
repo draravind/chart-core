@@ -94,20 +94,22 @@ export function drawHistogram(
   style: LineStyle,
   negColor?: string,
 ): void {
-  const { xScale, bandwidth, renderStart, renderEnd } = scale;
-  const zeroY = scale.y(0);
-  const barW = Math.max(1, bandwidth);
+  const { renderStart, renderEnd } = scale;
+  // Bitmap space: columns take the price bar's own device slot, so they are
+  // crisp and share its columns dot for dot.
+  const zeroY = Math.round(scale.originY + scale.y(0) * scale.vRatio);
+  const minH = Math.max(1, Math.floor(scale.vRatio));
   ctx.save();
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.globalAlpha = style.opacity ?? 1;
   for (let g = renderStart; g < renderEnd; g++) {
     const v = values[g];
     if (Number.isNaN(v)) continue;
-    const x = xScale(g)! + bandwidth / 2 - barW / 2;
-    const y = scale.y(v);
+    const { left, width } = scale.barSlot(g);
+    const y = Math.round(scale.originY + scale.y(v) * scale.vRatio);
     ctx.fillStyle = v >= 0 ? style.color : (negColor ?? style.color);
     const top = Math.min(y, zeroY);
-    const h = Math.max(1, Math.abs(zeroY - y));
-    ctx.fillRect(x, top, barW, h);
+    ctx.fillRect(left, top, width, Math.max(minH, Math.abs(zeroY - y)));
   }
   ctx.restore();
 }
