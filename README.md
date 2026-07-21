@@ -134,10 +134,18 @@ styled out of the box. To re-theme, declare any of these on your own `:root`
 
 ### Chart colors
 
+`--chart-positive` / `--chart-negative` are the chart-wide price-direction pair
+(OHLC readout, Volume's default bars, the `--qr-growth-*` aliases, the ruler).
+`--candle-up` / `--candle-down` are the candle/bar body fills alone and default
+to that pair, so theming just the pair still recolors the candles — override the
+candle tokens only when you want the price series to differ from everything else.
+
 | Token | Default |
 | --- | --- |
 | `--chart-positive` | `#16a34a` |
 | `--chart-negative` | `#dc2626` |
+| `--candle-up` | `var(--chart-positive)` |
+| `--candle-down` | `var(--chart-negative)` |
 | `--chart-axis-label` | `#888888` |
 | `--chart-separator` | `#cccccc` |
 | `--chart-tooltip-label` | `#888888` |

@@ -1,23 +1,16 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { ChevronDown, ChevronUp } from 'lucide-react';
 import type {
   IndicatorConfig,
-  IndicatorDef,
   LegendRow,
   ResolvedIndicator,
 } from '../indicators/types';
+import { getIndicator, formatIndicatorParams } from '../indicators/registry';
 import {
-  getIndicator,
-  formatIndicatorParams,
-  defaultConfigFor,
-} from '../indicators/registry';
-import {
-  NumberField,
-  EnumField,
-  ToggleField,
-  ColorField,
-  LineField,
-} from './SettingsFields';
+  withSettingOverride,
+  withSettingsReset,
+} from '../indicators/applySettings';
+import IndicatorSettingsPopover from './IndicatorSettingsPopover';
 import styles from '../Chart.module.css';
 
 // Geometry handed down from Chart's `layout`. `subpanes[i].top` is in inner-SVG
@@ -57,122 +50,6 @@ type Props = {
   // Used to paint dots/value cells + factory color swatches in the popover.
   resolveColor?: (expr: string) => string;
 };
-
-// One uniform popover over the def's `settingsSchema`: number/enum/toggle/color/line
-// controls, each reading its current value from `config.settings`. Color fields
-// also surface the per-field reset (delete the key from `settingsOverrides`).
-function ParamPopover({
-  config,
-  def,
-  onCommit,
-  onReset,
-  onResetKeys,
-  resolveColor,
-  onClose,
-}: {
-  config: IndicatorConfig;
-  def: IndicatorDef;
-  onCommit: (key: string, value: number | boolean | string) => void;
-  onReset: (key: string) => void;
-  onResetKeys: (keys: string[]) => void;
-  resolveColor?: (expr: string) => string;
-  onClose: () => void;
-}) {
-  const ref = useRef<HTMLDivElement | null>(null);
-  useEffect(() => {
-    const onDown = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) onClose();
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
-    };
-    document.addEventListener('mousedown', onDown);
-    document.addEventListener('keydown', onKey);
-    return () => {
-      document.removeEventListener('mousedown', onDown);
-      document.removeEventListener('keydown', onKey);
-    };
-  }, [onClose]);
-
-  const summary = formatIndicatorParams(config);
-  const resolve = resolveColor ?? ((e: string) => e);
-  return (
-    <div className={styles.legendPopover} ref={ref} data-chart-wheel-scroll>
-      <div className={styles.legendPopoverHeader}>
-        <span className={styles.legendPopoverTitle}>
-          {def.longLabel ?? def.label}
-          {summary && <span className={styles.legendPopoverSummary}>{summary}</span>}
-        </span>
-        <button
-          type="button"
-          className={styles.legendPopoverClose}
-          title="Close"
-          onClick={onClose}
-        >
-          ×
-        </button>
-      </div>
-      <div className={styles.panelScrollBody}>
-        {def.settingsSchema.map((field) => {
-          switch (field.kind) {
-            case 'number':
-              return (
-                <NumberField
-                  key={field.key}
-                  spec={field}
-                  value={Number(config.settings[field.key] ?? field.default)}
-                  onCommit={(v) => onCommit(field.key, v)}
-                />
-              );
-            case 'enum':
-              return (
-                <EnumField
-                  key={field.key}
-                  spec={field}
-                  value={Number(config.settings[field.key] ?? field.default)}
-                  onChange={(v) => onCommit(field.key, v)}
-                />
-              );
-            case 'toggle':
-              return (
-                <ToggleField
-                  key={field.key}
-                  label={field.label}
-                  value={Boolean(config.settings[field.key] ?? field.default)}
-                  onChange={(v) => onCommit(field.key, v)}
-                />
-              );
-            case 'color':
-              return (
-                <ColorField
-                  key={field.key}
-                  label={field.label}
-                  colorExpr={String(config.settings[field.key] ?? field.default)}
-                  isOverridden={field.key in config.settingsOverrides}
-                  resolveColor={resolve}
-                  onCommit={(hex) => onCommit(field.key, hex)}
-                  onReset={() => onReset(field.key)}
-                />
-              );
-            case 'line':
-              return (
-                <LineField
-                  key={field.key}
-                  label={field.label}
-                  prefix={field.key}
-                  settings={config.settings}
-                  settingsOverrides={config.settingsOverrides}
-                  resolveColor={resolve}
-                  onCommit={(key, value) => onCommit(key, value)}
-                  onResetKeys={(keys) => onResetKeys(keys)}
-                />
-              );
-          }
-        })}
-      </div>
-    </div>
-  );
-}
 
 function LegendBlock({
   configs,
@@ -260,7 +137,7 @@ function LegendBlock({
               ×
             </button>
             {openId === config.id && hasEditable && (
-              <ParamPopover
+              <IndicatorSettingsPopover
                 config={config}
                 def={def}
                 onCommit={(key, value) => onCommit(config, key, value)}
@@ -330,54 +207,22 @@ export default function IndicatorLegend({
     return subscribeHoverIndex(setHoverIdx);
   }, [expanded, subscribeHoverIndex]);
 
-  // Set one setting override and recompute the whole config via
-  // `defaultConfigFor` (not a shallow spread) so param-dependent defaults
-  // re-derive — e.g. an EMA period 10→100 re-bands blue→green — while any user
-  // color override survives.
+  // Commit / reset go through the shared pure transforms (see
+  // indicators/applySettings) so this legend and Chart's centred popover edit
+  // identically — including the `defaultConfigFor` recompute (param-derived
+  // defaults re-derive) and the single batched multi-key reset.
   const commitSetting = (
     config: IndicatorConfig,
     key: string,
     value: number | boolean | string,
-  ) => {
-    onIndicatorsChange(
-      indicators.map((c) => {
-        if (c.id !== config.id) return c;
-        const next = defaultConfigFor(c.defKey, {
-          id: c.id,
-          enabled: c.enabled,
-          settingsOverrides: { ...c.settingsOverrides, [key]: value },
-        });
-        return next ?? c;
-      }),
-    );
-  };
+  ) => onIndicatorsChange(withSettingOverride(indicators, config.id, key, value));
 
-  // Drop a setting's override and recompute via `defaultConfigFor` so it falls
-  // back to its (possibly param-derived) default.
-  const resetSetting = (config: IndicatorConfig, key: string) => {
-    resetSettings(config, [key]);
-  };
+  const resetSetting = (config: IndicatorConfig, key: string) =>
+    onIndicatorsChange(withSettingsReset(indicators, config.id, [key]));
 
-  // Batched reset: drop several overrides in ONE `onIndicatorsChange` so the
-  // grouped line ↺ clears every sub-key at once. A per-key loop would fire
-  // multiple synchronous `onIndicatorsChange(value)` calls that each map over the
-  // same render-time `indicators`; React batches them into last-write-wins, so
-  // only one key would actually be cleared per click.
   const resetSettings = (config: IndicatorConfig, keys: string[]) => {
     if (keys.length === 0) return;
-    onIndicatorsChange(
-      indicators.map((c) => {
-        if (c.id !== config.id) return c;
-        const settingsOverrides = { ...c.settingsOverrides };
-        for (const key of keys) delete settingsOverrides[key];
-        const next = defaultConfigFor(c.defKey, {
-          id: c.id,
-          enabled: c.enabled,
-          settingsOverrides,
-        });
-        return next ?? c;
-      }),
-    );
+    onIndicatorsChange(withSettingsReset(indicators, config.id, keys));
   };
 
   const removeConfig = (id: string) => {

@@ -10,6 +10,7 @@ import {
   NumberField,
   SliderField,
 } from '../controls/SettingsFields';
+import { cn } from '../internal/cn';
 import chartStyles from '../Chart.module.css';
 import styles from './drawings.module.css';
 
@@ -24,6 +25,7 @@ type Props = {
   onDelete: () => void;
   resolveColor: (expr: string) => string;
   onClose: () => void;
+  className?: string;
   style?: React.CSSProperties;
 };
 
@@ -43,6 +45,7 @@ export default function DrawingStylePopup({
   onDelete,
   resolveColor,
   onClose,
+  className,
   style,
 }: Props) {
   const ref = useRef<HTMLDivElement | null>(null);
@@ -50,12 +53,31 @@ export default function DrawingStylePopup({
   const eff = effectiveDrawingStyle(shape.style);
   const isText = shape.type === 'text';
 
+  // Uniform dismissal across every floating editor: outside-mousedown + Escape.
+  //
+  // The timestamp guard is load-bearing, not defensive: placing a TEXT box opens
+  // this popup from the placing MOUSEDOWN. React flushes that discrete update
+  // synchronously, so this listener is registered while that very mousedown is
+  // still propagating up to document — and its target (the chart overlay rect) is
+  // outside the popup, which would close it the instant it opened. `timeStamp`
+  // and `performance.now()` share a time origin, so anything at or before mount
+  // is the opening event itself. A double-click-opened popup is unaffected: both
+  // of its mousedowns precede the panel.
   useEffect(() => {
+    const mountedAt = performance.now();
+    const onDown = (e: MouseEvent) => {
+      if (e.timeStamp <= mountedAt) return;
+      if (ref.current && !ref.current.contains(e.target as Node)) onClose();
+    };
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose();
     };
+    document.addEventListener('mousedown', onDown);
     document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('keydown', onKey);
+    };
   }, [onClose]);
 
   // Focus the text field when a freshly-placed (empty) text box opens.
@@ -77,7 +99,7 @@ export default function DrawingStylePopup({
 
   return (
     <div
-      className={styles.drawingPopup}
+      className={cn(styles.drawingPopup, className)}
       ref={ref}
       style={style}
       data-chart-wheel-scroll

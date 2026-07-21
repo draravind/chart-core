@@ -1,7 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
 import type { AppearanceOverrides } from '../appearance/types';
-import { effectiveAppearance } from '../appearance/registry';
-import { ColorField, NumberField, SliderField } from './SettingsFields';
+import {
+  CandleRows,
+  getAt,
+  makeAppearanceRows,
+  type Path,
+} from './appearanceFields';
 import styles from '../Chart.module.css';
 
 // ---------------------------------------------------------------------------
@@ -10,46 +14,6 @@ import styles from '../Chart.module.css';
 // deletes the path from the delta. Per-indicator styling stays in the on-chart
 // legend popover — this dialog owns chart-wide visuals + pattern styling.
 // ---------------------------------------------------------------------------
-
-type Path = string[];
-
-function getAt(obj: unknown, path: Path): unknown {
-  let cur: unknown = obj;
-  for (const k of path) {
-    if (cur == null || typeof cur !== 'object') return undefined;
-    cur = (cur as Record<string, unknown>)[k];
-  }
-  return cur;
-}
-
-function setIn(obj: AppearanceOverrides, path: Path, value: unknown): AppearanceOverrides {
-  const [head, ...rest] = path;
-  const src = { ...((obj ?? {}) as Record<string, unknown>) };
-  if (rest.length === 0) {
-    src[head] = value;
-  } else {
-    src[head] = setIn(src[head] as AppearanceOverrides, rest, value);
-  }
-  return src as AppearanceOverrides;
-}
-
-// Immutably delete a path, pruning now-empty ancestor objects so the persisted
-// delta stays minimal (and `effectiveAppearance` falls back to the default).
-function deleteIn(obj: AppearanceOverrides, path: Path): AppearanceOverrides {
-  const [head, ...rest] = path;
-  const src = { ...((obj ?? {}) as Record<string, unknown>) };
-  if (rest.length === 0) {
-    delete src[head];
-  } else {
-    const child = src[head];
-    if (child && typeof child === 'object') {
-      const next = deleteIn(child as AppearanceOverrides, rest) as Record<string, unknown>;
-      if (Object.keys(next).length === 0) delete src[head];
-      else src[head] = next;
-    }
-  }
-  return src as AppearanceOverrides;
-}
 
 // One free-text row (used for SVG dash-array strings like '3,3').
 function TextRow({
@@ -112,65 +76,9 @@ export default function SettingsDialog({
     };
   }, [onClose]);
 
-  const eff = effectiveAppearance(appearance);
-  const commit = (path: Path, value: unknown) =>
-    onAppearanceChange(setIn(appearance, path, value));
-  const reset = (path: Path) => onAppearanceChange(deleteIn(appearance, path));
-
-  // A color that lives in the injected CSS-var map: when unset, show the themed
-  // `var(--key)` so the swatch matches the live chart.
-  const colorVarRow = (key: string, label: string) => {
-    const override = appearance.colors?.[key];
-    return (
-      <ColorField
-        key={key}
-        label={label}
-        colorExpr={override ?? `var(--${key})`}
-        isOverridden={override !== undefined}
-        resolveColor={resolveColor}
-        onCommit={(hex) => commit(['colors', key], hex)}
-        onReset={() => reset(['colors', key])}
-      />
-    );
-  };
-
-  // A concrete color scalar (background/crosshair/pattern colors).
-  const colorRow = (path: Path, label: string) => (
-    <ColorField
-      key={path.join('.')}
-      label={label}
-      colorExpr={String(getAt(eff, path))}
-      isOverridden={getAt(appearance, path) !== undefined}
-      resolveColor={resolveColor}
-      onCommit={(hex) => commit(path, hex)}
-      onReset={() => reset(path)}
-    />
-  );
-
-  const numberRow = (
-    path: Path,
-    label: string,
-    opts: { min?: number; max?: number; step?: number } = {},
-  ) => {
-    const value = Number(getAt(eff, path));
-    return (
-      <NumberField
-        key={path.join('.')}
-        spec={{ key: path.join('.'), label, kind: 'number', default: value, ...opts }}
-        value={value}
-        onCommit={(v) => commit(path, v)}
-      />
-    );
-  };
-
-  const sliderRow = (path: Path, label: string) => (
-    <SliderField
-      key={path.join('.')}
-      label={label}
-      value={Number(getAt(eff, path))}
-      onCommit={(v) => commit(path, v)}
-    />
-  );
+  const rowCtx = { appearance, onAppearanceChange, resolveColor };
+  const { eff, commit, colorVarRow, colorRow, numberRow, sliderRow } =
+    makeAppearanceRows(rowCtx);
 
   const textRow = (path: Path, label: string) => (
     <TextRow
@@ -196,9 +104,11 @@ export default function SettingsDialog({
       </div>
       <div className={styles.panelScrollBody}>
         <div className={styles.settingsSectionTitle}>Chart appearance</div>
-        {colorVarRow('chart-positive', 'Candle up')}
-        {colorVarRow('chart-negative', 'Candle down')}
-        {numberRow(['candle', 'wickWidth'], 'Wick width', { min: 0.5, max: 6, step: 0.05 })}
+        {/* The chart-wide price-direction pair. NOT candle-only: the OHLC
+            readout, Volume's default bars, the --qr-growth-* aliases and the
+            ruler all read these — hence the honest labels. */}
+        {colorVarRow('chart-positive', 'Price up')}
+        {colorVarRow('chart-negative', 'Price down')}
         {colorRow(['background', 'topColor'], 'Background top')}
         {colorRow(['background', 'bottomColor'], 'Background bottom')}
         {numberRow(['background', 'radius'], 'Background radius', { min: 0, max: 48, step: 1 })}
@@ -210,6 +120,10 @@ export default function SettingsDialog({
         {textRow(['crosshair', 'dash'], 'Crosshair dash')}
         {colorVarRow('chart-separator', 'Separator')}
         {colorVarRow('subpane-guide', 'Subpane guide')}
+
+        {/* Same rows the double-click Candles popup renders — one definition. */}
+        <div className={styles.settingsGroupTitle}>Candles</div>
+        <CandleRows {...rowCtx} />
 
         <div className={styles.settingsSectionTitle}>Patterns</div>
 

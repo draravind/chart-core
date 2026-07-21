@@ -1,6 +1,11 @@
 import { describe, it, expect } from 'vitest';
+import * as d3 from 'd3';
 import type { Candle, QuarterlyResult } from '../src/types';
-import type { IndicatorInput } from '../src/indicators/types';
+import type {
+  IndicatorDrawScale,
+  IndicatorInput,
+} from '../src/indicators/types';
+import type { HitRegionSpec } from '../src/indicators/hitRegions';
 import {
   quarterlyResultsDef,
   computeYoYGrowth,
@@ -235,6 +240,109 @@ describe('filterColumnsBySpacing', () => {
       true,
       true,
     ]);
+  });
+});
+
+// --- Draw-time hit regions --------------------------------------------------
+
+const QR_PANE_TOP = 100;
+const QR_PANE_BOTTOM = 200;
+
+function fakeQrCtx(): CanvasRenderingContext2D {
+  return {
+    fillStyle: '',
+    font: '',
+    textAlign: '',
+    textBaseline: '',
+    globalAlpha: 1,
+    save() {},
+    restore() {},
+    beginPath() {},
+    rect() {},
+    clip() {},
+    setTransform() {},
+    fillRect() {},
+    fillText() {},
+    measureText: () => ({ width: 10 }),
+  } as unknown as CanvasRenderingContext2D;
+}
+
+function qrDrawScale(
+  bars: Candle[],
+  regions: HitRegionSpec[],
+): IndicatorDrawScale {
+  // 10px per bar — well under MIN_COL_SPACING_PX (70), so adjacent quarters
+  // collide and the column thinning actually bites.
+  const xScale = d3
+    .scaleBand<number>()
+    .domain(bars.map((_, i) => i))
+    .range([0, bars.length * 10])
+    .paddingInner(0.3);
+  return {
+    xScale,
+    yPrice: d3.scaleLog().domain([1, 100]).range([QR_PANE_TOP, 0]),
+    y: (v: number) => QR_PANE_BOTTOM - v,
+    bandwidth: xScale.bandwidth(),
+    data: bars,
+    renderStart: 0,
+    renderEnd: bars.length,
+    paneTop: QR_PANE_TOP,
+    paneBottom: QR_PANE_BOTTOM,
+    hRatio: 2,
+    vRatio: 2,
+    originX: 0,
+    originY: 0,
+    barSlot: (g) => ({ left: g * 20, width: 12 }),
+    hit: { add: (r) => regions.push(r) },
+  };
+}
+
+describe('quarterlyResultsDef.draw — hit regions', () => {
+  const bars = dailyBars('2024-01-01', 12);
+  // Three quarters landing on consecutive bars: at 10px spacing only the
+  // newest survives `filterColumnsBySpacing`.
+  const rows: QuarterlyResult[] = [0, 1, 2].map((i) => ({
+    date: bars[i].date,
+    label: `Q${i + 1}`,
+    eps: 10 + i,
+    rps: 100 + i,
+  }));
+
+  const regionsFor = (display: number) => {
+    const { series, meta } = quarterlyResultsDef.compute(
+      makeInput(bars, rows),
+      baseSettings(display),
+    );
+    const regions: HitRegionSpec[] = [];
+    quarterlyResultsDef.draw(
+      fakeQrCtx(),
+      series,
+      qrDrawScale(bars, regions),
+      baseSettings(display),
+      (e) => e,
+      meta,
+    );
+    return regions;
+  };
+
+  it('text mode records one region per KEPT column, spanning the pane band', () => {
+    const regions = regionsFor(0);
+    expect(regions).toHaveLength(1);
+    // The newest column (bar 2) is the one kept.
+    expect(regions[0].spanAt(2)).toEqual([QR_PANE_TOP, QR_PANE_BOTTOM]);
+    expect(regions[0].spanAt(0)).toBeNull();
+    expect(regions[0].spanAt(1)).toBeNull();
+  });
+
+  it('bars mode records one region per ANCHOR, including label-thinned ones', () => {
+    const regions = regionsFor(1);
+    // Bars draw for every anchor; only the LABELS are thinned. Recording only
+    // the kept columns would leave two drawn pairs unclickable.
+    expect(regions).toHaveLength(3);
+    for (let g = 0; g < 3; g++) {
+      const owner = regions.filter((r) => r.spanAt(g) !== null);
+      expect(owner, `anchor ${g}`).toHaveLength(1);
+    }
   });
 });
 

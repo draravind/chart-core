@@ -1,8 +1,15 @@
 import type * as d3 from 'd3';
 import type { Candle, ChartType } from '../types';
 import type { ResolvedIndicator } from '../indicators/types';
+import type { CandleAppearance } from '../appearance/types';
+import type { HitRegion } from '../indicators/hitRegions';
+import { CANDLE_SOURCE } from '../indicators/hitRegions';
 import { getIndicator } from '../indicators/registry';
-import { BAR_THICKNESS_STEPS, BAR_STUB_FRACTION } from '../appearance/registry';
+import {
+  BAR_THICKNESS_STEPS,
+  BAR_STUB_FRACTION,
+  CANDLE_WICK_FRACTION,
+} from '../appearance/registry';
 
 export type SeriesColors = { positive: string; negative: string };
 
@@ -39,8 +46,9 @@ export type DrawSeriesParams = {
   colors: SeriesColors;
   // Background gradient (resolved rgb) + corner radius, threaded from appearance.
   background: { topColor: string; bottomColor: string; radius: number };
-  // Candle wick width (CSS px, quantised to whole device dots at draw time).
-  candle: { wickWidth: number };
+  // Price-series appearance (opacity). The wick is derived from the body — see
+  // CANDLE_WICK_FRACTION — so it is a renderer law, not a setting.
+  candle: CandleAppearance;
   indicators: ResolvedIndicator[];
   resolveColor: (varExpr: string) => string;
 };
@@ -52,9 +60,19 @@ export type DrawSeriesParams = {
  * instances, same clips (`#chart-price-viewport` for the price pane,
  * `#chart-viewport` for the subpanes), same pan translate, so the canvas
  * overlays the (flag-gated) SVG within ±1px.
+ *
+ * Returns the paint-time hit regions in PAINT ORDER (price-pane indicators, then
+ * the candles/bars on top of them, then the subpane indicators) — `pickHitRegion`
+ * walks them in reverse so a later-painted mark wins, which is what makes a
+ * candle beat an indicator line crossing it. Rebuilt every frame, so it can
+ * never go stale.
  */
-export function drawSeries(ctx: CanvasRenderingContext2D, p: DrawSeriesParams): void {
+export function drawSeries(
+  ctx: CanvasRenderingContext2D,
+  p: DrawSeriesParams,
+): HitRegion[] {
   const { hRatio, vRatio } = p;
+  const regions: HitRegion[] = [];
 
   // Reset transform + clear the full backing store (so a symbol switch can
   // never leave ghost pixels from the prior symbol).
@@ -80,18 +98,25 @@ export function drawSeries(ctx: CanvasRenderingContext2D, p: DrawSeriesParams): 
   // Under a manual domain (Y-axis scale drag, or the vertical body pan that drag
   // unlocks) yPrice can map well outside [0, priceHeight]; without this they
   // would paint over the volume / RS panes below.
+  //
+  // Indicators paint FIRST so the price series lands on top of them: an EMA is
+  // context for the price, not something that should cut across a candle body.
+  // This also settles the click: regions are walked in reverse, so painting the
+  // candles last makes them win wherever a line crosses one.
   ctx.save();
   clipAndPan(ctx, p, p.marginTop + p.priceHeight);
-  if (p.chartType === 'bar') drawBars(ctx, p);
-  else drawCandles(ctx, p);
-  drawIndicators(ctx, p, false);
+  drawIndicators(ctx, p, false, regions);
+  if (p.chartType === 'bar') drawBars(ctx, p, regions);
+  else drawCandles(ctx, p, regions);
   ctx.restore();
 
   // Subpanes: full viewport clip; each subpane def self-clips to its own band.
   ctx.save();
   clipAndPan(ctx, p, p.marginTop + p.fullHeight + p.marginBottom);
-  drawIndicators(ctx, p, true);
+  drawIndicators(ctx, p, true, regions);
   ctx.restore();
+
+  return regions;
 }
 
 /** Apply the viewport clip and re-establish the panned CSS transform.
@@ -138,7 +163,11 @@ function paint(
   for (const r of rects) ctx.fillRect(r[0], r[1], r[2], r[3]);
 }
 
-function drawCandles(ctx: CanvasRenderingContext2D, p: DrawSeriesParams): void {
+function drawCandles(
+  ctx: CanvasRenderingContext2D,
+  p: DrawSeriesParams,
+  regions: HitRegion[],
+): void {
   const { xScale, yPrice, bandwidth, renderStart, renderSlice, colors } = p;
   const ox = originX(p);
   const oy = originY(p);
@@ -149,11 +178,17 @@ function drawCandles(ctx: CanvasRenderingContext2D, p: DrawSeriesParams): void {
   let bw = Math.max(1, Math.round(bandwidth));
   if (bw % 2 === 0) bw = Math.max(1, bw - 1);
   const bodyW = Math.max(1, Math.round(bw * p.hRatio));
-  // Whole device dots, floored at one CSS px — a fractional stroke width is what
-  // made the old wick antialias on both edges.
-  const wickW = Math.max(
-    Math.max(1, Math.floor(p.hRatio)),
-    Math.round(p.candle.wickWidth * p.hRatio),
+  // The wick is a FRACTION OF THE BODY, not a fixed CSS width: the body scales
+  // with zoom, so a pinned wick becomes a hairline under a fat body. Floored at
+  // one CSS px (a fractional stroke width is what made the old wick antialias on
+  // both edges) and capped at the body so it can never swallow it. At the
+  // default ~250-bar view the floor wins, so the wick is still exactly 1 CSS px.
+  const wickW = Math.min(
+    bodyW,
+    Math.max(
+      Math.max(1, Math.floor(p.hRatio)),
+      Math.round(bodyW * CANDLE_WICK_FRACTION),
+    ),
   );
   const pos: DeviceRect[] = [];
   const neg: DeviceRect[] = [];
@@ -182,9 +217,32 @@ function drawCandles(ctx: CanvasRenderingContext2D, p: DrawSeriesParams): void {
   }
   ctx.save();
   ctx.setTransform(1, 0, 0, 1, 0, 0);
+  // Inside the save/restore so the alpha can never leak into the indicator pass.
+  ctx.globalAlpha = p.candle.opacity;
   paint(ctx, colors.positive, pos);
   paint(ctx, colors.negative, neg);
   ctx.restore();
+
+  // Candle mode uses the BODY half-width, not the slot: the slot is wider than
+  // the body, which would make the inter-bar gaps hittable.
+  regions.push(candleRegion(p, bodyW / (2 * p.hRatio)));
+}
+
+/** The price series' own hit region — high→low at each bar, in panned-local CSS.
+ *  Candles go through the same mechanism as every indicator (no special case);
+ *  because they paint first they sit at the bottom of the reversed walk, so an
+ *  indicator line over a candle always wins. */
+function candleRegion(p: DrawSeriesParams, halfWidth: number): HitRegion {
+  return {
+    sourceId: CANDLE_SOURCE,
+    spanAt: (g) => {
+      const d = p.data[g];
+      if (!d) return null;
+      return [p.yPrice(d.high), p.yPrice(d.low)];
+    },
+    halfWidth,
+    interpolate: false,
+  };
 }
 
 // --- Bar zoom law -----------------------------------------------------------
@@ -282,7 +340,11 @@ function frameBarMetrics(p: DrawSeriesParams): BarMetrics {
   return barMetrics(p.step, p.hRatio, BAR_THICKNESS_STEPS, BAR_STUB_FRACTION);
 }
 
-function drawBars(ctx: CanvasRenderingContext2D, p: DrawSeriesParams): void {
+function drawBars(
+  ctx: CanvasRenderingContext2D,
+  p: DrawSeriesParams,
+  regions: HitRegion[],
+): void {
   const { xScale, yPrice, bandwidth, renderStart, renderSlice, colors } = p;
   const m = frameBarMetrics(p);
   const ox = originX(p);
@@ -300,10 +362,22 @@ function drawBars(ctx: CanvasRenderingContext2D, p: DrawSeriesParams): void {
   }
   ctx.save();
   ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.globalAlpha = p.candle.opacity;
   paint(ctx, colors.positive, pos);
   paint(ctx, colors.negative, neg);
   ctx.restore();
+
+  // An OHLC bar is a stem PLUS open/close stubs reaching `sideW` each side, so
+  // bar mode is wider than candle mode. `barSlotAt` already computes exactly
+  // that (clamped so columns never overlap) — reuse it rather than restating
+  // the ladder maths.
+  const slotW = barSlotAt(p, m, p.renderStart).width;
+  regions.push(candleRegion(p, slotW / (2 * p.hRatio)));
 }
+
+// Defs already warned about, so a pan (which repaints every frame) doesn't spam
+// the console. MODULE-level on purpose: a call-local set would warn per frame.
+const warnedUndeclaredDefs = new Set<string>();
 
 /** Paint one pane group: `subpaneOnly=false` draws the price-scale indicators
  *  (under the price-pane clip), `true` draws the subpane ones. */
@@ -311,6 +385,7 @@ function drawIndicators(
   ctx: CanvasRenderingContext2D,
   p: DrawSeriesParams,
   subpaneOnly: boolean,
+  regions: HitRegion[],
 ): void {
   if (p.indicators.length === 0) return;
   // Recomputed from `g` on demand rather than tabulated per frame, so a
@@ -337,7 +412,15 @@ function drawIndicators(
       y = p.yPrice;
       paneRange = p.yPrice.range();
     }
+    // A FRESH sink per indicator, stamping this config's id, so no def can
+    // mis-attribute a region to another instance.
+    const before = regions.length;
+    const hit = {
+      add: (region: Omit<HitRegion, 'sourceId'>) =>
+        regions.push({ ...region, sourceId: config.id }),
+    };
     const scale = {
+      hit,
       xScale: p.xScale,
       yPrice: p.yPrice,
       y: (value: number) => y(value),
@@ -354,5 +437,21 @@ function drawIndicators(
       barSlot,
     };
     def.draw(ctx, series, scale, config.settings, p.resolveColor, meta);
+    // The sink is a side channel, so nothing FORCES a def to use it (unlike the
+    // drawing renderers, whose hit closure is a required return value). Without
+    // this, a hand-written def that forgets to declare is silently unclickable
+    // with no error anywhere; caught the first time anyone runs it instead.
+    if (
+      import.meta.env?.DEV &&
+      regions.length === before &&
+      !warnedUndeclaredDefs.has(def.key)
+    ) {
+      warnedUndeclaredDefs.add(def.key);
+      console.warn(
+        `[chart-core] indicator "${def.key}" declared no hit regions — ` +
+          'double-clicking its marks will not open its settings. Call ' +
+          '`scale.hit?.add(...)` from its draw (see indicators/hitRegions.ts).',
+      );
+    }
   }
 }

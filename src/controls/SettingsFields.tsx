@@ -165,8 +165,10 @@ export function ColorField({
         />
         <button
           type="button"
-          className={styles.legendBtn}
-          title="Reset to default color"
+          className={styles.fieldResetBtn}
+          title={
+            isOverridden ? 'Reset to default color' : 'Already the default color'
+          }
           disabled={!isOverridden}
           onClick={onReset}
         >
@@ -303,8 +305,8 @@ export function LineField({
         />
         <button
           type="button"
-          className={styles.legendBtn}
-          title="Reset line to default"
+          className={styles.fieldResetBtn}
+          title={overridden ? 'Reset line to default' : 'Already the default line'}
           disabled={!overridden}
           onClick={resetAll}
         >

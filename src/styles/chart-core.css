@@ -7,6 +7,14 @@
 :where(:root) {
   --chart-positive: #16a34a;
   --chart-negative: #dc2626;
+
+  /* Candle/bar body fills. Default to the chart-wide price-direction pair, so
+   * an app that only themes --chart-positive/--chart-negative still recolours
+   * the candles. Split out so the double-click "Candles" popup can retint the
+   * price series ALONE — the chart-wide pair is also read by the OHLC readout,
+   * Volume's default bar colours, the --qr-growth-* aliases and the ruler. */
+  --candle-up: var(--chart-positive);
+  --candle-down: var(--chart-negative);
   --chart-axis-label: #888888;
   --chart-separator: #cccccc;
   --chart-tooltip-label: #888888;

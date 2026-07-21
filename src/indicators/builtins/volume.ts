@@ -133,6 +133,24 @@ const draw: IndicatorDef<VolumeSettings>['draw'] = (
   ctx.restore();
   ctx.globalAlpha = 1;
 
+  // Declare the columns. `spanAt` returns null exactly where the loop above
+  // skipped, so a click on an empty column opens nothing. The HVE/HVY labels
+  // sit ABOVE the bar top and are deliberately not covered — extending the span
+  // upward to catch them would make the empty space above short bars clickable.
+  if (renderEnd > renderStart) {
+    const zeroCss = scale.y(0);
+    const halfWidth = scale.barSlot(renderStart).width / (2 * scale.hRatio);
+    scale.hit?.add({
+      spanAt: (g) => {
+        const d = data[g];
+        if (!d || d.volume <= 0) return null;
+        return [zeroCss, scale.y(d.volume)];
+      },
+      halfWidth,
+      interpolate: false,
+    });
+  }
+
   // HVE/HVY milestone labels, centered above their bar (matching the legacy SVG
   // labels at Chart.tsx). `volLabel` is empty when `milestones` is off.
   if (volLabel) {

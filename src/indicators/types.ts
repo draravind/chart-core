@@ -1,6 +1,7 @@
 import type * as d3 from 'd3';
 import type { Candle, QuarterlyResult } from '../types';
 import type { StatsMarket } from '../stats/types';
+import type { HitRegionSink } from './hitRegions';
 
 // ---------------------------------------------------------------------------
 // Pillar 3 — modular in-browser indicator framework.
@@ -144,6 +145,12 @@ export type IndicatorDrawScale = {
    *  proves the wiring instead of a fallback silently repainting the old
    *  fractional geometry. */
   barSlot: (globalIdx: number) => { left: number; width: number };
+  /** Paint-time hit-region sink — a def declares the geometry it covered so a
+   *  double-click can be routed back to it (see ./hitRegions). Optional so an
+   *  externally-authored def keeps compiling; the shared painters
+   *  (`drawPolyline`/`drawHistogram`/`drawDots`) declare on the def's behalf, so
+   *  only a hand-painting def needs to call this itself. */
+  hit?: HitRegionSink;
 };
 
 /**

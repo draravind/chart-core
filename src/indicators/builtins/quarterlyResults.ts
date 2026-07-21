@@ -261,6 +261,19 @@ const draw: IndicatorDef<QuarterlyResultsSettings>['draw'] = (
     ctx.textAlign = 'center';
     ctx.textBaseline = 'alphabetic';
 
+    // One region per KEPT column (the thinned-out ones paint nothing), spanning
+    // the full pane band. Columns are ≥ MIN_COL_SPACING_PX apart, so half that
+    // spacing as the half-width can never make two regions overlap.
+    for (let i = 0; i < anchors.length; i++) {
+      if (!keep[i]) continue;
+      const cg = anchors[i].g;
+      scale.hit?.add({
+        spanAt: (g) => (g === cg ? [paneTop, paneBottom] : null),
+        halfWidth: MIN_COL_SPACING_PX / 2,
+        interpolate: false,
+      });
+    }
+
     if (paneHeight >= MIN_FULL_LAYOUT_PANE_PX) {
       // Five-row layout (faithful port). Tight pairs grouped: label; EPS value;
       // EPS growth (tight under it); RPS value (group gap); RPS growth (tight).
@@ -388,6 +401,21 @@ const draw: IndicatorDef<QuarterlyResultsSettings>['draw'] = (
     const epsX = cx + innerGap / 2;
     drawBar(rpsX, row.rps, rpsColor);
     drawBar(epsX, row.eps, epsColor);
+
+    // Bars mode draws a pair for EVERY anchor (only the LABELS are thinned), so
+    // declare per anchor — recording only the kept columns would leave drawn
+    // bars unclickable. Span = the union of the pair, from the zero baseline.
+    const cg = anchors[i].g;
+    const ys = [zeroY];
+    if (Number.isFinite(row.rps)) ys.push(scale.y(row.rps));
+    if (Number.isFinite(row.eps)) ys.push(scale.y(row.eps));
+    const barTop = Math.min(...ys);
+    const barBottom = Math.max(...ys);
+    scale.hit?.add({
+      spanAt: (g) => (g === cg ? [barTop, barBottom] : null),
+      halfWidth: pairWidth / 2,
+      interpolate: false,
+    });
 
     if (!keepLabels[i]) continue;
     const labelOver = (

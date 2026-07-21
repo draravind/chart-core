@@ -62,6 +62,19 @@ export function drawPolyline(
   }
   ctx.stroke();
   ctx.restore();
+
+  // Declare what was painted: a zero-height span per drawn vertex, gated by the
+  // SAME `defined` predicate, so the line's gaps are the region's gaps.
+  scale.hit?.add({
+    spanAt: (g) => {
+      const v = values[g];
+      if (v === undefined || Number.isNaN(v) || !defined(g)) return null;
+      const y = scale.y(v);
+      return [y, y];
+    },
+    halfWidth: 0,
+    interpolate: true,
+  });
 }
 
 /**
@@ -112,11 +125,31 @@ export function drawHistogram(
     ctx.fillRect(left, top, width, Math.max(minH, Math.abs(zeroY - y)));
   }
   ctx.restore();
+
+  // Columns are FILLED marks: the span runs zero-line → value in CSS space
+  // (the bitmap conversion above is a paint detail), the half-width is the
+  // shared bar slot.
+  if (renderEnd > renderStart) {
+    const zeroCss = scale.y(0);
+    const halfWidth = scale.barSlot(renderStart).width / (2 * scale.hRatio);
+    scale.hit?.add({
+      spanAt: (g) => {
+        const v = values[g];
+        if (v === undefined || Number.isNaN(v)) return null;
+        return [zeroCss, scale.y(v)];
+      },
+      halfWidth,
+      interpolate: false,
+    });
+  }
 }
 
 /**
  * Paint dashed horizontal guide lines at the given subpane VALUES (e.g. RSI
  * 30/70, the MACD zero line). Drawn across the full render window width.
+ *
+ * Deliberately declares NO hit region: a guide line is decoration, not a
+ * clickable object.
  */
 export function drawGuideLines(
   ctx: CanvasRenderingContext2D,
@@ -168,4 +201,15 @@ export function drawDots(
     ctx.fill();
   }
   ctx.restore();
+
+  scale.hit?.add({
+    spanAt: (g) => {
+      const v = values[g];
+      if (v === undefined || Number.isNaN(v) || !marked(g)) return null;
+      const y = scale.y(v);
+      return [y - radius, y + radius];
+    },
+    halfWidth: radius,
+    interpolate: false,
+  });
 }

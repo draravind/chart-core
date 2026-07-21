@@ -63,6 +63,19 @@ export type {
   LegendRow,
   DomainSpec,
 } from './indicators/types';
+// Paint-time hit regions — part of the public draw-scale contract now that
+// `IndicatorDrawScale.hit` is a declared field an external def can call.
+export type {
+  HitRegion,
+  HitRegionSpec,
+  HitRegionSink,
+} from './indicators/hitRegions';
+export {
+  CANDLE_SOURCE,
+  REGION_HIT_TOLERANCE,
+  FILLED_HIT_PAD,
+  pickHitRegion,
+} from './indicators/hitRegions';
 export type { RsSettings } from './indicators/builtins/rsLine';
 export type { Stage2Settings } from './indicators/builtins/stage2';
 export type { QuarterlyResultsSettings } from './indicators/builtins/quarterlyResults';
@@ -109,6 +122,7 @@ export type { TrangeSettings } from './indicators/builtins/trange';
 export type {
   ChartAppearance,
   AppearanceOverrides,
+  CandleAppearance,
   PatternStyles,
   LabelStyle,
   BaseBreakoutStyle,

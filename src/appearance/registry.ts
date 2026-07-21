@@ -23,13 +23,26 @@ export const BAR_THICKNESS_STEPS: readonly number[] = [13, 27, 34, 40, 47, 54];
  *  slot. Independent of thickness; floored at one stem width by `barMetrics`. */
 export const BAR_STUB_FRACTION = 0.35;
 
+/**
+ * Candle wick thickness as a fraction of the BODY width. The body is derived
+ * from the slot each bar occupies, so it scales with zoom; pinning the wick to a
+ * fixed CSS width (the old `candle.wickWidth` dial) left a hairline under a fat
+ * body. Floored at 1 CSS px and capped at the body by `drawCandles`.
+ *
+ * 1/6 is chosen so the default view is byte-identical to the pre-change build:
+ * at ~250 visible bars the body is 3 CSS px (6 dots at 2×) and `6 × 1/6 = 1`
+ * dot, so the 1-CSS-px floor wins. The wick only thickens past ~110 visible
+ * bars — exactly the zoom range where the old hairline looked wrong.
+ */
+export const CANDLE_WICK_FRACTION = 1 / 6;
+
 export const APPEARANCE_DEFAULTS: ChartAppearance = {
   // Absent ⇒ inherit the CSS var as authored in chart-core.css.
   colors: {},
   // Background gradient — drawSeries.ts: bottom #776a5a → top #6e7b8b, radius 12.
   background: { topColor: '#6e7b8b', bottomColor: '#776a5a', radius: 12 },
-  // Candle wick width, CSS px — quantised to whole device dots at draw time.
-  candle: { wickWidth: 1.0 },
+  // Price-series opacity (globalAlpha around the candle/bar paint pass).
+  candle: { opacity: 1 },
   // Axis tick lines — Chart.tsx AXIS_OPACITY / TICK_SIZE.
   axis: { opacity: 0.12, tickSize: 4 },
   // Crosshair lines — Chart.tsx (currentColor / 0.3 / '3,3').

@@ -42,7 +42,8 @@ The split is intentional: the routing table + glossary here are **pay-always**
 | Add a new indicator                                                           | `src/indicators/builtins/` (new `*Def` with a `settingsSchema`), register via import in `src/indicators/registry.ts`; shared enum options in `src/indicators/settingsOptions.ts`                                                                                                            |
 | Fix indicator math / TA-Lib parity                                            | `src/indicators/talibMath.ts`; verify with `tests/parity.test.ts` + `src/indicators/__fixtures__/talib_fixtures.json`                                                                                                                                                                       |
 | Fix a wrong indicator color                                                   | `src/utils/resolveChartColors.ts`, `src/utils/toHex6.ts`; color-layer logic in `registry.ts` (`defaultConfigFor`); `tests/indicatorColors.test.ts`                                                                                                                                          |
-| Edit global chart appearance at runtime (candle/bg/axis/crosshair/separators) | `src/appearance/{types,registry}.ts` (`ChartAppearance`, `APPEARANCE_DEFAULTS`, `effectiveAppearance`); `appearance`/`onAppearanceChange` Chart props; color-injection + `colorEpoch` in `Chart.tsx`; gear dialog `src/controls/SettingsDialog.tsx`; `tests/appearance.test.ts`             |
+| Edit global chart appearance at runtime (candle/bg/axis/crosshair/separators) | `src/appearance/{types,registry}.ts` (`ChartAppearance`, `APPEARANCE_DEFAULTS`, `effectiveAppearance`); `appearance`/`onAppearanceChange` Chart props; color-injection + `colorEpoch` in `Chart.tsx`; gear dialog `src/controls/SettingsDialog.tsx`, shared rows `src/controls/appearanceFields.tsx`; `tests/appearance.test.ts`             |
+| Edit candle colour / opacity (double-click a candle)                          | `src/controls/CandleSettingsPopup.tsx` + `CandleRows` in `src/controls/appearanceFields.tsx` (edits the `--candle-up`/`--candle-down` tokens + `candle.opacity`, NOT the chart-wide `--chart-*` pair); routed from the `dblclick` in `Chart.tsx`                                             |
 | Style an indicator line (width / dash / opacity, not just color)              | grouped `line` `SettingsField` (`src/indicators/types.ts`), expanded to 4 scalar sub-keys in `registry.ts` (`defaultsFromSchema`); `lineStyleFrom` in `src/indicators/lineSettings.ts`; `LINE_STYLE_OPTIONS`/`dashFor` in `src/indicators/settingsOptions.ts`; `tests/lineSettings.test.ts` |
 | Style a pattern overlay (line/box/label colors, widths, opacities)            | `APPEARANCE_DEFAULTS.patterns`; renderers read `ctx.patternStyle[name]` + `ctx.resolveColor` (`src/patterns/renderers/*`, `mountChartPatternOverlay.ts`); `tests/patternStyle.test.ts`                                                                                                      |
 | Add/share a settings UI control (number/enum/toggle/color/slider/line)        | `src/controls/SettingsFields.tsx` (shared field vocabulary, used by both legend popover + dialog)                                                                                                                                                                                           |
@@ -52,12 +53,13 @@ The split is intentional: the routing table + glossary here are **pay-always**
 | Adjust volume (bars/HVE-HVY/K-M-B axis)                                       | `src/indicators/builtins/volume.ts` (registered subpane indicator, key `volume`); `tests/volume.test.ts`; math in `src/utils/chartCalculations.ts` (`computeVolumeStats`)                                                                                                                   |
 | Add/adjust a chart control                                                    | `src/controls/ChartControls.tsx`; zoom is the `src/controls/ZoomSlider.tsx` slider (replaced the range pills)                                                                                                                                                                              |
 | Change the zoom-out cap / zoom slider / range marks                            | cap math in `src/utils/chartCalculations.ts` (`MIN_BAR_STEP_PX`, `maxVisibleBarsForWidth`); enforced in `src/Chart.tsx` (`cappedVisibleBars` + correction effect + `onMaxVisibleBarsChange`); UI in `src/controls/ZoomSlider.tsx`; `tests/zoomCap.test.ts`                                  |
-| Fix a legend entry / live values                                              | `src/controls/IndicatorLegend.tsx`                                                                                                                                                                                                                                                          |
+| Fix a legend entry / live values                                              | `src/controls/IndicatorLegend.tsx`; the settings popover itself is `src/controls/IndicatorSettingsPopover.tsx` (shared with Chart's double-click panel), commit/reset in `src/indicators/applySettings.ts`                                                                                   |
+| Make an object open its settings on double-click / fix a wrong-object hit     | `src/indicators/hitRegions.ts` (the region contract + `pickHitRegion`), the painters that declare (`src/indicators/draw.ts`, `builtins/{volume,quarterlyResults,stage2}.ts`, `drawCandles`/`drawBars` in `src/utils/drawSeries.ts`), routing in the `dblclick` handler in `Chart.tsx`; `tests/hitRegions.test.ts` |
 | Adjust the price-stats panel                                                  | `src/stats/` (`computeStats.ts` math, `StatsPanel.tsx` panel, `stats.module.css`); `--stats-*` tokens in `src/styles/chart-core.css`; `tests/stats.test.ts`                                                                                                                                 |
 | Add an overlay/annotation plugin                                              | `src/context.tsx` hooks (`useChartScale`, `useChartOverlayHost`) + `src/patterns/mountChartPatternOverlay.ts`                                                                                                                                                                               |
 | Add a new pattern shape                                                       | `src/patterns/renderers/` (new renderer, reuse `_shared.ts` for chip/marker/`xForBar`) + register in `renderers/index.ts`; add a `*Style` to `appearance/types.ts` + default in `registry.ts` + section in `SettingsDialog.tsx` + barrel export in `index.ts`; smoke test in `tests/patternRenderers.test.ts` |
-| Add/adjust a user drawing tool (trend/h-v line, ray, text, ruler)             | `src/drawings/` (pure: `types`/`defaults`/`projection`/`hitTest`/`rulerStats`/`interaction`; D3 mount `mountChartDrawingOverlay.ts` + `renderers/*`; popup `DrawingStylePopup.tsx`); wired in `Chart.tsx` (mousedown 3-branch, document drag effect, mount + pan/rescale) + `ChartControls.tsx` (Draw ▾ dropdown); `tests/drawing*.test.ts` |
-| Fix candle/bar rendering                                                      | `src/Chart.tsx`, `src/utils/drawSeries.ts` (volume is now the `volume` indicator, not here)                                                                                                                                                                                                 |
+| Add/adjust a user drawing tool (trend/h-v line, ray, text, ruler)             | `src/drawings/` (pure: `types`/`defaults`/`projection`/`hitTest`/`rulerStats`/`interaction`; D3 mount `mountChartDrawingOverlay.ts` + `renderers/*`; popup `DrawingStylePopup.tsx` — opened by DOUBLE-click, a single click only selects); wired in `Chart.tsx` (mousedown 3-branch, `dblclick` router, document drag effect, mount + pan/rescale) + `ChartControls.tsx` (Draw ▾ dropdown); `tests/drawing*.test.ts` |
+| Fix candle/bar rendering                                                      | `src/Chart.tsx`, `src/utils/drawSeries.ts` (volume is now the `volume` indicator, not here); wick thickness is `CANDLE_WICK_FRACTION` of the body in `appearance/registry.ts`, not a user setting                                                                                            |
 | Map a date ↔ bar index                                                        | `src/utils/dateBarIndex.ts`                                                                                                                                                                                                                                                                 |
 | Change price/volume formatting or range presets                               | `src/utils/chartCalculations.ts`                                                                                                                                                                                                                                                            |
 | Fix theming / a CSS variable not applying                                     | `src/styles/chart-core.css` (token contract) + README token tables                                                                                                                                                                                                                          |
@@ -97,10 +99,29 @@ settingsOverrides`). `lineStyleFrom` (`src/indicators/lineSettings.ts`) reads
   resolves the merge over `APPEARANCE_DEFAULTS` via `effectiveAppearance`
   (`src/appearance/registry.ts`). Colors ride a `colors` map injected as inline
   `--<key>` CSS vars on the wrapper (zero draw-code change); non-color scalars
-  (gradient/wick/axis/crosshair) thread explicitly into draw code. Pattern styling
-  lives under `patterns[pattern_name]`. UI: the gear-triggered
-  `src/controls/SettingsDialog.tsx`; shared field controls in
+  (gradient/candle-opacity/axis/crosshair) thread explicitly into draw code.
+  Pattern styling lives under `patterns[pattern_name]`. UI: the gear-triggered
+  `src/controls/SettingsDialog.tsx` plus the focused
+  `src/controls/CandleSettingsPopup.tsx`, both rendering the row builders in
+  `src/controls/appearanceFields.tsx`; shared field controls in
   `src/controls/SettingsFields.tsx`.
+- **Candle vs price colours** — `--candle-up`/`--candle-down` are the candle/bar
+  body fills ALONE and default (in `src/styles/chart-core.css`) to
+  `--chart-positive`/`--chart-negative`, which are the chart-wide price-direction
+  pair also read by the OHLC readout, Volume's default bars, the `--qr-growth-*`
+  aliases and the ruler. The Candles popup edits only the candle pair; the gear
+  dialog's "Price up/down" rows edit the chart-wide one. An app that themes just
+  the chart-wide pair still recolours the candles through the default chain, so
+  the split needed no migration.
+- **Hit region (paint-time)** — `src/indicators/hitRegions.ts`. Whatever paints a
+  mark DECLARES the geometry it covered (`spanAt(g)`, `halfWidth`, `interpolate`)
+  through the optional `scale.hit` sink, exactly as the drawing renderers hand
+  back their hit closure; `drawSeries` returns every region in paint order and
+  `pickHitRegion` walks them in reverse so the topmost mark wins. A line is tested
+  by proximity, a filled mark by containment — conflating them is a bug. The
+  shared painters in `src/indicators/draw.ts` declare on a def's behalf, so only a
+  hand-painting def calls the sink itself; one that paints and declares nothing
+  gets a dev-only `console.warn` (once per def key).
 - **Panel wheel-scroll contract** — the chart wrapper owns a greedy, non-passive
   `wheel` listener (`Chart.tsx`) that `preventDefault()`s every wheel into a zoom,
   _anywhere_ over the chart surface (incl. floating legend/stats chrome). Any panel
@@ -109,8 +130,8 @@ settingsOverrides`). `lineStyleFrom` (`src/indicators/lineSettings.ts`) reads
   just the scroll area); its scroll body uses the shared `.panelScrollBody` style
   (`Chart.module.css`). The wrapper handler `closest()`-checks for the attribute and
   yields the wheel (native scroll then works on `.panelScrollBody`); otherwise the
-  chart zoom hijacks the gesture. Used by `SettingsDialog` and `IndicatorLegend`'s
-  param popover.
+  chart zoom hijacks the gesture. Used by `SettingsDialog`,
+  `IndicatorSettingsPopover`, `CandleSettingsPopup` and `DrawingStylePopup`.
 - **Subpane** — a named oscillator pane below the price pane (RSI, MACD…); layout in
   `src/indicators/subpaneLayout.ts`. Heights are user-draggable (divider handles in
   `Chart.tsx`, math in `applySubpaneDrag`), persisted via `subpaneHeights`.

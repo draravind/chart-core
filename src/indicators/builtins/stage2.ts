@@ -92,6 +92,16 @@ export const stage2Def: IndicatorDef<Stage2Settings> = {
     }
     if (runStart !== -1) flush(renderEnd - 1);
     ctx.restore();
+
+    // The band is only clickable where it is actually shaded — `spanAt` returns
+    // null on unflagged bars, so the gaps between runs stay inert. Half-width is
+    // the full slot: the band is a continuous fill across each run, not a mark
+    // centred on the bar.
+    scale.hit?.add({
+      spanAt: (g) => (flags[g] === 1 ? [top, bottom] : null),
+      halfWidth: xScale.step() / 2,
+      interpolate: false,
+    });
   },
   // The band never moves the price domain (parity with the old width-0 marker).
   autofitKeys: () => [],

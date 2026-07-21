@@ -1,6 +1,11 @@
 import { describe, it, expect } from 'vitest';
+import * as d3 from 'd3';
 import type { Candle } from '../src/types';
-import type { IndicatorInput } from '../src/indicators/types';
+import type {
+  IndicatorDrawScale,
+  IndicatorInput,
+} from '../src/indicators/types';
+import type { HitRegionSpec } from '../src/indicators/hitRegions';
 import {
   volumeDef,
   type VolumeSettings,
@@ -63,6 +68,62 @@ const display: Candle[] = [
   bar(START + 4, true, 80), // up
 ];
 const combined = warmup.concat(display);
+
+// --- Draw-time harness ------------------------------------------------------
+
+const PANE_TOP = 100;
+const PANE_BOTTOM = 200;
+const MAX_VOL = 200;
+// Linear volume→pixel map over [0, MAX_VOL] onto the pane band (bottom = zero).
+const yFor = (v: number) => PANE_BOTTOM - (v / MAX_VOL) * (PANE_BOTTOM - PANE_TOP);
+
+function fakeDrawCtx() {
+  const fills: number[][] = [];
+  const ctx = {
+    fillStyle: '',
+    font: '',
+    textAlign: '',
+    textBaseline: '',
+    globalAlpha: 1,
+    save() {},
+    restore() {},
+    beginPath() {},
+    rect() {},
+    clip() {},
+    setTransform() {},
+    fillRect(x: number, y: number, w: number, h: number) {
+      fills.push([x, y, w, h]);
+    },
+    fillText() {},
+    measureText: () => ({ width: 10 }),
+  };
+  return { ctx: ctx as unknown as CanvasRenderingContext2D, fills };
+}
+
+function drawScale(bars: Candle[], regions: HitRegionSpec[]): IndicatorDrawScale {
+  const xScale = d3
+    .scaleBand<number>()
+    .domain(bars.map((_, i) => i))
+    .range([0, bars.length * 10])
+    .paddingInner(0.3);
+  return {
+    xScale,
+    yPrice: d3.scaleLog().domain([1, 100]).range([PANE_TOP, 0]),
+    y: yFor,
+    bandwidth: xScale.bandwidth(),
+    data: bars,
+    renderStart: 0,
+    renderEnd: bars.length,
+    paneTop: PANE_TOP,
+    paneBottom: PANE_BOTTOM,
+    hRatio: 2,
+    vRatio: 2,
+    originX: 0,
+    originY: 0,
+    barSlot: (g) => ({ left: g * 20, width: 12 }),
+    hit: { add: (r) => regions.push(r) },
+  };
+}
 
 describe('volumeDef.compute', () => {
   it('partitions volume by candle direction, NaN where vol <= 0, aligned after the start offset', () => {
@@ -141,6 +202,42 @@ describe('volumeDef.compute', () => {
       milestones: 0,
     }).series;
     expect([...series.volLabel].every((v) => Number.isNaN(v))).toBe(true);
+  });
+});
+
+describe('volumeDef.draw — paint + hit regions', () => {
+  const run = () => {
+    const series = volumeDef.compute(makeInput(display, 0), DEFAULTS).series;
+    const { ctx, fills } = fakeDrawCtx();
+    const regions: HitRegionSpec[] = [];
+    volumeDef.draw(
+      ctx,
+      series,
+      drawScale(display, regions),
+      DEFAULTS,
+      (e) => e,
+    );
+    return { fills, regions };
+  };
+
+  it('still paints one column per positive-volume bar', () => {
+    // 5 display bars, one of them zero-volume.
+    expect(run().fills).toHaveLength(4);
+  });
+
+  it('declares one region covering every painted column, and none of the empty one', () => {
+    const { regions } = run();
+    expect(regions).toHaveLength(1);
+    const r = regions[0];
+    expect(r.interpolate).toBe(false);
+    for (let g = 0; g < display.length; g++) {
+      const span = r.spanAt(g);
+      if (display[g].volume > 0) expect(span, `bar ${g}`).not.toBeNull();
+      // The zero-volume bar draws nothing, so a click there must open nothing.
+      else expect(span, `bar ${g}`).toBeNull();
+    }
+    // The span runs from the pane's zero baseline up to the bar's own top.
+    expect(r.spanAt(0)).toEqual([PANE_BOTTOM, yFor(display[0].volume)]);
   });
 });
 

@@ -43,6 +43,9 @@ Public barrel — the only import surface for consumers (never deep-import). Re-
 - Indicator types from `indicators/types`: `IndicatorDef`, `IndicatorConfig`,
   `IndicatorSeries`, `IndicatorPane`, `IndicatorInput`, `ResolvedIndicator`,
   `SettingsField`, `LegendRow`, `DomainSpec`.
+- From `indicators/hitRegions` (public now that `IndicatorDrawScale.hit` is part
+  of the draw contract): types `HitRegion`, `HitRegionSpec`, `HitRegionSink`, and
+  `CANDLE_SOURCE`, `REGION_HIT_TOLERANCE`, `FILLED_HIT_PAD`, `pickHitRegion`.
 - TA-Lib primitives from `indicators/talibMath`: `sma`, `wma`, `emaTalib`, `dema`,
   `tema`, `maDispatch`, `rsi`, `rawStochK`, `computeDx` (=`dx`), `computeAdx`
   (=`adx`), `computeAtr` (=`atr`), `trueRange`, `stddevPop`, `rollingMin`,
@@ -93,6 +96,22 @@ Public barrel — the only import surface for consumers (never deep-import). Re-
   (persisted per-pane drag heights), `children`. Owns canvas rendering, pan/zoom,
   the published `ChartScaleApi`, overlay hosts, the draggable subpane dividers, and
   the bundled pattern overlay. Only default export.
+- **Double-click to edit** — the overlay rect (price pane AND subpanes) carries a
+  `dblclick` that resolves, first hit wins: a drawing (`hitTest`), then a
+  paint-time region (`pickHitRegion` over `hitRegionsRef`, the array `drawSeries`
+  returns each repaint), else nothing. A `CANDLE_SOURCE` hit opens the Candles
+  popup (only when `onAppearanceChange` is supplied), any other id opens that
+  indicator's popover. The pointer is detranslated by `baseTranslateX` and the bar
+  index derived exactly as the crosshair does it, INCLUDING its two bounds
+  guards. A `justPlacedAtRef` timestamp swallows the dblclick that belongs to a
+  drawing placement (by then the tool has already reset to `cursor`, so a
+  tool-based guard cannot work).
+- `CenterPanel` state — the one centred floating editor
+  (`candles | indicator | drawing | null`); opening it closes the gear dialog and
+  vice-versa. Subjects are held BY ID and re-resolved against the live
+  `indicators` / `effectiveDrawings` at render, so a panel whose subject vanishes
+  (legend `×`, Delete key, symbol switch) disappears on its own. Placement is the
+  `.centeredPanel` class, applied alongside each popup's own surface class.
 
 ### `src/context.tsx`
 
@@ -114,7 +133,12 @@ Public barrel — the only import surface for consumers (never deep-import). Re-
 
 Scoped styles for the chart shell: `.chartWrapper`/`.chartWrapperBare`,
 `.seriesCanvas`, `.chartSvg`, `.empty`, `.resetPanBtn` (exported as
-`panButtonClass`), auto-fit button, and the legend + param-popover UI classes.
+`panButtonClass`), auto-fit button, the legend + param-popover UI classes,
+`.fieldResetBtn` (the per-field ↺, always visible — unlike the hover-revealed
+`.legendBtn`), and
+`.centeredPanel` (the double-click editors' centred placement + an explicit
+`z-index: 4`, since a centred legend popover would otherwise inherit 3 and sit
+under the drawing-popup layer).
 
 ---
 
@@ -156,27 +180,62 @@ Scoped styles for the chart shell: `.chartWrapper`/`.chartWrapperBare`,
   `config.settings`), commit/reset route through `defaultConfigFor` over
   `settingsOverrides`. Field components are imported from `SettingsFields.tsx`
   (extracted); `case 'line'` renders `LineField` whose four sub-controls each
-  commit/reset a scalar `${key}X` key (no framework change). Internal:
-  `ParamPopover`, `LegendBlock`.
+  commit/reset a scalar `${key}X` key (no framework change). The popover itself
+  lives in `IndicatorSettingsPopover.tsx` (shared with Chart's centred
+  double-click panel); commit/reset delegate to `indicators/applySettings.ts`.
+  Internal: `LegendBlock`.
+
+### `src/controls/IndicatorSettingsPopover.tsx`
+
+- `default IndicatorSettingsPopover` (React.FC) — the per-indicator settings
+  popover, extracted from `IndicatorLegend` so BOTH the legend gear (anchored
+  under its row via `.legendPopover`) and Chart's double-click panel (centred via
+  `.centeredPanel`) render one implementation. Props: `config`, `def`,
+  `onCommit`/`onReset`/`onResetKeys`, `resolveColor?`, `onClose`, `className?`,
+  `style?`. Placement-agnostic; closes on outside-mousedown + Escape; root
+  carries `data-chart-wheel-scroll`.
+
+### `src/controls/CandleSettingsPopup.tsx`
+
+- `default CandleSettingsPopup` (React.FC) — the focused "Candles" popup a
+  double-click on a candle opens. Props: `appearance`, `onAppearanceChange`,
+  `resolveColor`, `onClose`, `className?`, `style?`. Body is the shared
+  `CandleRows` (up/down colour over the `--candle-up`/`--candle-down` tokens plus
+  opacity), so it and the gear dialog's Candles section are one definition.
+
+### `src/controls/appearanceFields.tsx`
+
+- Shared appearance-editing vocabulary lifted out of `SettingsDialog`: the
+  sparse-delta path helpers `getAt` / `setIn` / `deleteIn`, `makeAppearanceRows`
+  (returns `eff`, `commit`, `reset`, `colorVarRow`, `colorRow`, `numberRow`,
+  `sliderRow` bound to one `{appearance, onAppearanceChange, resolveColor}`), and
+  `CandleRows` — the candle rows rendered by both the gear dialog and
+  `CandleSettingsPopup`.
 
 ### `src/controls/SettingsFields.tsx`
 
 - Shared settings-field control vocabulary (extracted from `IndicatorLegend`, reused
   by it + `SettingsDialog`): `NumberField`, `EnumField`, `ToggleField`, `ColorField`
-  (swatch + hex + reset), `SliderField` (0..1 range + readout), `LineField` (grouped
+  (swatch + hex + reset ↺), `SliderField` (0..1 range + readout), `LineField` (grouped
   TradingView-style row: color swatch · style select · width stepper · opacity
   slider · group reset, over a `line` field's four `${prefix}X` scalar sub-keys).
-  Depends only on `Chart.module.css` + `toHex6`.
+  Depends only on `Chart.module.css` + `toHex6`. The ↺ resets use
+  `.fieldResetBtn`, NOT `.legendBtn` — the latter is chart chrome hidden until its
+  `.legendItem` row is hovered, which left the reset permanently invisible in
+  every surface that isn't the legend (gear dialog, Candles popup, drawing popup).
 
 ### `src/controls/SettingsDialog.tsx`
 
 - `default SettingsDialog` (React.FC) — gear-triggered appearance dialog. Props:
   `appearance: AppearanceOverrides`, `onAppearanceChange`, `resolveColor`,
-  `onClose`, `style?`. Sections: **Chart appearance** (candle up/down + wick;
+  `onClose`, `style?`. Sections: **Chart appearance** (price up/down — the
+  chart-wide `--chart-positive`/`--chart-negative` pair, also read by the OHLC
+  readout, Volume's default bars, the `--qr-growth-*` aliases and the ruler;
   background top/bottom/radius; axis color/opacity/tick; crosshair color/opacity/
-  dash; separator/guide) and **Patterns** (one group per `pattern_name`). Each
-  control commits a sparse `AppearanceOverrides` delta via immutable `setIn`;
-  per-field reset prunes the path (`deleteIn`). Mounted inside `Chart` (it owns
+  dash; separator/guide; a **Candles** group rendering the shared `CandleRows`)
+  and **Patterns** (one group per `pattern_name`). Rows + path helpers come from
+  `appearanceFields.tsx`; each control commits a sparse `AppearanceOverrides`
+  delta via immutable `setIn`, per-field reset prunes the path (`deleteIn`). Mounted inside `Chart` (it owns
   `resolveColor` off `wrapperRef`), NOT `ChartControls`. Root carries
   `data-chart-wheel-scroll` (whole panel is a no-zoom zone) and the scroll body
   uses the shared `.panelScrollBody` class, so the wrapper's native wheel handler
@@ -203,11 +262,15 @@ Scoped styles for the chart shell: `.chartWrapper`/`.chartWrapperBare`,
 - `ChartAppearance` — the global visual contract: `colors: Record<string,string>`
   (CSS-var name without `--` → value; injected as inline custom props on the
   wrapper), plus non-color scalars `background {topColor, bottomColor, radius}`,
-  `candle {wickWidth}` (1.0 CSS px, quantised to whole device dots at draw),
-  `axis {opacity, tickSize}`, `crosshair {color, opacity, dash}`, and `patterns`
-  (per-pattern styles). The OHLC-bar geometry law is deliberately NOT here — it
-  is baked in `registry.ts` (see `BAR_THICKNESS_STEPS`), since it describes
-  renderer behaviour rather than a per-user preference.
+  `candle: CandleAppearance` (`{opacity}` — applied as `globalAlpha` around the
+  candle/bar paint pass), `axis {opacity, tickSize}`, `crosshair {color, opacity,
+  dash}`, and `patterns` (per-pattern styles). `CandleAppearance` is named once
+  and referenced by `DrawSeriesParams` + Chart's draw-state cache too (the group
+  passes through those untouched). Candle COLOURS are not here — they are the
+  `--candle-up` / `--candle-down` tokens inside `colors`. The OHLC-bar geometry
+  law is deliberately NOT here — it is baked in `registry.ts` (see
+  `BAR_THICKNESS_STEPS`, `CANDLE_WICK_FRACTION`), since it describes renderer
+  behaviour rather than a per-user preference.
 - `BaseBreakoutStyle` / `ConsolidationStyle` / `HighTightFlagStyle` / `GapUpStyle` /
   `VolumeBreakoutStyle` / `GoldenCrossStyle` / `Nr7Style` / `UnusualVolumeStyle` /
   `VolumeDryupStyle` / `PocketPivotStyle` / `InsideDayStyle` / `PullbackToEmaStyle` —
@@ -219,14 +282,20 @@ Scoped styles for the chart shell: `.chartWrapper`/`.chartWrapperBare`,
 ### `src/appearance/registry.ts`
 
 - `APPEARANCE_DEFAULTS: ChartAppearance` — the single source of baked defaults
-  (migrated literals: bg `#776a5a`/`#6e7b8b` r12, axis 0.12/4, wick 1.0, crosshair
-  currentColor/0.3/'3,3', and all twelve patterns' consts); `colors` starts `{}`.
+  (migrated literals: bg `#776a5a`/`#6e7b8b` r12, axis 0.12/4, candle opacity 1,
+  crosshair currentColor/0.3/'3,3', and all twelve patterns' consts); `colors`
+  starts `{}`.
 - `effectiveAppearance(overrides?) → ChartAppearance` — pure deep-merge defaults ←
   overrides (per-field reset = omit the key). The analogue of `effectiveSettings`.
-- `BAR_THICKNESS_STEPS` / `BAR_STUB_FRACTION` — the OHLC-bar geometry law, read by
-  `drawSeries.barMetrics`. Baked constants, NOT part of `ChartAppearance` and not
-  user-editable: they describe renderer behaviour, not per-user taste. Each is
-  written exactly once; retuning means editing here and republishing.
+  Unknown keys pass through, so a delta still carrying the removed
+  `candle.wickWidth` is an inert orphan (no shim, no backfill).
+- `BAR_THICKNESS_STEPS` / `BAR_STUB_FRACTION` / `CANDLE_WICK_FRACTION` — the
+  OHLC-bar geometry law, read by `drawSeries.barMetrics` / `drawCandles`. Baked
+  constants, NOT part of `ChartAppearance` and not user-editable: they describe
+  renderer behaviour, not per-user taste. `CANDLE_WICK_FRACTION` (1/6) makes the
+  wick track the BODY under zoom — floored at 1 CSS px (so the default ~250-bar
+  view is byte-identical to the old fixed 1px wick) and capped at the body. Each
+  is written exactly once; retuning means editing here and republishing.
 
 ---
 
@@ -264,7 +333,32 @@ quarterlyResults?; market?; displayStart?}`.
   device-space wiring: `hRatio`/`vRatio` (dots per CSS px), `originX`/`originY`
   (absolute device origin of the panned pane space) and `barSlot(g) →
   {left, width}` in device dots — all required, so a histogram subpane can paint
-  on the price bar's own column.
+  on the price bar's own column. Plus the optional `hit: HitRegionSink` — the
+  paint-time hit-region sink (see `hitRegions.ts`); the shared painters declare
+  through it automatically, so only a hand-painting def calls it itself.
+
+### `src/indicators/hitRegions.ts`
+
+- Paint-time hit-region contract — the drawing tools' "whatever paints a mark
+  declares the region it covered" model, extended to indicators and the candles.
+  A region is a closure over the arrays + scale the painter already had (not a
+  rasterised pick map) and is rebuilt every repaint, so it can never go stale.
+  Coordinates are panned-local CSS px throughout.
+- `HitRegion` — `{sourceId, spanAt(g) → [y0,y1] | null, halfWidth, interpolate}`.
+  `spanAt` returning null is what makes gaps (a NaN, a zero-volume column, an
+  unflagged bar) inert. `HitRegionSpec` = the same minus `sourceId` (stamped by
+  `drawIndicators`); `HitRegionSink` = `{add(spec)}`.
+- `CANDLE_SOURCE` — the price series' own `sourceId`.
+- `REGION_HIT_TOLERANCE` (6) / `FILLED_HIT_PAD` (2) — line proximity vs filled
+  forgiveness. Two DIFFERENT tests: a line is tested by proximity to the
+  interpolated polyline, a filled mark by containment (`|mx − centre| ≤ min(step/2,
+halfWidth + pad)` and `my` inside the padded span). The `step/2` clamp is what
+  keeps a filled region out of the next bar's slot at any zoom.
+- `pickHitRegion(mx, my, barIdx, regions, centerXAt, step, tolerance?)` — topmost
+  region under the pointer, walking `regions` in REVERSE paint order so a later
+  mark wins. The neighbour window for line-like regions is sized from `step`
+  (`ceil(tolerance/step)`), so a near-vertical line is still hittable when bars
+  are sub-pixel.
 - `IndicatorConfig` — resolved user instance: `{id, defKey, label, enabled,
 settings, settingsOverrides}` (`settings` = effective merge; `settingsOverrides`
   = the only persisted source of truth, sparse deltas).
@@ -308,17 +402,33 @@ Canvas painters + small legend helpers shared by builtin hooks:
   (draw-layer local; not in `types.ts`).
 - `fmt2(v)` / `cellAt(values, idx, fmt)` — legend cell formatting (`''` on
   NaN/oob); reused by simple defs' `legend`.
+  Each painter below (except `drawGuideLines`) also DECLARES what it covered via
+  `scale.hit`, so the def gets double-click hit-testing for free.
+
 - `drawPolyline(ctx, scale, values, style, defined)` — line painter; `defined`
-  predicate breaks the line on NaN/false.
+  predicate breaks the line on NaN/false. Declares an `interpolate: true` region
+  gated by the same `defined`, so the line's gaps are the region's gaps.
 - `drawLines(ctx, series, scale, lines: {key, st}[])` — default multi-line painter
   (caller passes only real lines — no width-0 skip).
 - `drawHistogram(ctx, scale, values, style, negColor?)` — bars from zero, dual
   color (MACD). Painted in bitmap space on `scale.barSlot(g)` — the price bar's
-  own device column — not on `bandwidth`.
+  own device column — not on `bandwidth`. Declares a filled zero→value region at
+  the slot half-width.
 - `drawGuideLines(ctx, scale, levels[], color, opts?)` — dashed horizontal guides
-  (RSI 30/70, MACD zero line).
+  (RSI 30/70, MACD zero line). Declares NOTHING, deliberately: decoration, not a
+  clickable object.
 - `drawDots(ctx, scale, values, style, marked, radius?)` — markers on selected bars
-  (RS-line signals).
+  (RS-line signals). Declares a filled region at the dot radius.
+
+### `src/indicators/applySettings.ts`
+
+- `withSettingOverride(indicators, id, key, value)` / `withSettingsReset(indicators,
+id, keys)` — pure transforms over an indicator list, lifted out of
+  `IndicatorLegend` so the legend gear and Chart's centred popover commit
+  identically. Both recompute through `defaultConfigFor` (NOT a shallow spread) so
+  param-derived defaults re-derive (EMA 10→100 re-bands its colour), and the reset
+  drops every key in ONE pass (a per-key loop batches into last-write-wins and
+  would clear only one).
 
 ### `src/indicators/settingsOptions.ts`
 
@@ -397,9 +507,9 @@ declares `autofitKeys` (+ a `domain` for bounded/special subpanes) and a `legend
 | `trange.ts`           | `TrangeSettings {lineColor}`                                                                                    | Per-bar true range (**no numeric params**)                                                                                                                                                                                                                                                                          |
 | `rollingHigh.ts`      | `HighsSettings` (local; `color1y/2y/3y/All`)                                                                    | `highsDef` — data-backed 1Y/2Y/3Y/ATH highs read off `bars[].high*` columns                                                                                                                                                                                                                                         |
 | `rsLine.ts`           | `RsSettings {lookback, lineColor, signalColor}`                                                                 | RS line (stock/benchmark, rebased to 100) + signal dots; `autofitKeys: ['rs']` excludes the 0/1 `signal`                                                                                                                                                                                                            |
-| `stage2.ts`           | `Stage2Settings {smaPeriod, slopeLookback, slopeMin, minPeriods, bandColor}`                                    | Stage-2 advancing band (green price-pane band; `autofitKeys: []` so it never moves the price domain)                                                                                                                                                                                                                |
-| `quarterlyResults.ts` | `QuarterlyResultsSettings {display, epsColor, rpsColor, growthUpColor, growthDownColor, labelColor}`            | Quarterly Results subpane (RPS+EPS, core-computed YoY growth); Text/Bars via `display`; formatted rows ride `compute`'s `meta` (no WeakMap); `domain`/`autofitKeys` switch on `display`; `paneHeightFactor 1.7`                                                                                                     |
-| `volume.ts`           | `VolumeSettings {smaPeriod, smaFade, milestones, standardOpacity, fadeOpacity, upColor, downColor, labelColor}` | Volume subpane indicator. Custom 4-bucket draw (up/down × above/below SMA, faded opacity); `volumeUp`/`volumeDown` autofit the pane; `volSma`/`volLabel` are data channels; HVE/HVY labels + K/M/B axis (`domain.tickFormat`); reads opacities from settings; `paneHeightFactor 1.154`; reuses `computeVolumeStats` |
+| `stage2.ts`           | `Stage2Settings {smaPeriod, slopeLookback, slopeMin, minPeriods, bandColor}`                                    | Stage-2 advancing band (green price-pane band; `autofitKeys: []` so it never moves the price domain); declares a hit region gated to flagged bars, so the shaded runs are clickable and the gaps are not                                                                                                                                                                                                                |
+| `quarterlyResults.ts` | `QuarterlyResultsSettings {display, epsColor, rpsColor, growthUpColor, growthDownColor, labelColor}`            | Quarterly Results subpane (RPS+EPS, core-computed YoY growth); Text/Bars via `display`; formatted rows ride `compute`'s `meta` (no WeakMap); `domain`/`autofitKeys` switch on `display`; `paneHeightFactor 1.7`; hit regions are mode-dependent — one per KEPT column (full pane band) in text mode, one per ANCHOR (the pair's extent) in bars mode, since bars draw for every anchor and only the labels thin                                                                                                     |
+| `volume.ts`           | `VolumeSettings {smaPeriod, smaFade, milestones, standardOpacity, fadeOpacity, upColor, downColor, labelColor}` | Volume subpane indicator. Custom 4-bucket draw (up/down × above/below SMA, faded opacity); `volumeUp`/`volumeDown` autofit the pane; `volSma`/`volLabel` are data channels; HVE/HVY labels + K/M/B axis (`domain.tickFormat`); reads opacities from settings; `paneHeightFactor 1.154`; reuses `computeVolumeStats`; declares one hit region over its columns, null on the `volume <= 0` skip (the HVE/HVY labels above a bar are deliberately NOT covered) |
 
 ---
 
@@ -551,7 +661,10 @@ Chart props. All shapes are `pointer-events:none`; hit detection is manual.
 
 - Per-drawing style popup (reuses `SettingsFields`); carries `data-chart-wheel-scroll`.
   Edits route through `onChange` (replace-by-id). `src/drawings/drawings.module.css`
-  = popup chrome.
+  = popup chrome. Opened by a DOUBLE-click on a shape (a single click only
+  selects) or, as a carve-out, by placing a `text` box so its field can be typed
+  into immediately. Closes on outside-mousedown + Escape. `className?` lets Chart
+  add `.centeredPanel`.
 
 ---
 
@@ -630,7 +743,7 @@ sharesOutstanding?, freeFloatPercent?, eps?}` (all optional; absent → blanked)
 
 ### `src/utils/drawSeries.ts`
 
-- `drawSeries(ctx, p: DrawSeriesParams) → void` — single-canvas painter for
+- `drawSeries(ctx, p: DrawSeriesParams) → HitRegion[]` — single-canvas painter for
   candles/bars + indicator lines (volume is now the `volume` subpane indicator,
   painted via `drawIndicators`); clears the backing store each call, fills the
   background gradient unclipped, then paints TWO clipped passes via the
@@ -641,8 +754,17 @@ sharesOutstanding?, freeFloatPercent?, eps?}` (all optional; absent → blanked)
   domain (y-axis scale drag / vertical body pan) can't paint into the subpanes;
   then the subpanes (`drawIndicators(…, true)`) under the full `#chart-viewport`
   clip, each subpane def self-clipping to its own band. `drawIndicators(ctx, p,
-  subpaneOnly)` filters defs by pane and calls
-  `def.draw(ctx, series, scale, config.settings, resolveColor, meta)`.
+  subpaneOnly, regions)` filters defs by pane and calls
+  `def.draw(ctx, series, scale, config.settings, resolveColor, meta)`, binding a
+  FRESH `scale.hit` sink per config (so no def can mis-attribute a region) and
+  dev-warning ONCE per def key (module-level seen-set, so a pan doesn't spam)
+  when a def declared nothing. Returns every declared `HitRegion` in paint order
+  — candles first, then price-pane indicators, then subpane ones — which is what
+  `pickHitRegion`'s reversed walk turns into "the topmost mark wins".
+  `drawCandles`/`drawBars` declare the price series' own region under
+  `CANDLE_SOURCE` (high→low span; body half-width in candle mode, the wider
+  `barSlotAt` stem+stubs width in bar mode) and apply `p.candle.opacity` as
+  `globalAlpha` inside their save/restore block.
   The candle/bar pass runs in DEVICE-PIXEL space (`fillRect` on whole dots, clip
   bounds rounded to whole dots) so nothing antialiases; indicator lines stay in
   CSS space and stay antialiased, since they are diagonal.
@@ -652,7 +774,9 @@ sharesOutstanding?, freeFloatPercent?, eps?}` (all optional; absent → blanked)
   a slot fraction independent of thickness (floored at one stem width), stubs
   switch off below 3 CSS px of spacing. `barRects(d, cx, m, yDev)` turns that into
   the stem + stub rectangles; `barSlotAt` is the shared column histogram subpanes
-  paint into.
+  paint into (and the bar-mode candle region's width). The candle WICK is derived
+  here too — `CANDLE_WICK_FRACTION` of the body, floored at 1 CSS px and capped
+  at the body — so it scales with zoom instead of staying a hairline.
   The ladder + stub fraction come from the baked `BAR_THICKNESS_STEPS` /
   `BAR_STUB_FRACTION` constants in `appearance/registry` — not from appearance,
   not user-tunable, and each written exactly once.

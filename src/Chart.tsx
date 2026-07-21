@@ -21,9 +21,20 @@ import type {
   ResolvedIndicator,
 } from './indicators/types';
 import { getIndicator, SUBPANE_ORDER } from './indicators/registry';
-import type { AppearanceOverrides } from './appearance/types';
+import {
+  withSettingOverride,
+  withSettingsReset,
+} from './indicators/applySettings';
+import {
+  CANDLE_SOURCE,
+  pickHitRegion,
+  type HitRegion,
+} from './indicators/hitRegions';
+import type { AppearanceOverrides, CandleAppearance } from './appearance/types';
 import { effectiveAppearance } from './appearance/registry';
 import IndicatorLegend from './controls/IndicatorLegend';
+import IndicatorSettingsPopover from './controls/IndicatorSettingsPopover';
+import CandleSettingsPopup from './controls/CandleSettingsPopup';
 import SettingsDialog from './controls/SettingsDialog';
 import AutoFitMenu from './controls/AutoFitMenu';
 import StatsPanel from './stats/StatsPanel';
@@ -202,6 +213,22 @@ type Props = {
 
 const ZOOM_FACTOR = 1.04;
 
+// How long after a drawing placement a dblclick still counts as part of that
+// same gesture (comfortably over the OS double-click interval).
+const PLACEMENT_DBLCLICK_GUARD_MS = 700;
+
+/**
+ * The one floating editor a double-click opens, centred over the chart. Exactly
+ * one is ever up (opening any closes the gear dialog and vice-versa). Subjects
+ * are held BY ID and resolved at render time, so a panel whose subject vanishes
+ * (legend `×`, Delete key, symbol switch) clears itself.
+ */
+type CenterPanel =
+  | { kind: 'candles' }
+  | { kind: 'indicator'; id: string }
+  | { kind: 'drawing'; id: string }
+  | null;
+
 type Sel<E extends d3.BaseType = d3.BaseType> = d3.Selection<
   E,
   unknown,
@@ -360,6 +387,21 @@ const Chart = ({
   const [colorEpoch, setColorEpoch] = useState(0);
   // Gear-triggered appearance dialog open state.
   const [settingsOpen, setSettingsOpen] = useState(false);
+  // Double-click-opened centred editor (candles / one indicator / one drawing).
+  const [centerPanel, setCenterPanel] = useState<CenterPanel>(null);
+  // Opening a centred panel closes the gear dialog and vice-versa, so only one
+  // floating editor is ever up.
+  const openCenterPanel = useCallback((panel: CenterPanel) => {
+    setSettingsOpen(false);
+    setCenterPanel(panel);
+  }, []);
+  const closeCenterPanel = useCallback(() => setCenterPanel(null), []);
+  // Live mirrors so the once-bound dblclick handler (Effect 4, narrow deps)
+  // never reads a stale closure.
+  const openCenterPanelRef = useRef(openCenterPanel);
+  openCenterPanelRef.current = openCenterPanel;
+  const canEditAppearanceRef = useRef(false);
+  canEditAppearanceRef.current = onAppearanceChange != null;
 
   // The published scale/geometry API — a single stable object whose fields are
   // mutated in place (mirrors the old `handlerStateRef`). Plugins read it via
@@ -598,9 +640,13 @@ const Chart = ({
     data: Candle[];
     colors: { positive: string; negative: string };
     background: { topColor: string; bottomColor: string; radius: number };
-    candle: { wickWidth: number };
+    candle: CandleAppearance;
     indicators: ResolvedIndicator[];
   } | null>(null);
+
+  // Paint-time hit regions from the LAST repaint (see indicators/hitRegions).
+  // Rebuilt every frame by `drawSeries`, so it can never go stale.
+  const hitRegionsRef = useRef<HitRegion[]>([]);
 
   // Adopt the backing-store size the observer last measured. Called at the top
   // of every paint (see `redrawSeries`) — never from the observer itself.
@@ -626,7 +672,7 @@ const Chart = ({
     const st = drawStateRef.current;
     if (!cc || !st) return;
     applySuggestedBitmapSize();
-    drawSeries(cc.ctx, {
+    hitRegionsRef.current = drawSeries(cc.ctx, {
       hRatio: cc.hRatio,
       vRatio: cc.vRatio,
       cssWidth: st.cssWidth,
@@ -971,6 +1017,18 @@ const Chart = ({
       ? crypto.randomUUID()
       : `d-${Date.now()}-${Math.round(Math.random() * 1e9)}`;
 
+  // Stamped when a mousedown PLACED a drawing; a dblclick arriving within the
+  // double-click window is that same gesture and is swallowed. Without it a fast
+  // double-click that places a one-click tool would also open the fresh shape's
+  // popup, breaking "every tool but text places silently".
+  //
+  // Guarding on "the active tool is cursor" does NOT work: `reduceDrawing`
+  // commits on the placing mousedown and Chart resets the tool right there, so
+  // by `dblclick` time the tool is already 'cursor'. Clearing the flag on the
+  // next cursor-mode mousedown doesn't work either — the double-click's SECOND
+  // mousedown is already in cursor mode and would clear it before `dblclick`.
+  const justPlacedAtRef = useRef(0);
+
   // Tool active: place an anchor. 1-click tools commit immediately; 2-click tools
   // enter a placing draft (rubber-band preview) until the second click. On commit
   // the tool snaps back to 'cursor' and the new shape is selected.
@@ -986,7 +1044,15 @@ const Chart = ({
       if (res.selectId !== undefined) selectDrawing(res.selectId);
       if (res.commit) {
         draftPointerRef.current = null;
+        // A PLACEMENT commit (the reducer selects what it just built); a drag
+        // commit leaves `selectId` undefined and never reaches this path.
+        justPlacedAtRef.current = performance.now();
         commitDrawing(res.commit);
+        // Text carve-out: a freshly placed text box opens its popup immediately
+        // so you can type. `DrawingStylePopup` focuses the field for an empty
+        // box. Every other tool places silently.
+        if (res.commit.type === 'text')
+          openCenterPanel({ kind: 'drawing', id: res.commit.id });
         if (activeToolRef.current !== 'cursor') {
           activeToolRef.current = 'cursor';
           onActiveDrawingToolChangeRef.current?.('cursor');
@@ -994,7 +1060,13 @@ const Chart = ({
       }
       renderDrawings();
     },
-    [pointerToAnchor, selectDrawing, commitDrawing, renderDrawings],
+    [
+      pointerToAnchor,
+      selectDrawing,
+      commitDrawing,
+      renderDrawings,
+      openCenterPanel,
+    ],
   );
 
   // Cursor mode + hit: select + start a drag (whole-shape or endpoint).
@@ -1026,12 +1098,23 @@ const Chart = ({
     [pointerToAnchor, selectDrawing, renderDrawings],
   );
 
-  const selectedShape = useMemo<DrawingShape | null>(
+  // The centred panel's subject, resolved BY ID against the live props at render
+  // time — so an indicator removed via the legend `×`, a drawing deleted by
+  // keyboard or by the popup's own Delete button, and a symbol change that swaps
+  // the per-symbol drawing set all make the panel disappear on their own.
+  const panelDrawing = useMemo<DrawingShape | null>(
     () =>
-      selectedId
-        ? effectiveDrawings.find((s) => s.id === selectedId) ?? null
+      centerPanel?.kind === 'drawing'
+        ? effectiveDrawings.find((s) => s.id === centerPanel.id) ?? null
         : null,
-    [selectedId, effectiveDrawings],
+    [centerPanel, effectiveDrawings],
+  );
+  const panelIndicator = useMemo<IndicatorConfig | null>(
+    () =>
+      centerPanel?.kind === 'indicator'
+        ? indicators.find((c) => c.id === centerPanel.id) ?? null
+        : null,
+    [centerPanel, indicators],
   );
 
   // Drawing selection clears via the existing background-pointerdown fan-out
@@ -1626,8 +1709,10 @@ const Chart = ({
       .attr('stroke', 'var(--chart-separator)')
       .attr('stroke-opacity', 1) as Sel<SVGLineElement>;
 
-    // Pattern overlay paints before the candle clipWrapper so its shapes sit
-    // beneath the volume bars, candles, EMAs, and highs.
+    // Pattern overlay is appended before the candle clipWrapper, so within the
+    // SVG it paints beneath the x-axis/crosshair groups. It does NOT sit under
+    // the candles: the series is on the CANVAS below this whole SVG, so every
+    // SVG group — this one included — paints above it.
     patternOverlayContainerRef.current = g
       .append('g')
       .attr('class', 'chart-pattern-overlays-container')
@@ -2218,16 +2303,21 @@ const Chart = ({
       renderSlice,
       chartType,
       data,
+      // The CANDLE-specific tokens (they default to `var(--chart-positive)` /
+      // `var(--chart-negative)` in chart-core.css, so an app that only themes
+      // the chart-wide pair still recolours the series). Editing them from the
+      // Candles popup leaves the OHLC readout / volume bars / results growth
+      // colours alone.
       colors: {
-        positive: resolveColor('var(--chart-positive)'),
-        negative: resolveColor('var(--chart-negative)'),
+        positive: resolveColor('var(--candle-up)'),
+        negative: resolveColor('var(--candle-down)'),
       },
       background: {
         topColor: resolveColor(app.background.topColor),
         bottomColor: resolveColor(app.background.bottomColor),
         radius: app.background.radius,
       },
-      candle: { wickWidth: app.candle.wickWidth },
+      candle: app.candle,
       indicators: resolvedIndicators,
     };
     redrawSeries();
@@ -2636,6 +2726,71 @@ const Chart = ({
       if (wrapperRef.current) wrapperRef.current.style.cursor = 'grabbing';
     });
 
+    // What a double-click at (mx, my) — chart-inner coords — would open, or null
+    // for a miss. The SINGLE source of truth for both the dblclick router and the
+    // hover cursor affordance below: computing the hand cursor any other way lets
+    // it promise a panel the double-click won't actually open.
+    const panelTargetAt = (mx: number, my: number): CenterPanel => {
+      if (scaleApi.data.length === 0) return null;
+
+      // 1) A drawing wins — a trend line lying over a candle must never pop the
+      //    Candles dialog.
+      const target = drawingOverlayHandleRef.current?.hitTest(mx, my) ?? null;
+      if (target) return { kind: 'drawing', id: target.id };
+
+      // 2) A recorded paint-time region. Same bar derivation (and the same two
+      //    bounds guards) the crosshair uses — right of the latest bar the index
+      //    runs past the data, and an out-of-range bar is a miss, not a hit on
+      //    the last one.
+      const { step, bandwidth, visibleBarsInt, visibleStartIdx, xScale } =
+        scaleApi;
+      const slot = Math.floor(mx / step);
+      if (slot < 0 || slot >= visibleBarsInt) return null;
+      const barIdx = visibleStartIdx + slot;
+      if (barIdx < 0 || barIdx >= scaleApi.data.length) return null;
+      const region = pickHitRegion(
+        // Regions live in PRE-pan local space; detranslate the pointer (the same
+        // correction the drawing hit test applies via its `tx`).
+        mx - scaleApi.baseTranslateX,
+        my,
+        barIdx,
+        hitRegionsRef.current,
+        (g) => xScale(g)! + bandwidth / 2,
+        step,
+      );
+      if (!region) return null; // 3) Miss → nothing.
+      if (region.sourceId === CANDLE_SOURCE) {
+        // No persist callback ⇒ the popup would edit nothing (same gate as the
+        // appearance gear + dialog), so it isn't a target and gets no cursor.
+        return canEditAppearanceRef.current ? { kind: 'candles' } : null;
+      }
+      return { kind: 'indicator', id: region.sourceId };
+    };
+
+    // Double-click routing: open the settings for whatever object was hit. The
+    // overlay rect spans width × fullHeight (price pane AND subpanes), so this
+    // one handler covers everything. (The y-axis hit rect has its own dblclick —
+    // a separate element, no conflict. The app's trade/trigger overlays sit
+    // above this rect with pointer-events:all, so a double-click on one never
+    // reaches here — intended.)
+    //
+    // The two mousedowns of a double-click each start and end a zero-delta pan
+    // drag, which is harmless.
+    overlay.on('dblclick', function (event: MouseEvent) {
+      event.preventDefault();
+      if (
+        performance.now() - justPlacedAtRef.current <
+        PLACEMENT_DBLCLICK_GUARD_MS
+      ) {
+        justPlacedAtRef.current = 0;
+        return;
+      }
+      const root = rootGRef.current;
+      const [mx, my] = root ? d3.pointer(event, root.node()) : [0, 0];
+      const panel = panelTargetAt(mx, my);
+      if (panel) openCenterPanelRef.current(panel);
+    });
+
     // mousemove + mouseleave bind to the SVG root so they keep firing while
     // the cursor is over a trade overlay or one of its handles (those sit
     // above the bare-chart overlayRect in paint order and have
@@ -2660,11 +2815,18 @@ const Chart = ({
         const root = rootGRef.current;
         if (!root) return;
         const [mx, my] = d3.pointer(event, root.node());
-        // Hover affordance: an open-hand cursor over a drawing (it is draggable in
-        // cursor mode); otherwise restore the default chart cursor.
+        // Hover affordance, resolved through the SAME `panelTargetAt` the
+        // double-click uses, so a hand cursor always means "double-click edits
+        // this". A drawing keeps the open hand — it is also draggable here, and
+        // `grab` says both — while a candle or an indicator mark gets the
+        // pointing hand. Anything else restores the default chart cursor.
         if (wrapper) {
-          const overDrawing = drawingOverlayHandleRef.current?.hitTest(mx, my);
-          wrapper.style.cursor = overDrawing ? 'grab' : '';
+          const panel = panelTargetAt(mx, my);
+          wrapper.style.cursor = !panel
+            ? ''
+            : panel.kind === 'drawing'
+              ? 'grab'
+              : 'pointer';
         }
         crosshairLastPosRef.current = { mx, my };
         if (crosshairRafRef.current == null) {
@@ -2704,7 +2866,7 @@ const Chart = ({
     if (!crosshairLastPosRef.current) showLatestInfo();
 
     return () => {
-      overlay.on('mousedown', null);
+      overlay.on('mousedown', null).on('dblclick', null);
       svgSel.on('mousemove.crosshair', null).on('mouseleave.crosshair', null);
       if (crosshairRafRef.current != null) {
         cancelAnimationFrame(crosshairRafRef.current);
@@ -2879,7 +3041,11 @@ const Chart = ({
                 className={styles.settingsGearBtn}
                 title="Chart settings"
                 onMouseDown={(e) => e.stopPropagation()}
-                onClick={() => setSettingsOpen((o) => !o)}
+                onClick={() => {
+                  // Only one floating editor at a time.
+                  setCenterPanel(null);
+                  setSettingsOpen((o) => !o);
+                }}
                 style={{ right: 4, bottom: 4 }}
               >
                 <Settings size={14} />
@@ -2897,23 +3063,74 @@ const Chart = ({
               )}
             </>
           )}
-          {/* Per-drawing style popup — pinned to the wrapper's bottom-left corner
-              (v1 fixed-corner placement). Only when the host can persist edits. */}
-          {onDrawingsChange && selectedShape && (
+          {/* Double-click editors, all centred over the chart wrapper. Rendered
+              off `centerPanel`, never off selection — a single click on a
+              drawing selects it and nothing more. */}
+          {centerPanel?.kind === 'candles' && onAppearanceChange && (
+            <CandleSettingsPopup
+              appearance={appearance ?? {}}
+              onAppearanceChange={onAppearanceChange}
+              resolveColor={(v) =>
+                colorResolverRef.current?.resolve(v) ?? '#888888'
+              }
+              onClose={closeCenterPanel}
+              className={styles.centeredPanel}
+            />
+          )}
+          {panelIndicator &&
+            (() => {
+              const def = getIndicator(panelIndicator.defKey);
+              if (!def || (def.settingsSchema?.length ?? 0) === 0) return null;
+              return (
+                <IndicatorSettingsPopover
+                  config={panelIndicator}
+                  def={def}
+                  onCommit={(key, value) =>
+                    onIndicatorsChange(
+                      withSettingOverride(
+                        indicators,
+                        panelIndicator.id,
+                        key,
+                        value,
+                      ),
+                    )
+                  }
+                  onReset={(key) =>
+                    onIndicatorsChange(
+                      withSettingsReset(indicators, panelIndicator.id, [key]),
+                    )
+                  }
+                  onResetKeys={(keys) =>
+                    keys.length > 0 &&
+                    onIndicatorsChange(
+                      withSettingsReset(indicators, panelIndicator.id, keys),
+                    )
+                  }
+                  resolveColor={(v) =>
+                    colorResolverRef.current?.resolve(v) ?? '#888888'
+                  }
+                  onClose={closeCenterPanel}
+                  className={styles.centeredPanel}
+                />
+              );
+            })()}
+          {/* Per-drawing style popup. Only when the host can persist edits. */}
+          {onDrawingsChange && panelDrawing && (
             <DrawingStylePopup
-              shape={selectedShape}
+              shape={panelDrawing}
               onChange={(next) => commitDrawing(next)}
               onDelete={() => {
                 onDrawingsChange(
-                  effectiveDrawings.filter((s) => s.id !== selectedShape.id),
+                  effectiveDrawings.filter((s) => s.id !== panelDrawing.id),
                 );
                 selectDrawing(null);
+                closeCenterPanel();
               }}
               resolveColor={(v) =>
                 colorResolverRef.current?.resolve(v) ?? '#888888'
               }
-              onClose={() => selectDrawing(null)}
-              style={{ left: 8, bottom: MARGIN.bottom + 8 }}
+              onClose={closeCenterPanel}
+              className={styles.centeredPanel}
             />
           )}
           {children}

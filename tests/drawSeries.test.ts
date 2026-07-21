@@ -1,12 +1,15 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import * as d3 from 'd3';
 import {
   barMetrics,
   barRects,
+  barSlotAt,
   drawSeries,
   type DrawSeriesParams,
 } from '../src/utils/drawSeries';
 import { registerIndicator } from '../src/indicators/registry';
+import { drawGuideLines, drawLines } from '../src/indicators/draw';
+import { CANDLE_SOURCE } from '../src/indicators/hitRegions';
 import type { Candle } from '../src/types';
 import type { IndicatorDef, IndicatorSeries } from '../src/indicators/types';
 import { BAR_THICKNESS_STEPS, BAR_STUB_FRACTION } from '../src/appearance/registry';
@@ -281,7 +284,7 @@ type Transform = { a: number; d: number; e: number; f: number };
 function fakeCtx() {
   let t: Transform = { a: 1, d: 1, e: 0, f: 0 };
   let clip: Rect | null = null;
-  const stack: { t: Transform; clip: Rect | null }[] = [];
+  const stack: { t: Transform; clip: Rect | null; alpha: number }[] = [];
   let pending: Rect | null = null;
   const clips: Rect[] = [];
   const fills: Rect[] = [];
@@ -291,16 +294,26 @@ function fakeCtx() {
     t.a * w,
     t.d * h,
   ];
+  const fillAlphas: number[] = [];
   const ctx = {
     fillStyle: '',
+    strokeStyle: '',
+    lineWidth: 1,
+    lineJoin: '',
+    lineCap: '',
+    font: '',
+    textAlign: '',
+    textBaseline: '',
+    globalAlpha: 1,
     save() {
-      stack.push({ t: { ...t }, clip });
+      stack.push({ t: { ...t }, clip, alpha: ctx.globalAlpha });
     },
     restore() {
       const prev = stack.pop();
       if (prev) {
         t = prev.t;
         clip = prev.clip;
+        ctx.globalAlpha = prev.alpha;
       }
     },
     setTransform(a: number, _b: number, _c: number, d: number, e: number, f: number) {
@@ -328,12 +341,24 @@ function fakeCtx() {
     clearRect() {},
     fillRect(x: number, y: number, w: number, h: number) {
       fills.push(toDevice(x, y, w, h));
+      fillAlphas.push(ctx.globalAlpha);
     },
     createLinearGradient() {
       return { addColorStop() {} };
     },
+    // Path/text no-ops so the shared indicator painters can run against this.
+    moveTo() {},
+    lineTo() {},
+    stroke() {},
+    setLineDash() {},
+    arc() {},
+    fillText() {},
+    measureText() {
+      return { width: 10 };
+    },
     clips,
     fills,
+    fillAlphas,
     /** The clip in force right now — what a def's `draw` would paint under. */
     activeClip: () => clip,
   };
@@ -415,7 +440,7 @@ function clipParams(indicators: DrawSeriesParams['indicators'] = []): DrawSeries
     data: clipBars,
     colors: { positive: '#0f0', negative: '#f00' },
     background: { topColor: '#000', bottomColor: '#111', radius: 4 },
-    candle: { wickWidth: 1 },
+    candle: { opacity: 1 },
     indicators,
     resolveColor: (v) => v,
   };
@@ -489,5 +514,227 @@ describe('drawSeries — pane clipping', () => {
     // The wick rect for bar 0 reaches that y — containment comes from the clip.
     const bottoms = ctx.fills.map((r) => r[1] + r[3]);
     expect(Math.max(...bottoms)).toBeGreaterThanOrEqual(lowDev);
+  });
+});
+
+// --- Candle geometry law: the wick is a fraction of the BODY -----------------
+
+/** `drawCandles` pushes [wick, body] per bar, positives before negatives, so
+ *  bar 0 (an up bar in `clipBars`) is fills[0] (wick) + fills[1] (body). */
+function wickAndBodyAt(bandwidth: number): { wick: number; body: number } {
+  const ctx = fakeCtx();
+  drawSeries(ctx as unknown as CanvasRenderingContext2D, {
+    ...clipParams(),
+    bandwidth,
+  });
+  return { wick: ctx.fills[0][2], body: ctx.fills[1][2] };
+}
+
+describe('drawCandles — wick tracks the body', () => {
+  it('is exactly 1 CSS px at the default ~250-bar density (no visual change)', () => {
+    // ~1000px of plot over 250 bars ⇒ step 4, bandwidth 0.7 × step = 2.8.
+    const { wick, body } = wickAndBodyAt(2.8);
+    expect(body).toBe(6); // 3 CSS px
+    expect(wick).toBe(HR); // 1 CSS px, exactly as before the change
+  });
+
+  it('thickens with the body under zoom and never exceeds it', () => {
+    let prevWick = 0;
+    for (let bandwidth = 1; bandwidth <= 60; bandwidth += 0.5) {
+      const { wick, body } = wickAndBodyAt(bandwidth);
+      expect(wick).toBeGreaterThanOrEqual(Math.max(1, Math.floor(HR)));
+      expect(wick).toBeLessThanOrEqual(body);
+      expect(wick).toBeGreaterThanOrEqual(prevWick); // monotone in zoom
+      prevWick = wick;
+    }
+    // And it genuinely grows — a fixed 1 CSS px would end where it started.
+    expect(prevWick).toBeGreaterThan(HR);
+  });
+});
+
+describe('drawSeries — candle opacity', () => {
+  it('applies globalAlpha to the series pass and restores it before indicators', () => {
+    const log: number[] = [];
+    registerIndicator({
+      key: 'test:alpha',
+      label: 'alpha',
+      pane: 'price',
+      settingsSchema: [],
+      warmupBars: () => 0,
+      compute: () => ({ series: {} as IndicatorSeries }),
+      draw: (ctx) => {
+        log.push((ctx as unknown as { globalAlpha: number }).globalAlpha);
+      },
+      legend: () => [],
+    });
+    const ctx = fakeCtx();
+    drawSeries(ctx as unknown as CanvasRenderingContext2D, {
+      ...clipParams([indicatorCfg('test:alpha')]),
+      candle: { opacity: 0.4 },
+    });
+    // Every candle rect painted at the configured alpha …
+    expect(ctx.fillAlphas.every((a) => a === 0.4)).toBe(true);
+    // … and the indicator pass sees a clean slate (the save/restore block).
+    expect(log).toEqual([1]);
+  });
+});
+
+// --- Paint-time hit regions -------------------------------------------------
+
+function indicatorCfg(defKey: string, series: IndicatorSeries = {}) {
+  return {
+    config: {
+      id: `cfg-${defKey}`,
+      defKey,
+      label: defKey,
+      enabled: true,
+      settings: {},
+      settingsOverrides: {},
+    },
+    series,
+  };
+}
+
+/** A def that paints N lines through the shared painter (which declares for it). */
+function linesDef(key: string, lineKeys: string[]): IndicatorDef {
+  return {
+    key,
+    label: key,
+    pane: 'price',
+    settingsSchema: [],
+    warmupBars: () => 0,
+    compute: () => ({ series: {} as IndicatorSeries }),
+    draw: (ctx, series, scale) => {
+      drawLines(
+        ctx,
+        series,
+        scale,
+        lineKeys.map((k) => ({ key: k, st: { color: '#fff', width: 1 } })),
+      );
+    },
+    legend: () => [],
+  };
+}
+
+const lineSeries = (keys: string[]): IndicatorSeries =>
+  Object.fromEntries(
+    keys.map((k) => [k, Float64Array.from(clipBars.map(() => 150))]),
+  );
+
+describe('drawSeries — hit regions', () => {
+  it('records one region per painted line, all stamped with the config id', () => {
+    const keys = ['a', 'b', 'c', 'd'];
+    registerIndicator(linesDef('test:four', keys));
+    const ctx = fakeCtx();
+    const regions = drawSeries(
+      ctx as unknown as CanvasRenderingContext2D,
+      clipParams([indicatorCfg('test:four', lineSeries(keys))]),
+    );
+    const mine = regions.filter((r) => r.sourceId === 'cfg-test:four');
+    expect(mine).toHaveLength(4);
+    expect(mine.every((r) => r.interpolate)).toBe(true);
+  });
+
+  it('paints price-pane indicators BENEATH the candles, and declares them first', () => {
+    // Both halves of one rule: an EMA must not cut across a candle body, and —
+    // because pickHitRegion walks in reverse — the candle must win the click
+    // where they overlap. Paint order is what enforces both, so assert it.
+    registerIndicator(linesDef('test:under', ['a']));
+    const ctx = fakeCtx();
+    const regions = drawSeries(
+      ctx as unknown as CanvasRenderingContext2D,
+      clipParams([indicatorCfg('test:under', lineSeries(['a']))]),
+    );
+    const lineAt = regions.findIndex((r) => r.sourceId === 'cfg-test:under');
+    const candleAt = regions.findIndex((r) => r.sourceId === CANDLE_SOURCE);
+    expect(lineAt).toBeGreaterThanOrEqual(0);
+    expect(candleAt).toBeGreaterThan(lineAt);
+  });
+
+  it('guide lines declare nothing (decoration, not a clickable object)', () => {
+    registerIndicator({
+      key: 'test:guides',
+      label: 'guides',
+      pane: { subpane: 'test' },
+      settingsSchema: [],
+      warmupBars: () => 0,
+      compute: () => ({ series: {} as IndicatorSeries }),
+      draw: (ctx, _series, scale) => {
+        drawGuideLines(ctx, scale, [0.5], '#fff');
+      },
+      legend: () => [],
+    });
+    const ctx = fakeCtx();
+    const regions = drawSeries(
+      ctx as unknown as CanvasRenderingContext2D,
+      clipParams([indicatorCfg('test:guides')]),
+    );
+    expect(regions.some((r) => r.sourceId === 'cfg-test:guides')).toBe(false);
+  });
+
+  it('candles declare the body half-width; bars the wider stem+stubs slot', () => {
+    // A realistic zoom: the 2-bar fixture's natural bandwidth spans half the
+    // chart, where BOTH widths saturate against the slot clamp and the
+    // candle-vs-bar distinction is invisible.
+    const zoomed = { step: 10, bandwidth: 7 };
+    const ctx = fakeCtx();
+    const candleRegions = drawSeries(
+      ctx as unknown as CanvasRenderingContext2D,
+      { ...clipParams(), ...zoomed },
+    );
+    const candle = candleRegions.find((r) => r.sourceId === CANDLE_SOURCE)!;
+    // The body rect the painter actually emitted, back in CSS px.
+    expect(candle.halfWidth).toBeCloseTo(ctx.fills[1][2] / (2 * HR), 10);
+    // high→low at the bar, in panned-local CSS.
+    expect(candle.spanAt(0)).toEqual([
+      manualYPrice(clipBars[0].high),
+      manualYPrice(clipBars[0].low),
+    ]);
+    expect(candle.spanAt(99)).toBeNull();
+    expect(candle.interpolate).toBe(false);
+
+    const barParams: DrawSeriesParams = {
+      ...clipParams(),
+      ...zoomed,
+      chartType: 'bar',
+    };
+    const bar = drawSeries(
+      fakeCtx() as unknown as CanvasRenderingContext2D,
+      barParams,
+    ).find((r) => r.sourceId === CANDLE_SOURCE)!;
+    const m = barMetrics(barParams.step, HR, STEPS, STUB);
+    expect(bar.halfWidth).toBeCloseTo(
+      barSlotAt(barParams, m, 0).width / (2 * HR),
+      10,
+    );
+    // A bar's stubs reach past the candle body, so its region is wider.
+    expect(bar.halfWidth).toBeGreaterThan(candle.halfWidth);
+  });
+
+  it('warns ONCE about a def that paints but declares nothing, and never about one that does', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    registerIndicator({
+      key: 'test:silent',
+      label: 'silent',
+      pane: 'price',
+      settingsSchema: [],
+      warmupBars: () => 0,
+      compute: () => ({ series: {} as IndicatorSeries }),
+      draw: (ctx) => ctx.fillRect(0, 0, 1, 1), // paints, declares nothing
+      legend: () => [],
+    });
+    registerIndicator(linesDef('test:declares', ['a']));
+    const params = clipParams([
+      indicatorCfg('test:silent'),
+      indicatorCfg('test:declares', lineSeries(['a'])),
+    ]);
+    // Repaint several times — the seen-set is module-level, so a pan must not
+    // re-warn every frame.
+    for (let i = 0; i < 3; i++)
+      drawSeries(fakeCtx() as unknown as CanvasRenderingContext2D, params);
+    const mine = warn.mock.calls.filter((c) => String(c[0]).includes('test:'));
+    expect(mine).toHaveLength(1);
+    expect(String(mine[0][0])).toContain('test:silent');
+    warn.mockRestore();
   });
 });

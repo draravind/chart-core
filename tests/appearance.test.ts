@@ -48,6 +48,31 @@ describe('effectiveAppearance', () => {
     expect(reset.background.radius).toBe(APPEARANCE_DEFAULTS.background.radius);
   });
 
+  it('exposes candle.opacity (the wickWidth dial is gone)', () => {
+    expect(effectiveAppearance().candle).toEqual({ opacity: 1 });
+    expect(effectiveAppearance({ candle: { opacity: 0.4 } }).candle.opacity).toBe(
+      0.4,
+    );
+  });
+
+  it('a stale persisted candle.wickWidth merges inertly, leaving opacity intact', () => {
+    // No read-tolerance shim / backfill: deepMerge copies unknown keys through
+    // and nothing reads them, so an old delta is an inert orphan.
+    const eff = effectiveAppearance({
+      candle: { wickWidth: 2.5 },
+    } as unknown as Parameters<typeof effectiveAppearance>[0]);
+    expect(eff.candle.opacity).toBe(1);
+    expect((eff.candle as Record<string, unknown>).wickWidth).toBe(2.5);
+  });
+
+  it('an existing chart-positive override still reaches the candles (no migration)', () => {
+    // The candles now read --candle-up, which chart-core.css defaults to
+    // var(--chart-positive) — so a delta written before the split still applies.
+    const eff = effectiveAppearance({ colors: { 'chart-positive': '#abcabc' } });
+    expect(eff.colors['chart-positive']).toBe('#abcabc');
+    expect(eff.colors['candle-up']).toBeUndefined(); // resolved by CSS, not here
+  });
+
   it('is pure — never mutates the defaults', () => {
     const before = JSON.stringify(APPEARANCE_DEFAULTS);
     effectiveAppearance({ colors: { x: '#000000' }, axis: { opacity: 0.9 } });

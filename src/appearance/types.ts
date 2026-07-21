@@ -10,7 +10,8 @@
 // injects as inline CSS custom properties on the chart wrapper — so any canvas
 // or SVG element already reading a `var(--chart-*)` picks them up with ZERO
 // draw-code changes. Genuine non-color scalars (gradient stops, axis opacity,
-// tick size, crosshair dash, wick width) are threaded explicitly into draw code.
+// tick size, crosshair dash, candle opacity) are threaded explicitly into draw
+// code.
 // ---------------------------------------------------------------------------
 
 /** Recursively-optional — the shape of a sparse persisted delta. */
@@ -19,6 +20,21 @@ export type DeepPartial<T> = T extends (infer U)[]
   : T extends object
     ? { [K in keyof T]?: DeepPartial<T[K]> }
     : T;
+
+/**
+ * Price-series (candle / OHLC bar) appearance. Named ONCE and referenced from
+ * every boundary that carries it — `ChartAppearance.candle`, `DrawSeriesParams`,
+ * and Chart's cached draw state — because the group is passed through those
+ * untouched; three inline copies only ever meant three places to forget.
+ *
+ * Colors are NOT here: they live in `colors` as the `--candle-up` /
+ * `--candle-down` tokens, so the candle popup edits the candles alone rather
+ * than the chart-wide `--chart-positive` / `--chart-negative` pair.
+ */
+export type CandleAppearance = {
+  /** 0..1, applied as `globalAlpha` around the price-series paint pass. */
+  opacity: number;
+};
 
 /** Fields common to every pattern's label chip. */
 export type LabelStyle = {
@@ -141,11 +157,11 @@ export type ChartAppearance = {
   colors: Record<string, string>;
   // Non-CSS-var scalars threaded explicitly into draw code:
   background: { topColor: string; bottomColor: string; radius: number };
-  candle: { wickWidth: number };
-  // NOTE: the OHLC bar geometry law (thickness ladder + stub reach) is NOT here
-  // — it is baked in `registry.ts` as `BAR_THICKNESS_STEPS` /
-  // `BAR_STUB_FRACTION`, since it describes renderer behaviour rather than a
-  // per-user preference.
+  candle: CandleAppearance;
+  // NOTE: the OHLC bar geometry law (thickness ladder + stub reach + the wick's
+  // fraction of the body) is NOT here — it is baked in `registry.ts` as
+  // `BAR_THICKNESS_STEPS` / `BAR_STUB_FRACTION` / `CANDLE_WICK_FRACTION`, since
+  // it describes renderer behaviour rather than a per-user preference.
   axis: { opacity: number; tickSize: number };
   crosshair: { color: string; opacity: number; dash: string };
   // Per-pattern typed styles (the three renderers have disjoint field sets).

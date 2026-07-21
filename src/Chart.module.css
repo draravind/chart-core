@@ -424,14 +424,21 @@
   color: var(--text-muted);
 }
 
+/* The label yields first: it ellipsizes rather than shoving the controls past
+ * the popover's `overflow: hidden` edge (`.legendPopover` is only 260px wide, so
+ * a long label + a full control cluster would otherwise clip the reset button). */
 .legendColorField > span {
   white-space: nowrap;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .legendColorControls {
   display: flex;
   align-items: center;
   gap: 6px;
+  flex-shrink: 0;
 }
 
 .legendColorControls input[type='color'] {
@@ -486,6 +493,43 @@
   box-shadow: 0 0 0 2px color-mix(in srgb, #5b8def 28%, transparent);
 }
 
+/* Per-field reset (↺) inside ColorField / LineField. Deliberately NOT
+ * `.legendBtn`: that one is chart chrome, hidden at opacity 0 until its
+ * `.legendItem` row is hovered. These fields also render in the gear dialog, the
+ * Candles popup and the drawing popup — none of which has a `.legendItem`
+ * ancestor — so borrowing that class left the reset permanently invisible there.
+ * Visibility is this control's own business: dimmed at rest, full on hover, and
+ * clearly inert when there is nothing to reset. */
+.fieldResetBtn {
+  pointer-events: auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0.6;
+  transition: opacity 120ms ease, color 120ms ease, background-color 120ms ease;
+}
+
+.fieldResetBtn:hover:not(:disabled) {
+  opacity: 1;
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--text-muted) 18%, transparent);
+}
+
+.fieldResetBtn:disabled {
+  opacity: 0.18;
+  cursor: default;
+}
+
 /* ---- Grouped line field (settings popover) --------------------------- */
 /* Compact row: color swatch · style select · width stepper · opacity slider ·
  * reset. Dedicated classes so the global popover `input { width:98px }` rule
@@ -494,6 +538,9 @@
   display: flex;
   align-items: center;
   gap: 5px;
+  /* Never shrink below the controls' own widths; the opacity slider (the one
+   * element that reads fine at any size) absorbs what pressure there is. */
+  min-width: 0;
 }
 
 .lineFieldControls input[type='color'] {
@@ -555,6 +602,7 @@
 
 .lineFieldOpacity {
   width: 56px;
+  min-width: 28px;
 }
 
 /* ---- Slider field ---------------------------------------------------- */
@@ -619,6 +667,28 @@
     0 2px 6px rgba(0, 0, 0, 0.3);
   overflow: hidden;
   font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+}
+
+/* Centred floating editor — what a double-click on a candle / indicator /
+   drawing opens. Applied IN ADDITION to each popup's own surface class, since
+   `.legendPopover` hard-codes `top: calc(100% + 6px); left: 0` for its
+   legend-anchored use and that must keep working.
+
+   The explicit z-index matters: the stack is canvas 0, svg 1,
+   legend/stats/divider 2, legend popover 3, settings dialog 4, drawing popup 4 —
+   a centred legend popover would otherwise inherit 3 and sit under the
+   drawing-popup layer. */
+.centeredPanel {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  right: auto;
+  bottom: auto;
+  transform: translate(-50%, -50%);
+  z-index: 4;
+  max-height: 80%;
+  display: flex;
+  flex-direction: column;
 }
 
 /* Right-click auto-fit exclusion checklist — shares the raised popover surface
