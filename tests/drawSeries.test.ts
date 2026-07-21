@@ -1,6 +1,14 @@
 import { describe, it, expect } from 'vitest';
 import * as d3 from 'd3';
-import { barMetrics, barRects } from '../src/utils/drawSeries';
+import {
+  barMetrics,
+  barRects,
+  drawSeries,
+  type DrawSeriesParams,
+} from '../src/utils/drawSeries';
+import { registerIndicator } from '../src/indicators/registry';
+import type { Candle } from '../src/types';
+import type { IndicatorDef, IndicatorSeries } from '../src/indicators/types';
 import { BAR_THICKNESS_STEPS, BAR_STUB_FRACTION } from '../src/appearance/registry';
 
 const STEPS = BAR_THICKNESS_STEPS;
@@ -250,5 +258,236 @@ describe('barRects — stub geometry', () => {
       yDev,
     );
     expect(rects).toHaveLength(1);
+  });
+});
+
+// --- Pane clipping ----------------------------------------------------------
+//
+// A manual price domain (y-axis scale drag, or the vertical body pan it
+// unlocks) maps prices outside [0, priceHeight]. Containment of candles/bars and
+// price-pane indicators is the CLIP's job — the geometry is emitted unchanged.
+
+/** `[x, y, w, h]` in absolute device dots. */
+type Rect = [number, number, number, number];
+
+type Transform = { a: number; d: number; e: number; f: number };
+
+/**
+ * Recording stand-in for `CanvasRenderingContext2D`. Tracks a scale+translate
+ * transform (all `drawSeries` ever sets) plus the save/restore stack, so every
+ * `fillRect` and `clip` is resolved to absolute device coordinates — which is
+ * where the clip law is actually expressed.
+ */
+function fakeCtx() {
+  let t: Transform = { a: 1, d: 1, e: 0, f: 0 };
+  let clip: Rect | null = null;
+  const stack: { t: Transform; clip: Rect | null }[] = [];
+  let pending: Rect | null = null;
+  const clips: Rect[] = [];
+  const fills: Rect[] = [];
+  const toDevice = (x: number, y: number, w: number, h: number): Rect => [
+    t.a * x + t.e,
+    t.d * y + t.f,
+    t.a * w,
+    t.d * h,
+  ];
+  const ctx = {
+    fillStyle: '',
+    save() {
+      stack.push({ t: { ...t }, clip });
+    },
+    restore() {
+      const prev = stack.pop();
+      if (prev) {
+        t = prev.t;
+        clip = prev.clip;
+      }
+    },
+    setTransform(a: number, _b: number, _c: number, d: number, e: number, f: number) {
+      t = { a, d, e, f };
+    },
+    translate(x: number, y: number) {
+      t = { ...t, e: t.e + t.a * x, f: t.f + t.d * y };
+    },
+    beginPath() {
+      pending = null;
+    },
+    rect(x: number, y: number, w: number, h: number) {
+      pending = toDevice(x, y, w, h);
+    },
+    roundRect(x: number, y: number, w: number, h: number) {
+      pending = toDevice(x, y, w, h);
+    },
+    clip() {
+      if (pending) {
+        clip = pending;
+        clips.push(pending);
+      }
+    },
+    fill() {},
+    clearRect() {},
+    fillRect(x: number, y: number, w: number, h: number) {
+      fills.push(toDevice(x, y, w, h));
+    },
+    createLinearGradient() {
+      return { addColorStop() {} };
+    },
+    clips,
+    fills,
+    /** The clip in force right now — what a def's `draw` would paint under. */
+    activeClip: () => clip,
+  };
+  return ctx;
+}
+
+const HR = 2;
+const VR = 2;
+const MARGIN_TOP = 4;
+const MARGIN_BOTTOM = 20;
+const MARGIN_LEFT = 8;
+const PRICE_HEIGHT = 300;
+const FULL_HEIGHT = 500; // price pane + subpanes
+const RIGHT_BUFFER = 60;
+const WIDTH = 800;
+
+const clipBars: Candle[] = [
+  { date: '2024-01-02', open: 150, high: 160, low: 20, close: 155, volume: 1000 },
+  { date: '2024-01-03', open: 155, high: 170, low: 30, close: 140, volume: 2000 },
+];
+
+// Deliberately compressed MANUAL domain: the bars' lows sit far below it, so
+// yPrice maps them well past `priceHeight` — the exact bug condition.
+const manualYPrice = d3.scaleLog().domain([140, 180]).range([PRICE_HEIGHT, 0]);
+
+/** A def that records, at draw time, which clip it was painting under. */
+function drawnDef(
+  key: string,
+  pane: IndicatorDef['pane'],
+  log: { key: string; clip: Rect | null }[],
+): IndicatorDef {
+  return {
+    key,
+    label: key,
+    pane,
+    settingsSchema: [],
+    warmupBars: () => 0,
+    compute: () => ({ series: {} as IndicatorSeries }),
+    draw: (ctx) => {
+      log.push({
+        key,
+        clip: (ctx as unknown as ReturnType<typeof fakeCtx>).activeClip(),
+      });
+    },
+    legend: () => [],
+  };
+}
+
+function clipParams(indicators: DrawSeriesParams['indicators'] = []): DrawSeriesParams {
+  const xScale = d3
+    .scaleBand<number>()
+    .domain(clipBars.map((_, i) => i))
+    .range([0, WIDTH - RIGHT_BUFFER])
+    .paddingInner(0.3);
+  return {
+    hRatio: HR,
+    vRatio: VR,
+    cssWidth: MARGIN_LEFT + WIDTH,
+    cssHeight: MARGIN_TOP + FULL_HEIGHT + MARGIN_BOTTOM,
+    marginLeft: MARGIN_LEFT,
+    marginTop: MARGIN_TOP,
+    marginBottom: MARGIN_BOTTOM,
+    rightBuffer: RIGHT_BUFFER,
+    width: WIDTH,
+    fullHeight: FULL_HEIGHT,
+    priceHeight: PRICE_HEIGHT,
+    bandwidth: xScale.bandwidth(),
+    step: xScale.step(),
+    baseTranslateX: 0,
+    renderStart: 0,
+    renderEnd: clipBars.length,
+    renderSlice: clipBars,
+    chartType: 'candlestick',
+    xScale,
+    yPrice: manualYPrice,
+    subpaneScales: new Map([
+      ['test', d3.scaleLinear().domain([0, 1]).range([FULL_HEIGHT, PRICE_HEIGHT])],
+    ]),
+    data: clipBars,
+    colors: { positive: '#0f0', negative: '#f00' },
+    background: { topColor: '#000', bottomColor: '#111', radius: 4 },
+    candle: { wickWidth: 1 },
+    indicators,
+    resolveColor: (v) => v,
+  };
+}
+
+const PRICE_CLIP_BOTTOM = Math.round((MARGIN_TOP + PRICE_HEIGHT) * VR);
+const FULL_CLIP_BOTTOM = Math.round(
+  (MARGIN_TOP + FULL_HEIGHT + MARGIN_BOTTOM) * VR,
+);
+
+describe('drawSeries — pane clipping', () => {
+  it('clips the candle pass to the price pane, not the full viewport', () => {
+    const ctx = fakeCtx();
+    drawSeries(ctx as unknown as CanvasRenderingContext2D, clipParams());
+    const [priceClip] = ctx.clips;
+    expect(priceClip[0]).toBe(Math.round(MARGIN_LEFT * HR));
+    expect(priceClip[2]).toBe(
+      Math.round((MARGIN_LEFT + WIDTH - RIGHT_BUFFER) * HR) -
+        Math.round(MARGIN_LEFT * HR),
+    );
+    expect(priceClip[1]).toBe(0);
+    expect(priceClip[3]).toBe(PRICE_CLIP_BOTTOM);
+    expect(priceClip[3]).toBeLessThan(FULL_CLIP_BOTTOM);
+  });
+
+  it('gives the subpane pass the full viewport, independent of the price clip', () => {
+    const ctx = fakeCtx();
+    drawSeries(ctx as unknown as CanvasRenderingContext2D, clipParams());
+    expect(ctx.clips).toHaveLength(2);
+    const [, subClip] = ctx.clips;
+    expect(subClip[1]).toBe(0);
+    // Not the intersection of the two — `restore()` popped the price clip.
+    expect(subClip[3]).toBe(FULL_CLIP_BOTTOM);
+    // And nothing is clipped once both passes are done.
+    expect(ctx.activeClip()).toBeNull();
+  });
+
+  it('splits indicators by pane across the two passes', () => {
+    const log: { key: string; clip: Rect | null }[] = [];
+    registerIndicator(drawnDef('test:price', 'price', log));
+    registerIndicator(drawnDef('test:sub', { subpane: 'test' }, log));
+    const cfg = (defKey: string) => ({
+      config: {
+        id: defKey,
+        defKey,
+        label: defKey,
+        enabled: true,
+        settings: {},
+        settingsOverrides: {},
+      },
+      series: {} as IndicatorSeries,
+    });
+    const ctx = fakeCtx();
+    // Listed subpane-first, so config order alone would draw them the other way
+    // round — the pane filter, not the order, decides which pass each runs in.
+    drawSeries(
+      ctx as unknown as CanvasRenderingContext2D,
+      clipParams([cfg('test:sub'), cfg('test:price')]),
+    );
+    expect(log.map((e) => e.key)).toEqual(['test:price', 'test:sub']);
+    expect(log[0].clip?.[3]).toBe(PRICE_CLIP_BOTTOM);
+    expect(log[1].clip?.[3]).toBe(FULL_CLIP_BOTTOM);
+  });
+
+  it('still emits the out-of-pane candle geometry unchanged (clip-only fix)', () => {
+    const ctx = fakeCtx();
+    drawSeries(ctx as unknown as CanvasRenderingContext2D, clipParams());
+    const oy = MARGIN_TOP * VR;
+    const lowDev = Math.round(oy + manualYPrice(clipBars[0].low) * VR);
+    expect(lowDev).toBeGreaterThan(PRICE_CLIP_BOTTOM);
+    // The wick rect for bar 0 reaches that y — containment comes from the clip.
+    const bottoms = ctx.fills.map((r) => r[1] + r[3]);
+    expect(Math.max(...bottoms)).toBeGreaterThanOrEqual(lowDev);
   });
 });

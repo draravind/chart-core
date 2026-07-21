@@ -49,7 +49,8 @@ export type DrawSeriesParams = {
  * Paint the high-count read-only series (candles/bars, indicator lines — volume
  * is now a registered subpane indicator painted via `drawIndicators`) onto the
  * single canvas. Mirrors the engine's SVG joins exactly: same xScale/yPrice
- * instances, same `#chart-viewport` clip, same pan translate, so the canvas
+ * instances, same clips (`#chart-price-viewport` for the price pane,
+ * `#chart-viewport` for the subpanes), same pan translate, so the canvas
  * overlays the (flag-gated) SVG within ±1px.
  */
 export function drawSeries(ctx: CanvasRenderingContext2D, p: DrawSeriesParams): void {
@@ -75,33 +76,48 @@ export function drawSeries(ctx: CanvasRenderingContext2D, p: DrawSeriesParams): 
   ctx.fill();
   ctx.restore();
 
+  // Price pane: candles/bars + every price-scale indicator stop at the divider.
+  // Under a manual domain (Y-axis scale drag, or the vertical body pan that drag
+  // unlocks) yPrice can map well outside [0, priceHeight]; without this they
+  // would paint over the volume / RS panes below.
   ctx.save();
-  // Clip matches #chart-viewport (applied before the pan translate, exactly as
-  // the SVG clipWrapper sits outside the panned chartGroup). Set in BITMAP space
-  // on whole device pixels: a clip edge at a fractional device position
-  // antialiases whatever it cuts, which would leave the right-most bars haloed
-  // no matter how exact their own geometry is. The transform is then restored by
-  // hand rather than by `restore()`, which would pop the clip with it.
-  const clipX0 = Math.round(p.marginLeft * hRatio);
-  const clipX1 = Math.round((p.marginLeft + p.width - p.rightBuffer) * hRatio);
-  const clipY0 = 0;
-  const clipY1 = Math.round(
-    (p.marginTop + p.fullHeight + p.marginBottom) * vRatio,
-  );
+  clipAndPan(ctx, p, p.marginTop + p.priceHeight);
+  if (p.chartType === 'bar') drawBars(ctx, p);
+  else drawCandles(ctx, p);
+  drawIndicators(ctx, p, false);
+  ctx.restore();
+
+  // Subpanes: full viewport clip; each subpane def self-clips to its own band.
+  ctx.save();
+  clipAndPan(ctx, p, p.marginTop + p.fullHeight + p.marginBottom);
+  drawIndicators(ctx, p, true);
+  ctx.restore();
+}
+
+/** Apply the viewport clip and re-establish the panned CSS transform.
+ *  Set in BITMAP space on whole device pixels: a clip edge at a fractional
+ *  device position antialiases whatever it cuts, which would leave the
+ *  right-most bars haloed no matter how exact their own geometry is. The x
+ *  bounds match #chart-viewport (applied before the pan translate, exactly as
+ *  the SVG clipWrapper sits outside the panned chartGroup). Caller must have
+ *  `save()`d — the matching `restore()` pops the clip, which is what keeps the
+ *  two passes independent. */
+function clipAndPan(
+  ctx: CanvasRenderingContext2D,
+  p: DrawSeriesParams,
+  bottomCss: number,
+): void {
+  const clipX0 = Math.round(p.marginLeft * p.hRatio);
+  const clipX1 = Math.round((p.marginLeft + p.width - p.rightBuffer) * p.hRatio);
+  const clipY1 = Math.round(bottomCss * p.vRatio);
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.beginPath();
-  ctx.rect(clipX0, clipY0, clipX1 - clipX0, clipY1 - clipY0);
+  ctx.rect(clipX0, 0, clipX1 - clipX0, clipY1);
   ctx.clip();
   // Back to CSS space, panned — the composition of the old
   // translate(marginLeft, marginTop) + translate(baseTranslateX, 0).
-  ctx.setTransform(hRatio, 0, 0, vRatio, 0, 0);
+  ctx.setTransform(p.hRatio, 0, 0, p.vRatio, 0, 0);
   ctx.translate(p.marginLeft + p.baseTranslateX, p.marginTop);
-
-  if (p.chartType === 'bar') drawBars(ctx, p);
-  else drawCandles(ctx, p);
-  drawIndicators(ctx, p);
-
-  ctx.restore();
 }
 
 // Absolute device-pixel origin of the panned pane coordinate space — the point
@@ -289,7 +305,13 @@ function drawBars(ctx: CanvasRenderingContext2D, p: DrawSeriesParams): void {
   ctx.restore();
 }
 
-function drawIndicators(ctx: CanvasRenderingContext2D, p: DrawSeriesParams): void {
+/** Paint one pane group: `subpaneOnly=false` draws the price-scale indicators
+ *  (under the price-pane clip), `true` draws the subpane ones. */
+function drawIndicators(
+  ctx: CanvasRenderingContext2D,
+  p: DrawSeriesParams,
+  subpaneOnly: boolean,
+): void {
   if (p.indicators.length === 0) return;
   // Recomputed from `g` on demand rather than tabulated per frame, so a
   // histogram column is the SAME arithmetic as the bar above it by construction
@@ -302,6 +324,7 @@ function drawIndicators(ctx: CanvasRenderingContext2D, p: DrawSeriesParams): voi
     const def = getIndicator(config.defKey);
     if (!def) continue;
     const isSubpane = typeof def.pane === 'object' && 'subpane' in def.pane;
+    if (isSubpane !== subpaneOnly) continue;
     let y: (value: number) => number;
     let paneRange: number[];
     if (isSubpane) {

@@ -632,9 +632,17 @@ sharesOutstanding?, freeFloatPercent?, eps?}` (all optional; absent → blanked)
 
 - `drawSeries(ctx, p: DrawSeriesParams) → void` — single-canvas painter for
   candles/bars + indicator lines (volume is now the `volume` subpane indicator,
-  painted via `drawIndicators`); applies background gradient, `#chart-viewport`
-  clip, and pan transform; clears the backing store each call. `drawIndicators`
-  calls `def.draw(ctx, series, scale, config.settings, resolveColor, meta)`.
+  painted via `drawIndicators`); clears the backing store each call, fills the
+  background gradient unclipped, then paints TWO clipped passes via the
+  `clipAndPan(ctx, p, bottomCss)` helper (clip + pan transform; the caller's
+  `restore()` pops the clip, keeping the passes independent): the price pane
+  (candles/bars + `drawIndicators(…, false)`) clipped to `marginTop +
+  priceHeight`, matching the SVG `#chart-price-viewport`, so a manual price
+  domain (y-axis scale drag / vertical body pan) can't paint into the subpanes;
+  then the subpanes (`drawIndicators(…, true)`) under the full `#chart-viewport`
+  clip, each subpane def self-clipping to its own band. `drawIndicators(ctx, p,
+  subpaneOnly)` filters defs by pane and calls
+  `def.draw(ctx, series, scale, config.settings, resolveColor, meta)`.
   The candle/bar pass runs in DEVICE-PIXEL space (`fillRect` on whole dots, clip
   bounds rounded to whole dots) so nothing antialiases; indicator lines stay in
   CSS space and stay antialiased, since they are diagonal.
