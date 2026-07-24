@@ -872,6 +872,11 @@ const Chart = ({
   // top-left readout to the latest candle (that effect re-runs on data change,
   // the crosshair effect only runs once on mount).
   const showLatestInfoRef = useRef<(() => void) | null>(null);
+  // Companion to showLatestInfoRef for the hovering case: re-renders the
+  // crosshair readout at the current pointer position with fresh data, so a
+  // live data tick doesn't leave the legend frozen while the pointer rests on
+  // the chart (the crosshair otherwise only re-renders on pointer move).
+  const updateCrosshairRef = useRef<(() => void) | null>(null);
   const priceLabelGroupRef = useRef<Sel<SVGGElement> | null>(null);
   const priceLabelTextRef = useRef<Sel<SVGTextElement> | null>(null);
   const overlayRectRef = useRef<Sel<SVGRectElement> | null>(null);
@@ -2322,11 +2327,14 @@ const Chart = ({
     };
     redrawSeries();
 
-    // Keep the top-left readout on the latest candle across data/symbol changes
-    // when the user isn't actively hovering. `scaleApi.data` was just updated
-    // above, so this renders the new latest bar (the crosshair effect's own seed
-    // only fires on mount).
-    if (!crosshairLastPosRef.current) showLatestInfoRef.current?.();
+    // Keep the top-left readout live on a data tick. `scaleApi.data` was just
+    // updated above, so both branches render fresh numbers:
+    //  - pointer resting over the chart → re-run the crosshair at that position
+    //    so the hovered bar's OHLC/values refresh (without this the legend
+    //    freezes while the canvas keeps repainting);
+    //  - not hovering → refresh the latest-candle readout.
+    if (crosshairLastPosRef.current) updateCrosshairRef.current?.();
+    else showLatestInfoRef.current?.();
   }, [
     layout,
     resolvedIndicators,
@@ -2658,6 +2666,7 @@ const Chart = ({
       // series at this index to show live values per row.
       notifyHover(realIdx);
     };
+    updateCrosshairRef.current = updateCrosshair;
 
     overlay.on('mousedown', function (event: MouseEvent) {
       event.preventDefault();
