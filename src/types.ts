@@ -38,8 +38,20 @@ export type ChartType = 'candlestick' | 'bar';
 
 export type AutoFitMode = 'price' | 'priceAndOverlays';
 
-export type RangeKey = '3M' | '6M' | '1Y' | '2Y' | '3Y' | '5Y';
-export const RANGES: RangeKey[] = ['3M', '6M', '1Y', '2Y', '3Y', '5Y'];
+// Named zoom ranges, in calendar terms. Which of them are *reachable* depends on
+// the series: bar counts are derived per-interval (`rangeMarks`), so 10Y/20Y are
+// only ever offered where the measured cadence makes them fit the readability cap.
+export type RangeKey = '3M' | '6M' | '1Y' | '2Y' | '3Y' | '5Y' | '10Y' | '20Y';
+export const RANGES: RangeKey[] = [
+  '3M',
+  '6M',
+  '1Y',
+  '2Y',
+  '3Y',
+  '5Y',
+  '10Y',
+  '20Y',
+];
 
 // The published, app-readable scale/geometry API — today's `HandlerState`
 // (StockChart.tsx) plus a reason-tagged subscriber list. The object identity is

@@ -4,15 +4,25 @@ export * from './types';
 // avoid an ambiguous barrel re-export.
 export {
   RANGE_DAYS,
+  RANGE_YEARS,
+  MIN_MARK_BARS,
+  DEFAULT_BARS_PER_YEAR,
+  DEFAULT_RANGE_MARKS,
   MIN_BAR_STEP_PX,
   MIN_VISIBLE_BARS,
+  barsPerYear,
+  rangeMarks,
   maxVisibleBarsForWidth,
   formatPrice,
   formatVolume,
   formatVolumeTick,
   computeVolumeStats,
 } from './utils/chartCalculations';
-export type { VolumeLabel, VolumeStats } from './utils/chartCalculations';
+export type {
+  RangeMark,
+  VolumeLabel,
+  VolumeStats,
+} from './utils/chartCalculations';
 export type { PatternMarker } from './patterns/types';
 export { PATTERN_CATALOG, PATTERN_NAMES } from './patterns/catalog';
 export type { PatternCatalogEntry } from './patterns/catalog';

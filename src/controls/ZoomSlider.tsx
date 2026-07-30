@@ -1,5 +1,9 @@
-import { RANGES } from '../types';
-import { RANGE_DAYS, MIN_VISIBLE_BARS } from '../utils/chartCalculations';
+import {
+  DEFAULT_RANGE_MARKS,
+  MIN_VISIBLE_BARS,
+  RANGE_DAYS,
+  type RangeMark,
+} from '../utils/chartCalculations';
 import styles from './ZoomSlider.module.css';
 
 type Props = {
@@ -9,6 +13,10 @@ type Props = {
   // the slider's max and decides which range marks render (D4: only reachable
   // marks appear — no greyed/disabled marks).
   maxVisibleBars: number;
+  // The named-range ladder in BAR counts, derived from the series' own cadence
+  // and surfaced by Chart's onRangeMarksChange. Defaults to the legacy daily
+  // ladder so consumers that don't plumb it through are unaffected.
+  marks?: readonly RangeMark[];
   // Reset pan to the latest bar when the value lands on a named-range mark
   // (mirrors the old range-pill behavior). Free-drag between marks leaves pan as-is.
   onPanReset?: () => void;
@@ -25,24 +33,27 @@ export default function ZoomSlider({
   visibleBars,
   onVisibleBarsChange,
   maxVisibleBars,
+  marks: marksProp,
   onPanReset,
 }: Props) {
-  // Slider starts at the 3M mark — the tightest *named* range — not the
-  // MIN_VISIBLE_BARS zoom-in floor (the wheel can still zoom in below 3M; the
-  // slider thumb just pins to its left edge there). On a degenerately narrow
-  // screen where even 3M exceeds the cap, fall back so min never overshoots max.
   const max = Math.max(MIN_VISIBLE_BARS, maxVisibleBars);
-  const min = Math.min(RANGE_DAYS['3M'], max);
+  // Reachable marks only (D4): a range mark renders iff its bar count fits the cap.
+  const marks = (marksProp ?? DEFAULT_RANGE_MARKS).filter((m) => m.bars <= max);
+  // Slider starts at the TIGHTEST reachable named range — not the
+  // MIN_VISIBLE_BARS zoom-in floor (the wheel can still zoom in below it; the
+  // slider thumb just pins to its left edge there). Derived from the marks, not
+  // a daily constant: on a weekly series the tightest mark is 1Y ≈ 52 bars, and
+  // a hardcoded 66 would both pin the left end at 66 *weeks* and filter that
+  // mark out. On a degenerately narrow screen where no mark fits, fall back so
+  // min never overshoots max.
+  const min = marks.length
+    ? Math.min(...marks.map((m) => m.bars))
+    : Math.min(RANGE_DAYS['3M'], max);
   const value = Math.max(min, Math.min(visibleBars, max));
 
   const logMin = Math.log(min);
   const logMax = Math.log(max);
   const logSpan = logMax - logMin;
-
-  // Reachable marks only (D4): a range mark renders iff its bar count fits the cap.
-  const marks = RANGES.map((key) => ({ key, bars: RANGE_DAYS[key] })).filter(
-    (m) => m.bars >= min && m.bars <= max,
-  );
   // Log position along the track (0..100%); guards the degenerate min===max track.
   const pct = (bars: number) =>
     logSpan > 0 ? ((Math.log(bars) - logMin) / logSpan) * 100 : 0;

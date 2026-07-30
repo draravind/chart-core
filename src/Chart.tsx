@@ -53,10 +53,13 @@ import {
   type SubpaneBand,
 } from './indicators/subpaneLayout';
 import {
+  barsPerYear as measureBarsPerYear,
   formatPrice,
   formatVolume,
   maxVisibleBarsForWidth,
+  rangeMarks as deriveRangeMarks,
   MIN_VISIBLE_BARS,
+  type RangeMark,
 } from './utils/chartCalculations';
 import { toColumns } from './utils/toColumns';
 import { drawSeries } from './utils/drawSeries';
@@ -118,6 +121,10 @@ const DEFAULT_SUBPANE_PAD = 0.08;
 const RIGHT_BUFFER = 18;
 const INFO_SPAN_COUNT = 12;
 const AXIS_STROKE = 'currentColor';
+// Minimum horizontal breathing room between two x-axis labels. A '%b %y' label is
+// ~40px wide, so below this they smear into each other; the axis drops to year
+// boundaries rather than overprint.
+const MIN_TICK_GAP_PX = 56;
 // Axis opacity + tick size are now user-editable via the appearance config
 // (APPEARANCE_DEFAULTS.axis); read from `app.axis` at draw time.
 const N_PRICE_TICKS = 10;
@@ -149,6 +156,10 @@ type Props = {
   // so the host can bound a zoom slider. chart-core owns + enforces the cap; this
   // is purely informational for UI that can't read containerWidth directly.
   onMaxVisibleBarsChange?: (n: number) => void;
+  // Surfaces the named-range ladder in BAR counts, derived from the series' own
+  // measured cadence (`rangeMarks`), so a host-rendered ZoomSlider labels its
+  // marks correctly whatever the bar interval. Same plumbing shape as the cap.
+  onRangeMarksChange?: (marks: RangeMark[]) => void;
   panOffset: number;
   onPanOffsetChange: (n: number | ((prev: number) => number)) => void;
   chartType: ChartType;
@@ -310,6 +321,7 @@ const Chart = ({
   visibleBars,
   onVisibleBarsChange,
   onMaxVisibleBarsChange,
+  onRangeMarksChange,
   panOffset,
   onPanOffsetChange,
   chartType,
@@ -471,8 +483,19 @@ const Chart = ({
     return out;
   }, [indicators]);
 
-  // Readability-derived zoom-out cap (D1/D4/D5): the largest named range that
-  // fits the live measured width while each bar slot stays >= MIN_BAR_STEP_PX.
+  // Measured bars/year — the engine is bar-index based and holds no interval
+  // concept, so anything that needs calendar meaning (the zoom ladder, the ATR
+  // stat windows) derives it from the series' own cadence.
+  const measuredBarsPerYear = useMemo(() => measureBarsPerYear(data ?? []), [data]);
+  // The named-range ladder for THIS series, in bar counts. Drives both the
+  // readability cap below and the host's slider marks.
+  const rangeMarks = useMemo(
+    () => deriveRangeMarks(data ?? [], data?.length ?? 0),
+    [data],
+  );
+  // Readability-derived zoom-out cap (D1/D5): the most bar slots that fit the live
+  // measured width while each stays >= MIN_BAR_STEP_PX. Width only — NOT snapped to
+  // a mark, so the visual floor is identical in every interval (see the function).
   // chart-core owns + enforces this; the wheel/correction effects read it.
   const maxVisibleBars = useMemo(
     () => maxVisibleBarsForWidth(containerWidth),
@@ -620,8 +643,13 @@ const Chart = ({
     if (!data || data.length === 0) return null;
     const combined =
       warmupSeed && warmupSeed.length ? warmupSeed.concat(data) : data;
-    return computeStats(combined, statsTable, statsMarket);
-  }, [data, warmupSeed, statsTable, statsMarket]);
+    return computeStats(
+      combined,
+      statsTable,
+      statsMarket,
+      measuredBarsPerYear,
+    );
+  }, [data, warmupSeed, statsTable, statsMarket, measuredBarsPerYear]);
 
   // Everything the canvas redraw needs that is NOT a live scale field. Rebuilt
   // in Effect B (after the y-scale exists); the pan path reuses it with only a
@@ -844,6 +872,10 @@ const Chart = ({
   useEffect(() => {
     onMaxVisibleBarsChangeRef.current = onMaxVisibleBarsChange;
   }, [onMaxVisibleBarsChange]);
+  const onRangeMarksChangeRef = useRef(onRangeMarksChange);
+  useEffect(() => {
+    onRangeMarksChangeRef.current = onRangeMarksChange;
+  }, [onRangeMarksChange]);
   const pendingFrameRef = useRef<number | null>(null);
   const pendingDxRef = useRef<number>(0);
   const pendingDyRef = useRef<number>(0);
@@ -1530,6 +1562,13 @@ const Chart = ({
     onMaxVisibleBarsChangeRef.current?.(maxVisibleBars);
   }, [maxVisibleBars, containerWidth, onMaxVisibleBarsChange]);
 
+  // Same for the derived mark ladder — the host renders the slider but has no
+  // series in hand to measure. Not width-dependent, so no measurement guard.
+  useEffect(() => {
+    if (!onRangeMarksChange) return;
+    onRangeMarksChangeRef.current?.(rangeMarks);
+  }, [rangeMarks, onRangeMarksChange]);
+
   // Reset the manual price range when the user switches symbols. Done at
   // render time to avoid a cascading render via an effect.
   const [prevSymbolForZoom, setPrevSymbolForZoom] = useState(symbol);
@@ -1879,6 +1918,7 @@ const Chart = ({
       fullHeight,
       subpanes,
       width,
+      step,
       baseTranslateX,
       xScale,
       totalHeight,
@@ -1919,11 +1959,28 @@ const Chart = ({
       .current!.attr('width', width - RIGHT_BUFFER)
       .attr('height', MARGIN.top + priceHeight);
 
-    const tickValues: number[] = [];
+    // X-axis ticks — month boundaries, falling back to year boundaries when the
+    // month set would collide at this zoom. Both candidate sets come from string
+    // prefixes (no Date parsing per bar); the density rule is measured against the
+    // live `step`, so it is interval-agnostic: it thins a deeply-zoomed-out daily
+    // axis for the same reason it thins a mid-zoom weekly one.
+    const monthTicks: number[] = [];
+    const yearTicks: number[] = [];
     for (let i = Math.max(1, renderStart); i < renderEnd; i++) {
-      if (data[i].date.slice(0, 7) !== data[i - 1].date.slice(0, 7)) {
-        tickValues.push(i);
-      }
+      const cur = data[i].date;
+      const prev = data[i - 1].date;
+      if (cur.slice(0, 7) !== prev.slice(0, 7)) monthTicks.push(i);
+      if (cur.slice(0, 4) !== prev.slice(0, 4)) yearTicks.push(i);
+    }
+    const minGapBars = step > 0 ? MIN_TICK_GAP_PX / step : 0;
+    const monthsTooDense = monthTicks.some(
+      (v, i) => i > 0 && v - monthTicks[i - 1] < minGapBars,
+    );
+    const useYearTicks = monthsTooDense;
+    const tickValues: number[] = [];
+    for (const v of useYearTicks ? yearTicks : monthTicks) {
+      const last = tickValues[tickValues.length - 1];
+      if (last === undefined || v - last >= minGapBars) tickValues.push(v);
     }
 
     yPriceAxisGRef.current!.attr('transform', `translate(${width},0)`);
@@ -1970,7 +2027,7 @@ const Chart = ({
             const d = data[i];
             if (!d) return '';
             const date = new Date(d.date);
-            return d3.timeFormat('%b %y')(date);
+            return d3.timeFormat(useYearTicks ? '%Y' : '%b %y')(date);
           }),
       );
     xAxisGRef.current!.select('.domain').remove();

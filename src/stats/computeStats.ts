@@ -25,6 +25,9 @@ export type StatsViewModel = { rows: StatsRow[] };
 
 const EMPTY: StatsCell = { text: '', level: 'muted' };
 
+/** Pine's implied cadence — the baseline both the ATR windows and bands assume. */
+const DAILY_BARS_PER_YEAR = 252;
+
 /** Pine f_formatNumber: < 10 → one decimal, else rounded to an integer. */
 function formatNumber(v: number): string {
   return v < 10 ? v.toFixed(1) : String(Math.round(v));
@@ -35,28 +38,42 @@ function validShare(x: number | undefined): number | null {
   return typeof x === 'number' && Number.isFinite(x) && x !== 0 ? x : null;
 }
 
-/** ATR threshold bands (on the FULL ATR value, not the halved display value). */
-function atrLevel(atr: number): StatsLevel {
-  return atr > 5 ? 'strong' : atr > 4 ? 'up' : atr > 3 ? 'neutral' : 'down';
+/**
+ * ATR threshold bands (on the FULL ATR value, not the halved display value).
+ * `scale` stretches the Pine daily bands for a coarser bar: true range grows
+ * with √time, so a weekly bar's range is ~√5× a daily one and the raw 5/4/3
+ * bands would mark everything `strong`.
+ */
+function atrLevel(atr: number, scale: number): StatsLevel {
+  return atr > 5 * scale
+    ? 'strong'
+    : atr > 4 * scale
+      ? 'up'
+      : atr > 3 * scale
+        ? 'neutral'
+        : 'down';
 }
 
-function atrCell(series: Float64Array): StatsCell {
+function atrCell(series: Float64Array, scale: number): StatsCell {
   const v = series.length ? series[series.length - 1] : NaN;
   const atr = v * 100;
   // Non-finite covers both the short-history NaN warm-up and the ±Infinity a
   // zero close injects into the normalized-TR chain — blank the cell for both.
   if (!Number.isFinite(atr)) return EMPTY;
-  return { text: `${formatNumber(atr * 0.5)} %`, level: atrLevel(atr) };
+  return { text: `${formatNumber(atr * 0.5)} %`, level: atrLevel(atr, scale) };
 }
 
 /**
  * Latest-bar stats view-model. `combinedBars` is warmupSeed+data (caller-built);
  * fundamentals come from `statsTable`; `market` drives Mkt-Cap units/thresholds.
+ * `barsPerYear` is the series' measured cadence — it keeps the ATR rows meaning
+ * 6M/3M/1M on any bar interval and scales their volatility bands with √time.
  */
 export function computeStats(
   combinedBars: readonly Candle[],
   statsTable: StatsTableData | undefined,
   market: StatsMarket,
+  barsPerYear = DAILY_BARS_PER_YEAR,
 ): StatsViewModel {
   const n = combinedBars.length;
   if (n === 0) return { rows: [] };
@@ -67,12 +84,20 @@ export function computeStats(
   const closePrev = n >= 2 ? c[n - 2] : c[n - 1];
 
   // ATR rows: normalized true range (ta.atr(1)/close), then SMA over the windows.
+  // Windows are fractions of a YEAR, not fixed bar counts, so the 6M/3M/1M labels
+  // stay true on a coarser interval (daily 126/63/21, weekly 26/13/4).
+  const bpy =
+    Number.isFinite(barsPerYear) && barsPerYear > 0
+      ? barsPerYear
+      : DAILY_BARS_PER_YEAR;
+  const win = (years: number) => Math.max(1, Math.round(bpy * years));
+  const atrScale = Math.sqrt(DAILY_BARS_PER_YEAR / bpy);
   const tr = trueRange(h, l, c);
   const trNorm = new Float64Array(n);
   for (let i = 0; i < n; i++) trNorm[i] = tr[i] / c[i];
-  const atr1 = atrCell(sma(trNorm, 125)); // ATR 6M
-  const atr2 = atrCell(sma(trNorm, 63)); // ATR 3M
-  const atr3 = atrCell(sma(trNorm, 21)); // ATR 1M
+  const atr1 = atrCell(sma(trNorm, win(1 / 2)), atrScale); // ATR 6M
+  const atr2 = atrCell(sma(trNorm, win(1 / 4)), atrScale); // ATR 3M
+  const atr3 = atrCell(sma(trNorm, win(1 / 12)), atrScale); // ATR 1M
 
   const t = statsTable ?? {};
   const sector = (t.sector ?? '').trim();

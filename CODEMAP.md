@@ -27,9 +27,11 @@ Public barrel — the only import surface for consumers (never deep-import). Re-
 
 - `export * from './types'` → `Candle`, `QuarterlyResult`, `ChartType`, `AutoFitMode`,
   `RangeKey`, `RANGES`, `ChartScaleReason`, `ChartScaleApi`.
-- From `utils/chartCalculations`: `RANGE_DAYS`, `MIN_BAR_STEP_PX`,
-  `MIN_VISIBLE_BARS`, `maxVisibleBarsForWidth`, `formatPrice`, `formatVolume`,
-  `formatVolumeTick`, `computeVolumeStats`, types `VolumeLabel`, `VolumeStats`.
+- From `utils/chartCalculations`: `RANGE_DAYS` (deprecated), `RANGE_YEARS`,
+  `MIN_MARK_BARS`, `DEFAULT_BARS_PER_YEAR`, `DEFAULT_RANGE_MARKS`,
+  `MIN_BAR_STEP_PX`, `MIN_VISIBLE_BARS`, `barsPerYear`, `rangeMarks`,
+  `maxVisibleBarsForWidth`, `formatPrice`, `formatVolume`, `formatVolumeTick`,
+  `computeVolumeStats`, types `RangeMark`, `VolumeLabel`, `VolumeStats`.
 - From `patterns/types`: `PatternMarker`.
 - From `stats/types`: `StatsTableData`, `StatsMarket`, `StatsPosition`, `StatsSize`
   (the price-stats panel's public props; compute/component stay internal).
@@ -89,6 +91,8 @@ Public barrel — the only import surface for consumers (never deep-import). Re-
   `onMaxVisibleBarsChange` (surfaces the width-derived zoom-out cap; chart-core
   also self-enforces it — clamps the wheel, corrects a too-wide prop post-measure,
   and caps all draw geometry via a render-scope `cappedVisibleBars`),
+  `onRangeMarksChange` (surfaces the series-derived `rangeMarks` ladder for a
+  host-rendered `ZoomSlider` — the host has no series to measure),
   `panOffset`/`onPanOffsetChange`, `chartType`, `indicators`/`onIndicatorsChange`,
   `autoFitMode`/`onAutoFitModeChange`, `infoBarExpanded`/`onInfoBarExpandedChange`,
   `symbol`, `bare`, `priceFormatter`, `patterns`, `patternsEnabled`,
@@ -158,11 +162,15 @@ under the drawing-popup layer).
 ### `src/controls/ZoomSlider.tsx`
 
 - `default ZoomSlider` (React.FC) — range-input zoom control with named range
-  marks (3M/6M/1Y/2Y/3Y/5Y), replacing the old range pills. Props:
-  `visibleBars`, `onVisibleBarsChange: (n) => void`, `maxVisibleBars` (the
-  readability cap surfaced by Chart's `onMaxVisibleBarsChange`), `onPanReset?`.
-  `min = MIN_VISIBLE_BARS`, `max = maxVisibleBars`; only marks whose
-  `RANGE_DAYS[mark] ≤ maxVisibleBars` render (D4 — no greyed marks). Landing on a
+  marks (3M…20Y), replacing the old range pills. Props: `visibleBars`,
+  `onVisibleBarsChange: (n) => void`, `maxVisibleBars` (the readability cap
+  surfaced by Chart's `onMaxVisibleBarsChange`), `marks?` (the series-derived
+  `RangeMark[]` from Chart's `onRangeMarksChange`; defaults to
+  `DEFAULT_RANGE_MARKS`, the legacy daily ladder), `onPanReset?`.
+  `max = maxVisibleBars` and `min` = the SMALLEST surviving mark (not a daily
+  constant — on a weekly series the tightest mark is 1Y ≈ 52 bars, and a
+  hardcoded 66 would both pin the left end at 66 *weeks* and filter that mark
+  out); only marks whose `bars ≤ maxVisibleBars` render (D4 — no greyed marks). Landing on a
   mark's bar count calls `onPanReset?.()` (mirrors the old pill behavior). The
   track is **log-scaled** (the input operates in `ln(bars)` space, `step="any"`)
   so the roughly-doubling marks (66/132/252/504…) spread evenly instead of
@@ -681,15 +689,19 @@ sharesOutstanding?, freeFloatPercent?, eps?}` (all optional; absent → blanked)
 
 ### `src/stats/computeStats.ts`
 
-- `computeStats(combinedBars, statsTable, market) → StatsViewModel` — pure, React-
-  free port of the "Price stats" Pine math. Reads the LAST index of the
-  caller-built warmup+data history; mc uses the PRIOR close, PE the LAST close.
+- `computeStats(combinedBars, statsTable, market, barsPerYear = 252) → StatsViewModel`
+  — pure, React-free port of the "Price stats" Pine math. Reads the LAST index of
+  the caller-built warmup+data history; mc uses the PRIOR close, PE the LAST close.
 - `StatsViewModel` = `{rows: StatsRow[]}`; `StatsRow` = merged (colSpan-3) or cells
   (≤3); `StatsCell` = `{text, level}`; `StatsLevel` =
   `'strong'|'up'|'neutral'|'down'|'text'|'muted'`.
-- ATR rows: `sma(trueRange/close, {125,63,21})*100`; display halves the value,
-  color bands on the full value; blank when the last index is non-finite
-  (<~126 bars, or ±Infinity from a zero close).
+- ATR rows: `sma(trueRange/close, round(bpy × {1/2, 1/4, 1/12}))*100` — windows are
+  fractions of a YEAR, so the 6M/3M/1M labels stay true on any interval (daily
+  126/63/21, weekly 26/13/4). Display halves the value; color bands act on the full
+  value and are scaled by `√(252 / bpy)` (√time volatility scaling — a weekly true
+  range is ~√5× a daily one, so the raw 5/4/3 bands would mark everything `strong`).
+  Blank when the last index is non-finite (short history, or ±Infinity from a zero
+  close).
 
 ### `src/stats/position.ts`
 
@@ -717,13 +729,30 @@ sharesOutstanding?, freeFloatPercent?, eps?}` (all optional; absent → blanked)
 ### `src/utils/chartCalculations.ts`
 
 - `RangeKey` (structurally identical to `types.ts`'s; canonical one is from types),
-  `RANGE_DAYS: Record<RangeKey, number>` (66/132/252/504/756/1260 trading days).
+  `RANGE_DAYS` (**deprecated** — 66/132/252/504/756/1260, i.e. daily bar counts with
+  252/yr baked into the name; still exported as public API),
+  `RANGE_YEARS: Record<RangeKey, number>` (0.25…20 — the same ladder in CALENDAR
+  years), `MIN_MARK_BARS = 30` (usability floor for a derived mark),
+  `RangeMark = {key, bars}`, `DEFAULT_RANGE_MARKS` (the legacy daily ladder as marks).
+- Interval-agnostic cadence measurement — the engine is bar-index based and holds no
+  interval concept, so anything needing calendar meaning measures instead:
+  `barsPerYear(data) → number` (365.25 ÷ MEAN calendar gap per bar; a *median* gap
+  would report 365/yr for daily since most daily gaps are exactly 1 day. Daily
+  measures 246–257, weekly ~52.2; falls back to `DEFAULT_BARS_PER_YEAR = 252` for
+  <2 bars or unparseable dates), `rangeMarks(data, dataLength) → RangeMark[]`
+  (`years × barsPerYear`, dropping marks below `MIN_MARK_BARS` or above
+  `dataLength`). Daily renders `3M·6M·1Y·2Y` on a ~1200px pane, weekly
+  `1Y·2Y·3Y·5Y·10Y`.
 - Zoom-cap (readability) helpers — chart-core owns + enforces the zoom-out cap:
   `MIN_BAR_STEP_PX = 2` (min px per bar slot), `MIN_VISIBLE_BARS = 10` (zoom-in
   floor), `rawMaxVisibleBars(containerWidth) → floor((w − 78) / 2)` (raw pixel cap),
-  `maxVisibleBarsForWidth(containerWidth) → number` (largest `RANGE_DAYS` mark ≤ raw
-  cap; falls back to raw on a too-narrow screen). The `78` = `MARGIN.right(60) +
-  RIGHT_BUFFER(18)` in `Chart.tsx` (kept in sync, documented there).
+  `maxVisibleBarsForWidth(containerWidth) → max(MIN_VISIBLE_BARS, raw)`. **Width
+  only — NOT snapped to a named mark.** Snapping made the cap depend on where the
+  interval's ladder happens to have a rung, so each interval stopped at a different
+  bar *width*: on a ~1700px pane daily reached 2.18px/bar (OHLC ticks suppressed,
+  `drawSeries` draws them only at ≥3px) while weekly stopped at 3.11px with ticks
+  drawn — and which one was restrictive flipped with the pane width. The `78` =
+  `MARGIN.right(60) + RIGHT_BUFFER(18)` in `Chart.tsx` (kept in sync, documented there).
 - `formatPrice(value) → string` (en-IN, 2dp); `formatVolume(value) → string`
   (B/M/K, 2dp); `formatVolumeTick(value) → string` (B/M/K, integer ticks).
 - `VolumeLabel` = `{index, text: 'HVE' | 'HVY'}`; `VolumeStats` = `{sma, labels}`.
