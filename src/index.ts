@@ -36,7 +36,12 @@ export type {
 // Date <-> bar-index helpers. Trade/trigger overlay hooks need these to map
 // between a calendar date and a positional bar index; exported here so
 // consumers never deep-import './utils/dateBarIndex'.
-export { barIndexForDate, dateForBarIndex } from './utils/dateBarIndex';
+export {
+  barIndexForDate,
+  dateForBarIndex,
+  barIndexForDateProjected,
+  dateForBarIndexProjected,
+} from './utils/dateBarIndex';
 
 // Stable, hashed class name for the reset-pan button. Overlay plugins that
 // render their own reset button reuse this so it inherits chart-core's styling

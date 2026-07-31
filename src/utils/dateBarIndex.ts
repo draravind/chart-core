@@ -79,3 +79,45 @@ export function extraBarsForFutureDate(
   const steps = (Date.parse(isoDate) - lastMs) / medianStepMs(data);
   return Math.max(0, Math.round(steps));
 }
+
+// Bar index for any ISO date. In range → the exact/nearest-preceding bar. Past
+// the last bar or before the first, extrapolates with the median bar step, so
+// the returned index may be >= data.length or negative. Never null — used by
+// overlay anchors, which must stay placeable anywhere on the time axis.
+//
+// `Math.floor` (not round) on the step difference, because a bar IS a period:
+// any date falling inside it belongs to it. A weekly bar is labelled with the
+// week's first trading day, so a date 4 days past that label is still that bar
+// (floor(4/7) = 0); rounding would push it a bar into the future.
+export function barIndexForDateProjected(
+  data: readonly Candle[],
+  isoDate: string,
+): number {
+  if (data.length === 0) return 0;
+  const inRange = barIndexForDate(data, isoDate);
+  if (inRange != null) return inRange;
+  const step = medianStepMs(data);
+  const t = Date.parse(isoDate);
+  if (isoDate < data[0].date) {
+    return Math.floor((t - Date.parse(data[0].date)) / step);
+  }
+  const lastIdx = data.length - 1;
+  return lastIdx + Math.floor((t - Date.parse(data[lastIdx].date)) / step);
+}
+
+// Inverse of `barIndexForDateProjected`. An index inside [0, len-1] returns that
+// bar's real date; outside, a synthesized ISO date `idx` median-steps beyond the
+// corresponding end. Zero-padded (via toISOString) so string `<`/`>` ordering,
+// which anchors are compared with, stays valid.
+export function dateForBarIndexProjected(
+  data: readonly Candle[],
+  idx: number,
+): string {
+  if (data.length === 0) return '';
+  const lastIdx = data.length - 1;
+  if (idx >= 0 && idx <= lastIdx) return data[Math.round(idx)].date;
+  const step = medianStepMs(data);
+  const anchorIdx = idx < 0 ? 0 : lastIdx;
+  const ms = Date.parse(data[anchorIdx].date) + (idx - anchorIdx) * step;
+  return new Date(ms).toISOString().slice(0, 10);
+}

@@ -36,6 +36,7 @@ export function createChartScaleApi(): {
     visibleBars: 0,
     visibleBarsInt: 0,
     visibleStartIdx: 0,
+    maxVisibleBars: 0,
     dataLength: 0,
     indicators: [],
     subscribe(cb) {

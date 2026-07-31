@@ -78,6 +78,11 @@ export type ChartScaleApi = {
   visibleBars: number;
   visibleBarsInt: number;
   visibleStartIdx: number;
+  // Zoom-out ceiling for the current width (bars that fit at MIN_BAR_STEP_PX).
+  // Fixed per display, unlike `visibleBars`. Overlay plugins bound anchor
+  // placement by it so anything droppable is reachable at full zoom-out —
+  // see the pan-limit note in Chart.tsx.
+  maxVisibleBars: number;
   dataLength: number;
   // Resolved in-browser indicators (config + computed series, aligned to
   // `data`). The crosshair + autofit read these; overlay plugins do not.

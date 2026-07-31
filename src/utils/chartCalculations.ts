@@ -108,6 +108,43 @@ export function maxVisibleBarsForWidth(containerWidth: number): number {
   return Math.max(MIN_VISIBLE_BARS, rawMaxVisibleBars(containerWidth));
 }
 
+/**
+ * How far the view may pan, in bar slots from the newest bar to the right edge.
+ *
+ * ONE rule, symmetric: at least one real candle stays on screen. Panning forward
+ * (negative) stops with the newest bar against the LEFT edge; panning back stops
+ * with the oldest against the RIGHT edge. Each leaves one screenful of empty
+ * space beyond, and each keeps the visible slice non-empty — a zero-candle
+ * viewport makes the layout memo bail, and a negative slice end would silently
+ * count back from the end of the array instead of clamping.
+ *
+ * Anchors may be placed FURTHER out than one screenful (overlay plugins bound
+ * them by `maxVisibleBars`, fixed per display). Those stay reachable because at
+ * full zoom-out the screenful IS `maxVisibleBars`.
+ *
+ * Shared by all three call sites in Chart.tsx — they must agree exactly, or the
+ * view snaps back the moment a pan settles.
+ */
+export function panOffsetLimits(
+  dataLength: number,
+  visibleBars: number,
+): { minOffset: number; maxOffset: number } {
+  return {
+    minOffset: -(visibleBars - 1),
+    maxOffset: Math.max(0, dataLength - 1),
+  };
+}
+
+/** `panOffsetLimits` applied to an offset. */
+export function clampPanOffset(
+  panOffset: number,
+  dataLength: number,
+  visibleBars: number,
+): number {
+  const { minOffset, maxOffset } = panOffsetLimits(dataLength, visibleBars);
+  return Math.max(minOffset, Math.min(panOffset, maxOffset));
+}
+
 export const formatPrice = (value: number | null | undefined): string => {
   if (value == null) return '';
   return value.toLocaleString('en-IN', {

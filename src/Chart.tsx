@@ -54,9 +54,11 @@ import {
 } from './indicators/subpaneLayout';
 import {
   barsPerYear as measureBarsPerYear,
+  clampPanOffset,
   formatPrice,
   formatVolume,
   maxVisibleBarsForWidth,
+  panOffsetLimits,
   rangeMarks as deriveRangeMarks,
   MIN_VISIBLE_BARS,
   type RangeMark,
@@ -518,9 +520,11 @@ const Chart = ({
       300,
       (containerHeight || 466) - MARGIN.top - MARGIN.bottom,
     );
-    const minOffset = -(cappedVisibleBars - 1);
-    const maxOffset = Math.max(0, data.length - cappedVisibleBars);
-    const effectiveOffset = Math.max(minOffset, Math.min(panOffset, maxOffset));
+    const effectiveOffset = clampPanOffset(
+      panOffset,
+      data.length,
+      cappedVisibleBars,
+    );
     const visStart = Math.max(
       0,
       Math.floor(data.length - cappedVisibleBars - effectiveOffset),
@@ -829,8 +833,8 @@ const Chart = ({
     startOffset: number;
     baseTx: number;
     step: number;
-    minOff: number;
-    maxOff: number;
+    minOffset: number;
+    maxOffset: number;
     startY: number;
     panY: boolean;
     startLoLog: number;
@@ -843,8 +847,8 @@ const Chart = ({
     startOffset: 0,
     baseTx: 0,
     step: 1,
-    minOff: 0,
-    maxOff: 0,
+    minOffset: 0,
+    maxOffset: 0,
     startY: 0,
     panY: false,
     startLoLog: 0,
@@ -1534,10 +1538,8 @@ const Chart = ({
   useEffect(() => {
     const len = data?.length ?? 0;
     if (len === 0) return;
-    const minOffset = -(visibleBars - 1);
-    const maxOffset = Math.max(0, len - visibleBars);
     onPanOffsetChangeRef.current((prev) =>
-      Math.max(minOffset, Math.min(maxOffset, prev)),
+      clampPanOffset(prev, len, visibleBars),
     );
   }, [data?.length, visibleBars]);
 
@@ -1590,8 +1592,8 @@ const Chart = ({
       }
       const deltaBars = Math.round(pendingDxRef.current / s.step);
       const newOffset = Math.max(
-        s.minOff,
-        Math.min(s.maxOff, s.startOffset + deltaBars),
+        s.minOffset,
+        Math.min(s.maxOffset, s.startOffset + deltaBars),
       );
       pendingDxRef.current = 0;
       if (newOffset !== s.startOffset) {
@@ -2316,6 +2318,7 @@ const Chart = ({
     scaleApi.visibleBars = cappedVisibleBars;
     scaleApi.visibleBarsInt = visibleBarsInt;
     scaleApi.visibleStartIdx = visibleStartIdx;
+    scaleApi.maxVisibleBars = maxVisibleBars;
     scaleApi.priceHeight = priceHeight;
     scaleApi.width = width;
     scaleApi.baseTranslateX = liveTx;
@@ -2417,9 +2420,11 @@ const Chart = ({
   useEffect(() => {
     if (dataLength === 0 || !chartGroupRef.current) return;
     if (containerWidth === 0) return;
-    const minOffset = -(cappedVisibleBars - 1);
-    const maxOffset = Math.max(0, dataLength - cappedVisibleBars);
-    const effectiveOffset = Math.max(minOffset, Math.min(panOffset, maxOffset));
+    const effectiveOffset = clampPanOffset(
+      panOffset,
+      dataLength,
+      cappedVisibleBars,
+    );
     const width = containerWidth - MARGIN.left - MARGIN.right;
     const step = (width - RIGHT_BUFFER) / cappedVisibleBars;
     const baseTranslateX =
@@ -2771,8 +2776,7 @@ const Chart = ({
         startOffset: panOffsetRef.current,
         baseTx: scaleApi.baseTranslateX,
         step: scaleApi.step,
-        minOff: -(scaleApi.visibleBars - 1),
-        maxOff: Math.max(0, scaleApi.data.length - scaleApi.visibleBars),
+        ...panOffsetLimits(scaleApi.data.length, scaleApi.visibleBars),
         startY: event.clientY,
         panY,
         startLoLog,
