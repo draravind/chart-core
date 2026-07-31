@@ -122,7 +122,7 @@ export function maxVisibleBarsForWidth(containerWidth: number): number {
  * them by `maxVisibleBars`, fixed per display). Those stay reachable because at
  * full zoom-out the screenful IS `maxVisibleBars`.
  *
- * Shared by all three call sites in Chart.tsx — they must agree exactly, or the
+ * Shared by all four call sites in Chart.tsx — they must agree exactly, or the
  * view snaps back the moment a pan settles.
  */
 export function panOffsetLimits(
@@ -143,6 +143,28 @@ export function clampPanOffset(
 ): number {
   const { minOffset, maxOffset } = panOffsetLimits(dataLength, visibleBars);
   return Math.max(minOffset, Math.min(panOffset, maxOffset));
+}
+
+/**
+ * Clamp a live pan drag's pixel delta to the window that maps into
+ * [minOffset, maxOffset]. Preview and commit then use the same number and cannot
+ * disagree, so the view stops dead at the limit instead of following the cursor
+ * into empty space and snapping back on release.
+ *
+ * `baseTranslateX = (offset + visibleBars - dataLength) * step`, so the translate
+ * grows with the offset and a positive `dx` pans back in time. Callers pass a
+ * `startOffset` already inside [minOffset, maxOffset], so `dxMin <= 0 <= dxMax`.
+ */
+export function clampPanDeltaPx(
+  dx: number,
+  startOffset: number,
+  minOffset: number,
+  maxOffset: number,
+  step: number,
+): number {
+  const dxMin = (minOffset - startOffset) * step;
+  const dxMax = (maxOffset - startOffset) * step;
+  return Math.max(dxMin, Math.min(dxMax, dx));
 }
 
 export const formatPrice = (value: number | null | undefined): string => {

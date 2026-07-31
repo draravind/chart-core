@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
+  clampPanDeltaPx,
   clampPanOffset,
   panOffsetLimits,
   maxVisibleBarsForWidth,
@@ -101,5 +102,100 @@ describe('panOffsetLimits', () => {
     expect(maxOffset).toBe(0);
     expect(viewport(1, 100, maxOffset).count).toBe(1);
     expect(viewport(1, 100, minOffset).count).toBe(1);
+  });
+});
+
+describe('clampPanDeltaPx', () => {
+  const len = 1000;
+  const visibleBars = 100;
+  const step = 10; // px per bar slot
+  const { minOffset, maxOffset } = panOffsetLimits(len, visibleBars);
+
+  it('passes an in-range delta through untouched, both directions', () => {
+    expect(clampPanDeltaPx(250, 0, minOffset, maxOffset, step)).toBe(250);
+    expect(clampPanDeltaPx(-250, 0, minOffset, maxOffset, step)).toBe(-250);
+    expect(clampPanDeltaPx(0, 0, minOffset, maxOffset, step)).toBe(0);
+  });
+
+  it('clamps a backward overshoot to the maxOffset edge', () => {
+    // dx > 0 pans back in time; from offset 0 the room is (999 - 0) * 10.
+    expect(clampPanDeltaPx(99999, 0, minOffset, maxOffset, step)).toBe(
+      (maxOffset - 0) * step,
+    );
+    expect(clampPanDeltaPx(99999, 500, minOffset, maxOffset, step)).toBe(
+      (maxOffset - 500) * step,
+    );
+  });
+
+  it('clamps a forward overshoot to the minOffset edge', () => {
+    expect(clampPanDeltaPx(-99999, 0, minOffset, maxOffset, step)).toBe(
+      (minOffset - 0) * step,
+    );
+    expect(clampPanDeltaPx(-99999, -50, minOffset, maxOffset, step)).toBe(
+      (minOffset + 50) * step,
+    );
+  });
+
+  it('freezes motion further out when already parked at a limit, but not motion back in', () => {
+    // Parked at the backward limit: more backward drag yields nothing.
+    expect(clampPanDeltaPx(400, maxOffset, minOffset, maxOffset, step)).toBe(0);
+    expect(clampPanDeltaPx(-400, maxOffset, minOffset, maxOffset, step)).toBe(
+      -400,
+    );
+    // Parked at the forward limit: mirror image.
+    expect(clampPanDeltaPx(-400, minOffset, minOffset, maxOffset, step)).toBe(0);
+    expect(clampPanDeltaPx(400, minOffset, minOffset, maxOffset, step)).toBe(
+      400,
+    );
+  });
+
+  // Chart.tsx's onMove: the delta is measured from the mousedown anchor, and the
+  // anchor is moved by whatever the clamp discarded. Without that re-anchoring the
+  // pointer banks travel past the limit and a reversal has to spend it again
+  // before the chart moves — a dead zone the size of the overshoot.
+  function dragger(startOffset: number, min: number, max: number, step: number) {
+    let anchorX = 0;
+    return (clientX: number) => {
+      const raw = clientX - anchorX;
+      const dx = clampPanDeltaPx(raw, startOffset, min, max, step);
+      if (dx !== raw) anchorX += raw - dx;
+      return dx;
+    };
+  }
+
+  it('reverses immediately after overshooting the limit — no dead zone', () => {
+    const move = dragger(0, minOffset, maxOffset, step);
+    const dxMax = (maxOffset - 0) * step;
+    expect(move(dxMax)).toBe(dxMax); // pinned at the limit
+    expect(move(dxMax + 150)).toBe(dxMax); // 150px past it: still pinned
+    expect(move(dxMax + 149)).toBe(dxMax - 1); // one px back moves one px
+    expect(move(dxMax + 120)).toBe(dxMax - 30); // 30px back moves 30px
+  });
+
+  it('re-anchors at the forward limit too', () => {
+    const move = dragger(0, minOffset, maxOffset, step);
+    const dxMin = (minOffset - 0) * step;
+    expect(move(dxMin - 400)).toBe(dxMin);
+    expect(move(dxMin - 399)).toBe(dxMin + 1);
+  });
+
+  it('keeps 0 inside the window for a fractional minOffset, given a clamped startOffset', () => {
+    // trading_app rounds visibleBars, but the library does not require a host to.
+    const fracBars = 100.6;
+    const lim = panOffsetLimits(len, fracBars);
+    expect(lim.minOffset).toBeCloseTo(-99.6);
+    // A host offset past the fractional forward limit, clamped as Chart.tsx now
+    // does at mousedown — without this the window inverts and dx=0 moves.
+    const startOffset = clampPanOffset(-200, len, fracBars);
+    expect(startOffset).toBeCloseTo(lim.minOffset);
+    expect(
+      clampPanDeltaPx(0, startOffset, lim.minOffset, lim.maxOffset, step),
+    ).toBe(0);
+    expect(
+      clampPanDeltaPx(-500, startOffset, lim.minOffset, lim.maxOffset, step),
+    ).toBe(0);
+    expect(
+      clampPanDeltaPx(500, startOffset, lim.minOffset, lim.maxOffset, step),
+    ).toBe(500);
   });
 });

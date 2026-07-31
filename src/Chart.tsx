@@ -54,6 +54,7 @@ import {
 } from './indicators/subpaneLayout';
 import {
   barsPerYear as measureBarsPerYear,
+  clampPanDeltaPx,
   clampPanOffset,
   formatPrice,
   formatVolume,
@@ -1617,7 +1618,20 @@ const Chart = ({
         endDrag();
         return;
       }
-      const dx = e.clientX - s.startX;
+      const rawDx = e.clientX - s.startX;
+      const dx = clampPanDeltaPx(
+        rawDx,
+        s.startOffset,
+        s.minOffset,
+        s.maxOffset,
+        s.step,
+      );
+      // Re-anchor while the clamp binds: without this the pointer keeps banking
+      // travel past the limit, and reversing has to spend that travel again
+      // before the chart moves (a dead zone the size of the overshoot). Moving
+      // startX by the discarded part keeps the anchor under the cursor, so a
+      // reversal of one pixel pans by one pixel.
+      if (dx !== rawDx) s.startX += rawDx - dx;
       pendingDxRef.current = dx;
       if (s.panY) pendingDyRef.current = e.clientY - s.startY;
       if (pendingFrameRef.current == null) {
@@ -2773,7 +2787,14 @@ const Chart = ({
       dragStateRef.current = {
         active: true,
         startX: event.clientX,
-        startOffset: panOffsetRef.current,
+        // Clamped, so it and `baseTx` (built from the clamped effectiveOffset)
+        // describe the same view. `clampPanDeltaPx` needs startOffset inside
+        // [minOffset, maxOffset] or its delta window inverts.
+        startOffset: clampPanOffset(
+          panOffsetRef.current,
+          scaleApi.data.length,
+          scaleApi.visibleBars,
+        ),
         baseTx: scaleApi.baseTranslateX,
         step: scaleApi.step,
         ...panOffsetLimits(scaleApi.data.length, scaleApi.visibleBars),
