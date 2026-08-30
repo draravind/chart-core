@@ -1369,18 +1369,19 @@ const Chart = ({
     const wrapper = wrapperRef.current;
     if (!wrapper) return;
 
-    let timeout: ReturnType<typeof setTimeout> | undefined;
+    let raf = 0;
     const observer = new ResizeObserver((entries) => {
-      if (timeout) clearTimeout(timeout);
-      timeout = setTimeout(() => {
-        const rect = entries[0]?.contentRect;
-        if (rect?.width) setContainerWidth(rect.width);
-        if (rect?.height) setContainerHeight(rect.height);
-      }, 150);
+      const rect = entries[0]?.contentRect;
+      if (!rect) return;
+      if (raf) cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(() => {
+        if (rect.width) setContainerWidth(rect.width);
+        if (rect.height) setContainerHeight(rect.height);
+      });
     });
     observer.observe(wrapper);
     return () => {
-      if (timeout) clearTimeout(timeout);
+      if (raf) cancelAnimationFrame(raf);
       observer.disconnect();
     };
   }, []);
