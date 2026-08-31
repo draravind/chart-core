@@ -109,6 +109,14 @@ import {
 
 const MARGIN = { top: 4, right: 60, bottom: 30, left: 0 };
 const CHART_FONT = "'Helvetica Neue', Helvetica, Arial, sans-serif";
+// Top band of the price plot reserved for the crosshair OHLC readout (drawn at
+// group-y 14). The price scale's range top starts here so a high candle never
+// rises into the readout. Single source, also passed to IndicatorLegend.
+const INFO_BAR_HEIGHT = 18;
+// Auto-fit breathing room, in PIXELS: the highest visible candle sits this far
+// below the readout band and the lowest sits this far above the axis floor —
+// the same gap at any chart height or price (unlike a %-of-range cushion).
+const AUTOFIT_PAD_PX = 8;
 
 // Subpane stacking (D1 policy): each oscillator pane gets a fixed share of the
 // chart height (panes stack flush, separated only by the 1px divider line); the
@@ -357,6 +365,10 @@ const Chart = ({
   children,
 }: Props) => {
   const wrapperRef = useRef<HTMLDivElement | null>(null);
+  // The inner frame: the single coordinate origin shared by canvas, svg and every
+  // DOM overlay. Size measurements read this (not the wrapper) so canvas and svg
+  // fill the same box. The wrapper stays the wheel-zoom + clip surface.
+  const frameRef = useRef<HTMLDivElement | null>(null);
   const svgRef = useRef<SVGSVGElement | null>(null);
   // Canvas series layer (volume/candles/indicators). Sits beneath the SVG.
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -378,9 +390,9 @@ const Chart = ({
   const [containerHeight, setContainerHeight] = useState(0);
 
   useLayoutEffect(() => {
-    const wrapper = wrapperRef.current;
-    if (!wrapper) return;
-    const rect = wrapper.getBoundingClientRect();
+    const frame = frameRef.current;
+    if (!frame) return;
+    const rect = frame.getBoundingClientRect();
     if (rect.width) setContainerWidth(rect.width);
     if (rect.height) setContainerHeight(rect.height);
   }, []);
@@ -899,6 +911,10 @@ const Chart = ({
   const subGuidesGroupRef = useRef<Sel<SVGGElement> | null>(null);
   const sepGroupRef = useRef<Sel<SVGGElement> | null>(null);
   const rightBorderRef = useRef<Sel<SVGLineElement> | null>(null);
+  // The x-axis baseline — the horizontal twin of rightBorderRef, drawn in the
+  // fixed (non-panned) frame so it spans the plot width and meets the price axis
+  // at the corner regardless of pan/zoom.
+  const xAxisBaselineRef = useRef<Sel<SVGLineElement> | null>(null);
   const chartGroupSelRef = useRef<Sel<SVGGElement> | null>(null);
   const xAxisGRef = useRef<Sel<SVGGElement> | null>(null);
   const crosshairVRef = useRef<Sel<SVGLineElement> | null>(null);
@@ -918,6 +934,11 @@ const Chart = ({
   const priceLabelTextRef = useRef<Sel<SVGTextElement> | null>(null);
   const overlayRectRef = useRef<Sel<SVGRectElement> | null>(null);
   const yAxisHitRectRef = useRef<Sel<SVGRectElement> | null>(null);
+  // Local-y boundary (in the y-axis hit rect's own coords) between the price
+  // pane's gutter and the subpanes' gutters below it. The hit rect spans the
+  // full gutter column so hovering ANY pane's gutter surfaces the auto-fit
+  // button; the price-rescale drag/dbl-click only fire above this split.
+  const yAxisPriceSplitRef = useRef(0);
   const priceClipRectRef = useRef<Sel<SVGRectElement> | null>(null);
   const bgGradientUserRef = useRef<Sel<SVGLinearGradientElement> | null>(null);
 
@@ -1353,6 +1374,8 @@ const Chart = ({
       triggerHost,
       priceBottomPx,
       marginRight: MARGIN.right,
+      marginTop: MARGIN.top,
+      marginBottom: MARGIN.bottom,
       reportOverlayPriceBounds,
       subscribeBackgroundPointerDown,
     }),
@@ -1366,8 +1389,8 @@ const Chart = ({
   );
 
   useEffect(() => {
-    const wrapper = wrapperRef.current;
-    if (!wrapper) return;
+    const frame = frameRef.current;
+    if (!frame) return;
 
     let raf = 0;
     const observer = new ResizeObserver((entries) => {
@@ -1379,7 +1402,7 @@ const Chart = ({
         if (rect.height) setContainerHeight(rect.height);
       });
     });
-    observer.observe(wrapper);
+    observer.observe(frame);
     return () => {
       if (raf) cancelAnimationFrame(raf);
       observer.disconnect();
@@ -1770,6 +1793,12 @@ const Chart = ({
       .attr('stroke', 'var(--chart-separator)')
       .attr('stroke-opacity', 1) as Sel<SVGLineElement>;
 
+    xAxisBaselineRef.current = g
+      .append('line')
+      .attr('x1', 0)
+      .attr('stroke', 'var(--chart-separator)')
+      .attr('stroke-opacity', 1) as Sel<SVGLineElement>;
+
     // Pattern overlay is appended before the candle clipWrapper, so within the
     // SVG it paints beneath the x-axis/crosshair groups. It does NOT sit under
     // the candles: the series is on the CANVAS below this whole SVG, so every
@@ -1897,6 +1926,7 @@ const Chart = ({
       subGuidesGroupRef.current = null;
       sepGroupRef.current = null;
       rightBorderRef.current = null;
+      xAxisBaselineRef.current = null;
       chartGroupSelRef.current = null;
       chartGroupRef.current = null;
       xAxisGRef.current = null;
@@ -2028,6 +2058,14 @@ const Chart = ({
       .attr('x2', width)
       .attr('y2', fullHeight);
 
+    // Horizontal baseline spanning [0, width] at the plot bottom. Fixed frame, so
+    // it never pans; its right end (x=width) meets rightBorderRef's bottom.
+    xAxisBaselineRef
+      .current!.attr('x1', 0)
+      .attr('x2', width)
+      .attr('y1', fullHeight)
+      .attr('y2', fullHeight);
+
     chartGroupSelRef.current!.attr(
       'transform',
       `translate(${baseTranslateX},0)`,
@@ -2047,6 +2085,9 @@ const Chart = ({
             return d3.timeFormat(useYearTicks ? '%Y' : '%b %y')(date);
           }),
       );
+    // d3's domain path spans the bar RANGE and lives in the panned axis group, so
+    // it drifts under pan/zoom and never reliably meets the price axis — drop it and
+    // draw the baseline as fixed frame furniture instead (see xAxisBaselineRef).
     xAxisGRef.current!.select('.domain').remove();
     xAxisGRef
       .current!.selectAll('line')
@@ -2058,11 +2099,16 @@ const Chart = ({
 
     overlayRectRef.current!.attr('width', width).attr('height', fullHeight);
 
+    // Full-height gutter column (price pane + every subpane), so hovering any
+    // pane's y-axis gutter reveals the auto-fit button — which now lives in the
+    // bottom gutter and would otherwise sit below the price-only hover strip.
+    // The drag handler below confines price-rescale to `priceHeight`.
+    yAxisPriceSplitRef.current = priceHeight;
     yAxisHitRectRef
       .current!.attr('x', width)
       .attr('y', 0)
       .attr('width', MARGIN.right)
-      .attr('height', priceHeight);
+      .attr('height', fullHeight);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [layout, containerWidth, data, activeSubpanes, appAxisKey, appBackgroundKey]);
 
@@ -2146,17 +2192,30 @@ const Chart = ({
       const adjLogMin = logCenter - halfRange;
       const adjLogMax = logCenter + halfRange;
       const logSpan = adjLogMax - adjLogMin;
-      const logPadBottom = logSpan * 0.06 || 0.01;
-      const topPadFactor =
-        autoFitMode === 'priceAndOverlays' ? 0.04 : 0.12;
-      const logPadTop = logSpan * topPadFactor || 0.01;
-      domainLow = Math.exp(adjLogMin - logPadBottom);
-      domainHigh = Math.exp(adjLogMax + logPadTop);
+      if (logSpan <= 0) {
+        // Flat/degenerate range — nudge a hair so the log scale stays valid.
+        domainLow = Math.exp(adjLogMin) * 0.99;
+        domainHigh = Math.exp(adjLogMax) * 1.01;
+      } else {
+        // Convert the pixel pad to log units using the plot's own pixel height,
+        // so the highest/lowest candle land exactly AUTOFIT_PAD_PX from the
+        // plot edges. `usablePx` is the height left for the data once both pads
+        // are carved out. INFO_BAR_HEIGHT already holds the readout clear, so
+        // the top needs no extra headroom — same pad both ends.
+        const plotPx = priceHeight - INFO_BAR_HEIGHT;
+        const usablePx = Math.max(1, plotPx - 2 * AUTOFIT_PAD_PX);
+        const logPerPx = logSpan / usablePx;
+        domainLow = Math.exp(adjLogMin - AUTOFIT_PAD_PX * logPerPx);
+        domainHigh = Math.exp(adjLogMax + AUTOFIT_PAD_PX * logPerPx);
+      }
     }
     const yPrice = d3
       .scaleLog()
       .domain([Math.max(1, domainLow), domainHigh])
-      .range([priceHeight, 0]);
+      // Range top starts at INFO_BAR_HEIGHT (not 0) so candles/axis begin below
+      // the reserved OHLC-readout band. Only yPrice range site; the price-view /
+      // auto-fit paths swap only `.domain(...)`, so this covers every render path.
+      .range([priceHeight, INFO_BAR_HEIGHT]);
 
     const [yDomLo, yDomHi] = yPrice.domain();
     const logLo = Math.log(yDomLo);
@@ -2572,6 +2631,10 @@ const Chart = ({
       const hit = yAxisHitRectRef.current;
       if (!hit) return;
       hit.on('mousedown', function (event: MouseEvent) {
+        // Only the price-pane portion of the gutter drives price rescale; the
+        // subpane portions below it are hover-only (they just surface the
+        // auto-fit button), so ignore a drag that starts there.
+        if (d3.pointer(event, this)[1] > yAxisPriceSplitRef.current) return;
         event.preventDefault();
         event.stopPropagation();
         active = true;
@@ -2584,6 +2647,8 @@ const Chart = ({
         if (wrapperRef.current) wrapperRef.current.style.cursor = 'ns-resize';
       });
       hit.on('dblclick', function (event: MouseEvent) {
+        // Reset-to-auto only from the price-pane gutter (see mousedown gate).
+        if (d3.pointer(event, this)[1] > yAxisPriceSplitRef.current) return;
         event.preventDefault();
         event.stopPropagation();
         setPriceView(null);
@@ -2593,6 +2658,15 @@ const Chart = ({
       });
       hit.on('mouseleave', function () {
         setYAxisHovered(false);
+      });
+      // Show the ns-resize (drag) cursor only over the draggable price-pane
+      // portion; the subpane gutters below it are hover-only, so let them
+      // inherit the wrapper's crosshair.
+      hit.on('mousemove', function (event: MouseEvent) {
+        this.style.cursor =
+          d3.pointer(event, this)[1] <= yAxisPriceSplitRef.current
+            ? 'ns-resize'
+            : '';
       });
     };
     // The hit rect is created in Effect 1 which runs after this effect on
@@ -2996,8 +3070,12 @@ const Chart = ({
         <div
           className={bare ? styles.chartWrapperBare : styles.chartWrapper}
           ref={wrapperRef}
-          data-trade-overlay-anchor=""
         >
+          <div
+            ref={frameRef}
+            className={bare ? styles.chartFrameBare : styles.chartFrame}
+            data-trade-overlay-anchor=""
+          >
           <canvas
             ref={canvasRef}
             className={styles.seriesCanvas}
@@ -3012,6 +3090,7 @@ const Chart = ({
               subpanes={layout.subpanes}
               marginTop={MARGIN.top}
               marginLeft={MARGIN.left}
+              infoBarHeight={INFO_BAR_HEIGHT}
               barCount={dataLength}
               expanded={infoBarExpanded}
               onExpandedChange={onInfoBarExpandedChange}
@@ -3057,7 +3136,7 @@ const Chart = ({
               title="Reset pan"
               onClick={() => onPanOffsetChange(0)}
               disabled={panOffset === 0}
-              style={{ top: priceBottomPx - 26, right: MARGIN.right + 2 }}
+              style={{ bottom: MARGIN.bottom + 2, right: MARGIN.right + 2 }}
             >
               <RotateCcw size={14} />
             </button>
@@ -3098,7 +3177,7 @@ const Chart = ({
               onMouseEnter={() => setAutoFitHovered(true)}
               onMouseLeave={() => setAutoFitHovered(false)}
               style={{
-                top: priceBottomPx - 26,
+                bottom: MARGIN.bottom + 2,
                 right: MARGIN.right - 26,
                 color:
                   isAutoFit && autoFitMode === 'priceAndOverlays'
@@ -3118,9 +3197,8 @@ const Chart = ({
               onExcludedChange={onAutoFitExcludedChange}
               onClose={() => setAutoFitMenuOpen(false)}
               style={{
-                top: priceBottomPx - 30,
+                bottom: MARGIN.bottom + 28,
                 right: MARGIN.right - 26,
-                transform: 'translateY(-100%)',
               }}
             />
           )}
@@ -3226,6 +3304,7 @@ const Chart = ({
             />
           )}
           {children}
+          </div>
         </div>
       </ChartOverlayProvider>
     </ChartScaleProvider>

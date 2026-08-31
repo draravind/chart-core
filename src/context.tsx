@@ -82,6 +82,8 @@ export type ChartOverlayContextValue = {
   triggerHost: SVGGElement | null;
   priceBottomPx: number;
   marginRight: number;
+  marginTop: number;
+  marginBottom: number;
   reportOverlayPriceBounds: (
     layer: ChartOverlayLayer,
     bounds: { min: number; max: number } | null,
@@ -112,9 +114,19 @@ export function useChartOverlayHost(layer: ChartOverlayLayer): SVGGElement | nul
 }
 
 /** Geometry for placing floating toolbar buttons over the price area. */
-export function useChartGeometry(): { priceBottomPx: number; marginRight: number } {
+export function useChartGeometry(): {
+  priceBottomPx: number;
+  marginRight: number;
+  marginTop: number;
+  marginBottom: number;
+} {
   const ctx = useChartOverlayContext();
-  return { priceBottomPx: ctx.priceBottomPx, marginRight: ctx.marginRight };
+  return {
+    priceBottomPx: ctx.priceBottomPx,
+    marginRight: ctx.marginRight,
+    marginTop: ctx.marginTop,
+    marginBottom: ctx.marginBottom,
+  };
 }
 
 /** Reporter for an overlay layer to contribute its price extent to auto-fit. */

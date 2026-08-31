@@ -74,6 +74,15 @@ function subpaneKey(def: IndicatorDef): string {
   return typeof pane === 'object' ? pane.subpane : '';
 }
 
+// Unique id for a newly-added indicator instance. `crypto.randomUUID` is only
+// defined in a secure context (HTTPS or localhost), so it is absent when the app
+// is served over plain HTTP on a LAN host — mirrors Chart.tsx's `makeDrawingId`.
+function makeIndicatorId(): string {
+  return typeof crypto !== 'undefined' && crypto.randomUUID
+    ? crypto.randomUUID()
+    : `ind-${Date.now()}-${Math.round(Math.random() * 1e9)}`;
+}
+
 export default function ChartControls({
   chartType,
   onChartTypeChange,
@@ -185,7 +194,11 @@ export default function ChartControls({
   // afterwards via the on-chart legend popover). Panel stays open for batch-add.
   const addIndicator = (def: IndicatorDef) => {
     const newConfig = defaultConfigFor(def.key, {
-      id: crypto.randomUUID(),
+      // `crypto.randomUUID` exists only in a secure context (HTTPS / localhost),
+      // so it is undefined when the app is served over plain HTTP on a LAN
+      // hostname — calling it there throws and the add silently fails. Same
+      // guarded fallback Chart.tsx's `makeDrawingId` uses.
+      id: makeIndicatorId(),
       enabled: true,
     });
     if (newConfig) onIndicatorsChange([...indicators, newConfig]);

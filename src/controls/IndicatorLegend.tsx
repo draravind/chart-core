@@ -20,10 +20,11 @@ import styles from '../Chart.module.css';
 type SubpaneBand = { key: string; top: number };
 
 // The price pane reserves its top text line for the chart's crosshair OHLC
-// readout (drawn at SVG y≈14). Drop the price-pane legend one line below it so
-// the two never overlap. Subpanes have no such readout (indicator values stack
-// in the price pane's top-left), so their legends hug the band top.
-const PRICE_INFO_RESERVE = 18;
+// readout (drawn at SVG y≈14). The reserve height comes from Chart's single
+// `INFO_BAR_HEIGHT` (passed as `infoBarHeight`): the price-pane legend drops
+// that far below the band top so the two never overlap. Subpanes have no such
+// readout (indicator values stack in the price pane's top-left), so their
+// legends hug the band top.
 
 type ValueCell = { text: string; color: string };
 
@@ -36,6 +37,9 @@ type Props = {
   subpanes: SubpaneBand[];
   marginTop: number;
   marginLeft: number;
+  // Height (px) of the price pane's reserved OHLC-readout band; the price-pane
+  // legend drops this far below its band top. Owned by Chart (`INFO_BAR_HEIGHT`).
+  infoBarHeight: number;
   // Total bar count; the at-rest value column shows the last bar.
   barCount: number;
   // Expanded = show a live value column per row. Persisted by the host (this is
@@ -183,6 +187,7 @@ export default function IndicatorLegend({
   subpanes,
   marginTop,
   marginLeft,
+  infoBarHeight,
   barCount,
   expanded,
   onExpandedChange,
@@ -258,7 +263,7 @@ export default function IndicatorLegend({
     <div className={styles.legend} data-chart-legend="">
       <LegendBlock
         configs={expanded ? priceConfigs : []}
-        top={marginTop + 8 + PRICE_INFO_RESERVE}
+        top={marginTop + 8 + infoBarHeight}
         left={marginLeft + 8}
         openId={openId}
         setOpenId={setOpenId}

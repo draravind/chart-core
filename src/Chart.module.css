@@ -1,7 +1,6 @@
 .chartWrapper {
   background: var(--surface-panel-raised);
   border-radius: var(--radius-md);
-  padding: var(--space-3) var(--space-2) var(--space-2);
   box-shadow: var(--shadow-card);
   position: relative;
   overflow: hidden;
@@ -19,6 +18,24 @@
   cursor: crosshair;
 }
 
+/* The single coordinate origin. Canvas, SVG and every DOM overlay live inside
+ * this frame, so they share one padding-box. The visual gutter that used to be
+ * the wrapper's `padding` now lives on this frame's `inset` (top / horizontal /
+ * bottom, matching the old shorthand exactly). Invariant: the gutter lives on
+ * `inset` ONLY — never give this frame padding or a border, or the two-frame
+ * split reappears inside it (and the border box the mount measures diverges
+ * from the resize observer's content box). */
+.chartFrame {
+  position: absolute;
+  inset: var(--space-3) var(--space-2) var(--space-2);
+}
+
+/* Bare mode has no gutter today. */
+.chartFrameBare {
+  position: absolute;
+  inset: 0;
+}
+
 /* Canvas series layer sits beneath the interactive SVG. The SVG must be
  * explicitly stacked above it: a positioned canvas with z-index:0 would
  * otherwise paint over an unpositioned <svg> by CSS stacking rules and hide the
@@ -32,7 +49,8 @@
 }
 
 .chartSvg {
-  position: relative;
+  position: absolute;
+  inset: 0;
   z-index: 1;
   width: 100%;
   height: 100%;

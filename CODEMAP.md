@@ -127,7 +127,9 @@ Public barrel — the only import surface for consumers (never deep-import). Re-
 - `ChartOverlayContextValue`, `ChartOverlayProvider`.
 - `useChartOverlayHost(layer) → SVGGElement | null` — the `<g>` to mount overlay
   shapes into (null until mounted).
-- `useChartGeometry() → {priceBottomPx, marginRight}` — for positioning toolbar buttons.
+- `useChartGeometry() → {priceBottomPx, marginRight, marginTop, marginBottom}` — the
+  published chart margins/anchor for positioning toolbar buttons (consumers read these
+  instead of re-declaring `MARGIN`).
 - `useReportOverlayPriceBounds() → (layer, bounds | null) => void` — reports
   overlay price extents back to auto-fit.
 - `useBackgroundPointerDown() → (cb) => () => void` — subscribe to chart-background
@@ -135,8 +137,11 @@ Public barrel — the only import surface for consumers (never deep-import). Re-
 
 ### `src/Chart.module.css`
 
-Scoped styles for the chart shell: `.chartWrapper`/`.chartWrapperBare`,
-`.seriesCanvas`, `.chartSvg`, `.empty`, `.resetPanBtn` (exported as
+Scoped styles for the chart shell: `.chartWrapper`/`.chartWrapperBare` (the outer
+clip + wheel-zoom surface), `.chartFrame`/`.chartFrameBare` (the inner single
+coordinate origin — canvas/svg/overlays all live here; the visual gutter is its
+`inset`, never padding/border), `.seriesCanvas`, `.chartSvg` (both `absolute; inset:0`
+inside the frame), `.empty`, `.resetPanBtn` (exported as
 `panButtonClass`), auto-fit button, the legend + param-popover UI classes,
 `.fieldResetBtn` (the per-field ↺, always visible — unlike the hover-revealed
 `.legendBtn`), and
