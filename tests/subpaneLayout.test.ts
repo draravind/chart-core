@@ -64,6 +64,22 @@ describe('computeSubpaneBands (D1 height policy)', () => {
     for (const p of r.subpanes) expect(p.height).toBeCloseTo(expected, 6);
     expect(r.fullHeight).toBeCloseTo(1000, 6);
   });
+
+  it('the ≥4px per-pane clamp never lets fullHeight exceed totalHeight', () => {
+    // With ~40 panes the scaled desired height per pane falls below 4px, so the
+    // ≥4px clamp bumps them and their sum would overshoot the leftover zone —
+    // making fullHeight > totalHeight and letting the drawn bottom overflow the
+    // svg. The renormalization (§E) must pull them back so they fit exactly.
+    const keys = Array.from({ length: 40 }, (_, i) => `p${i}`);
+    const totalHeight = 400;
+    const r = computeSubpaneBands({ totalHeight, subpaneKeys: keys, ...RATIOS });
+    // The whole stack fits the box exactly — no overflow past the svg.
+    expect(r.fullHeight).toBeLessThanOrEqual(totalHeight + 1e-6);
+    expect(r.fullHeight).toBeCloseTo(totalHeight, 6);
+    // Panes still stack flush below the pinned-floor price pane.
+    expect(r.subpanes[0].top).toBeCloseTo(r.priceHeight, 6);
+    expect(r.subpanes[r.subpanes.length - 1].bottom).toBeCloseTo(r.fullHeight, 6);
+  });
 });
 
 describe('computeSubpaneDomain', () => {

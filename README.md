@@ -62,6 +62,45 @@ const data = [
 <Chart data={data} />;
 ```
 
+### Sizing — the chart fills its box exactly
+
+The chart is a **pure function of its container box**: it measures the box it is
+given and draws to fill it exactly — the box's bottom edge is the x-axis line, its
+right edge is the y-axis line, and the floating controls sit flush in that corner.
+A **smaller box makes a smaller chart, not a clipped one** (re-draw-to-fit, the
+TradingView / Highcharts / ECharts behaviour). There is no internal minimum height.
+
+So the one thing a consumer must do is **give the chart a box with a definite
+height**. The wrapper is `height: 100%` and carries no `min-height`, so its height
+comes entirely from the parent — and a percentage height only resolves against a
+parent whose height is itself definite. A bare `min-height` on a plain block is
+**not** enough (it leaves the parent's `height` as `auto`, so the wrapper collapses
+to 0). Two patterns that work:
+
+```css
+/* A — fixed height (simplest). */
+.myChartArea { height: 480px; }
+
+/* B — reserve space (CLS) yet let it grow: a flex column, chart fills. */
+.myChartArea { min-height: 346px; display: flex; flex-direction: column; }
+.myChartArea > * { flex: 1; }   /* the <Chart> wrapper is the single child */
+```
+
+Pattern B is what a consumer wants when the height should track a resizable layout
+(a draggable split, a responsive shell) while still reserving space up front.
+
+Alternatively, pass an explicit size — which sidesteps container sizing entirely and
+also lets the chart size itself where a container measures 0 (SSR, jsdom):
+
+```tsx
+<Chart data={data} width={800} height={480} />
+```
+
+`width` / `height` are **per-axis overrides**: a provided value wins over the
+measured box for that axis; omit both to size purely from the container. Below
+~78px of width the chart declines to draw (too narrow for a single bar) and warns
+in dev — give it a real size.
+
 ### The data contract — `Candle`
 
 ```ts

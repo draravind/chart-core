@@ -65,6 +65,8 @@ import {
   type RangeMark,
 } from './utils/chartCalculations';
 import { toColumns } from './utils/toColumns';
+import { resolveChartSizing } from './chartSizing';
+import { chooseTimeTicks } from './xAxisTicks';
 import { drawSeries } from './utils/drawSeries';
 import {
   createColorResolver,
@@ -190,6 +192,13 @@ type Props = {
   onInfoBarExpandedChange: (v: boolean | ((prev: boolean) => boolean)) => void;
   symbol: string | null;
   bare?: boolean;
+  // Explicit size overrides. Per-axis, a provided value overrides the measured
+  // container box for that axis (`effective = prop ?? measured`); both provided ⇒
+  // the chart sizes with no dependence on the ResizeObserver (the observer stays
+  // attached, harmless). Give the chart a sized box OR pass these; the chart
+  // always fills exactly that box.
+  width?: number;
+  height?: number;
   // Crosshair price-axis label formatter. Defaults to d3.format(',.0f'); the
   // app injects a tick-band-snapping version.
   priceFormatter?: (value: number) => string;
@@ -346,6 +355,8 @@ const Chart = ({
   onInfoBarExpandedChange,
   symbol,
   bare,
+  width: propWidth,
+  height: propHeight,
   priceFormatter,
   patterns,
   patternsEnabled,
@@ -389,12 +400,41 @@ const Chart = ({
   const [containerWidth, setContainerWidth] = useState(0);
   const [containerHeight, setContainerHeight] = useState(0);
 
+  // The width the chart actually draws to: an explicit `width` prop overrides the
+  // measured box, else the measured value is used. Every width GEOMETRY read
+  // OUTSIDE the layout memo uses this (canvas/svg sizing, pan, the bar cap); the
+  // measurement SETTERS stay raw. Height has no outside-the-memo read — it all
+  // flows through the layout memo, which resolves `propHeight ?? containerHeight`
+  // itself via resolveChartSizing.
+  const effectiveWidth = propWidth ?? containerWidth;
+
   useLayoutEffect(() => {
     const frame = frameRef.current;
     if (!frame) return;
     const rect = frame.getBoundingClientRect();
     if (rect.width) setContainerWidth(rect.width);
     if (rect.height) setContainerHeight(rect.height);
+    // Invariant the two read sites (this eager border-box read + the observer's
+    // content-box) depend on: the frame carries the gutter on `inset` only, never
+    // padding or a border, so border box == content box and the reads agree.
+    if (import.meta.env?.DEV) {
+      const cs = getComputedStyle(frame);
+      const noBox =
+        cs.paddingTop === '0px' &&
+        cs.paddingRight === '0px' &&
+        cs.paddingBottom === '0px' &&
+        cs.paddingLeft === '0px' &&
+        cs.borderTopWidth === '0px' &&
+        cs.borderRightWidth === '0px' &&
+        cs.borderBottomWidth === '0px' &&
+        cs.borderLeftWidth === '0px';
+      if (!noBox) {
+        console.warn(
+          '[chart-core] chart frame must have no padding/border (gutter lives on ' +
+            '`inset`) — the mount read and the resize observer will diverge otherwise.',
+        );
+      }
+    }
   }, []);
 
   const dataLength = data?.length ?? 0;
@@ -513,8 +553,8 @@ const Chart = ({
   // a mark, so the visual floor is identical in every interval (see the function).
   // chart-core owns + enforces this; the wheel/correction effects read it.
   const maxVisibleBars = useMemo(
-    () => maxVisibleBarsForWidth(containerWidth),
-    [containerWidth],
+    () => maxVisibleBarsForWidth(effectiveWidth),
+    [effectiveWidth],
   );
   // Single render-scope clamp applied at every geometry site below so a too-wide
   // host/persisted `visibleBars` never paints sub-readable candles for a frame
@@ -528,11 +568,26 @@ const Chart = ({
   // out of the draw effect so the y-zoom path skips re-running x-scale,
   // candle data joins, volume bars, x-axis, separators, etc.
   const layout = useMemo(() => {
-    if (!data || data.length === 0 || containerWidth === 0) return null;
-    const totalHeight = Math.max(
-      300,
-      (containerHeight || 466) - MARGIN.top - MARGIN.bottom,
-    );
+    const sizing = resolveChartSizing({
+      propWidth,
+      propHeight,
+      measuredWidth: containerWidth,
+      measuredHeight: containerHeight,
+      margin: MARGIN,
+      rightBuffer: RIGHT_BUFFER,
+    });
+    if (!data || data.length === 0 || !sizing.draw) {
+      if (sizing.tooSmall && import.meta.env?.DEV) {
+        console.warn(
+          '[chart-core] container is too small to draw — give the chart a real size.',
+        );
+      }
+      return null;
+    }
+    // Re-draw-to-fit: the drawing height IS the box height minus margins, with no
+    // 300px floor, so the svg (svgHeight = totalHeight + margins) equals the box
+    // and nothing overflows. `Math.max(1,…)` is only a collapsed-box backstop.
+    const totalHeight = sizing.totalHeight;
     const effectiveOffset = clampPanOffset(
       panOffset,
       data.length,
@@ -562,7 +617,7 @@ const Chart = ({
       heightFactors,
       userHeights: paneHeightsState ?? undefined,
     });
-    const width = containerWidth - MARGIN.left - MARGIN.right;
+    const width = sizing.width;
     const step = (width - RIGHT_BUFFER) / cappedVisibleBars;
     const baseTranslateX =
       (effectiveOffset + cappedVisibleBars - data.length) * step;
@@ -601,6 +656,8 @@ const Chart = ({
     data,
     cappedVisibleBars,
     panOffset,
+    propWidth,
+    propHeight,
     containerWidth,
     containerHeight,
     xDomain,
@@ -1461,8 +1518,8 @@ const Chart = ({
   const layoutTotalHeight = layout?.totalHeight ?? null;
   useEffect(() => {
     const canvas = canvasRef.current;
-    if (!canvas || layoutTotalHeight == null || containerWidth === 0) return;
-    const cssW = containerWidth;
+    if (!canvas || layoutTotalHeight == null || effectiveWidth === 0) return;
+    const cssW = effectiveWidth;
     const cssH = layoutTotalHeight + MARGIN.top + MARGIN.bottom;
     canvas.style.width = `${cssW}px`;
     canvas.style.height = `${cssH}px`;
@@ -1521,7 +1578,7 @@ const Chart = ({
       ro.disconnect();
       if (mql) mql.removeEventListener('change', onChange);
     };
-  }, [containerWidth, layoutTotalHeight, redrawSeries]);
+  }, [effectiveWidth, layoutTotalHeight, redrawSeries]);
 
   useEffect(() => {
     const wrapper = wrapperRef.current;
@@ -1574,20 +1631,20 @@ const Chart = ({
   // maxVisibleBarsForWidth(0) returns the MIN_VISIBLE_BARS fallback and would
   // wrongly clamp to 10. Host needs no geometry knowledge; chart-core owns the cap.
   useEffect(() => {
-    if (containerWidth === 0 || !onVisibleBarsChange) return;
+    if (effectiveWidth === 0 || !onVisibleBarsChange) return;
     if (visibleBars > maxVisibleBars || visibleBars < MIN_VISIBLE_BARS) {
       onVisibleBarsChangeRef.current?.((prev) =>
         Math.min(maxVisibleBars, Math.max(MIN_VISIBLE_BARS, prev)),
       );
     }
-  }, [maxVisibleBars, visibleBars, containerWidth, onVisibleBarsChange]);
+  }, [maxVisibleBars, visibleBars, effectiveWidth, onVisibleBarsChange]);
 
   // Surface the cap to the host (it can't read containerWidth directly) so it can
   // bound a zoom slider. Skip the pre-measurement fallback.
   useEffect(() => {
-    if (containerWidth === 0 || !onMaxVisibleBarsChange) return;
+    if (effectiveWidth === 0 || !onMaxVisibleBarsChange) return;
     onMaxVisibleBarsChangeRef.current?.(maxVisibleBars);
-  }, [maxVisibleBars, containerWidth, onMaxVisibleBarsChange]);
+  }, [maxVisibleBars, effectiveWidth, onMaxVisibleBarsChange]);
 
   // Same for the derived mark ladder — the host renders the slider but has no
   // series in hand to measure. Not width-dependent, so no measurement guard.
@@ -1790,12 +1847,14 @@ const Chart = ({
     rightBorderRef.current = g
       .append('line')
       .attr('y1', -MARGIN.top)
+      .attr('data-chart-role', 'y-axis-border')
       .attr('stroke', 'var(--chart-separator)')
       .attr('stroke-opacity', 1) as Sel<SVGLineElement>;
 
     xAxisBaselineRef.current = g
       .append('line')
       .attr('x1', 0)
+      .attr('data-chart-role', 'x-axis-baseline')
       .attr('stroke', 'var(--chart-separator)')
       .attr('stroke-opacity', 1) as Sel<SVGLineElement>;
 
@@ -1974,11 +2033,11 @@ const Chart = ({
     const svgHeight = totalHeight + MARGIN.top + MARGIN.bottom;
 
     d3.select(svgRef.current)
-      .attr('width', containerWidth)
+      .attr('width', effectiveWidth)
       .attr('height', svgHeight);
 
     bgRectRef
-      .current!.attr('width', containerWidth)
+      .current!.attr('width', effectiveWidth)
       .attr('height', fullHeight + MARGIN.top + MARGIN.bottom);
 
     // Match the userSpace twin gradient to the bg rect's actual y extent, and
@@ -2006,29 +2065,20 @@ const Chart = ({
       .current!.attr('width', width - RIGHT_BUFFER)
       .attr('height', MARGIN.top + priceHeight);
 
-    // X-axis ticks — month boundaries, falling back to year boundaries when the
-    // month set would collide at this zoom. Both candidate sets come from string
-    // prefixes (no Date parsing per bar); the density rule is measured against the
-    // live `step`, so it is interval-agnostic: it thins a deeply-zoomed-out daily
-    // axis for the same reason it thins a mid-zoom weekly one.
-    const monthTicks: number[] = [];
-    const yearTicks: number[] = [];
-    for (let i = Math.max(1, renderStart); i < renderEnd; i++) {
-      const cur = data[i].date;
-      const prev = data[i - 1].date;
-      if (cur.slice(0, 7) !== prev.slice(0, 7)) monthTicks.push(i);
-      if (cur.slice(0, 4) !== prev.slice(0, 4)) yearTicks.push(i);
-    }
-    const minGapBars = step > 0 ? MIN_TICK_GAP_PX / step : 0;
-    const monthsTooDense = monthTicks.some(
-      (v, i) => i > 0 && v - monthTicks[i - 1] < minGapBars,
-    );
-    const useYearTicks = monthsTooDense;
-    const tickValues: number[] = [];
-    for (const v of useYearTicks ? yearTicks : monthTicks) {
-      const last = tickValues[tickValues.length - 1];
-      if (last === undefined || v - last >= minGapBars) tickValues.push(v);
-    }
+    // X-axis ticks — one uniform cadence (day → week → month → quarter →
+    // half-year → year → 2y/5y/10y) chosen by on-screen spacing, with contextual
+    // labels that promote each tick to the coarsest unit it starts. See
+    // chooseTimeTicks: this is the TradingView model, and it is what stops a short
+    // partial month at the right edge from collapsing the whole axis to years.
+    const timeTicks = chooseTimeTicks({
+      dateAt: (i) => data[i].date,
+      from: renderStart,
+      to: renderEnd,
+      step,
+      minGapPx: MIN_TICK_GAP_PX,
+    });
+    const tickValues = timeTicks.map((t) => t.index);
+    const tickLabels = new Map(timeTicks.map((t) => [t.index, t.label]));
 
     yPriceAxisGRef.current!.attr('transform', `translate(${width},0)`);
 
@@ -2078,12 +2128,7 @@ const Chart = ({
           .axisBottom(xScale)
           .tickValues(tickValues)
           .tickSize(app.axis.tickSize)
-          .tickFormat((i) => {
-            const d = data[i];
-            if (!d) return '';
-            const date = new Date(d.date);
-            return d3.timeFormat(useYearTicks ? '%Y' : '%b %y')(date);
-          }),
+          .tickFormat((i) => tickLabels.get(i as number) ?? ''),
       );
     // d3's domain path spans the bar RANGE and lives in the panned axis group, so
     // it drifts under pan/zoom and never reliably meets the price axis — drop it and
@@ -2110,7 +2155,7 @@ const Chart = ({
       .attr('width', MARGIN.right)
       .attr('height', fullHeight);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [layout, containerWidth, data, activeSubpanes, appAxisKey, appBackgroundKey]);
+  }, [layout, effectiveWidth, data, activeSubpanes, appAxisKey, appBackgroundKey]);
 
   // Effect B — y-scale draw. Runs on priceView changes too. Recomputes yPrice,
   // redraws the price axis, publishes the scale api, and repaints the canvas
@@ -2431,7 +2476,7 @@ const Chart = ({
     const resolveColor = (v: string) =>
       colorResolverRef.current?.resolve(v) ?? '#888888';
     drawStateRef.current = {
-      cssWidth: containerWidth,
+      cssWidth: effectiveWidth,
       cssHeight: totalHeight + MARGIN.top + MARGIN.bottom,
       width,
       fullHeight,
@@ -2479,7 +2524,7 @@ const Chart = ({
     autoFitMode,
     autoFitExcluded,
     overlayPriceBounds,
-    containerWidth,
+    effectiveWidth,
     redrawSeries,
     scaleApi,
     notifyScale,
@@ -2493,13 +2538,13 @@ const Chart = ({
   // even before Effect B finishes its heavier work.
   useEffect(() => {
     if (dataLength === 0 || !chartGroupRef.current) return;
-    if (containerWidth === 0) return;
+    if (effectiveWidth === 0) return;
     const effectiveOffset = clampPanOffset(
       panOffset,
       dataLength,
       cappedVisibleBars,
     );
-    const width = containerWidth - MARGIN.left - MARGIN.right;
+    const width = effectiveWidth - MARGIN.left - MARGIN.right;
     const step = (width - RIGHT_BUFFER) / cappedVisibleBars;
     const baseTranslateX =
       (effectiveOffset + cappedVisibleBars - dataLength) * step;
@@ -2516,7 +2561,7 @@ const Chart = ({
     panOffset,
     cappedVisibleBars,
     dataLength,
-    containerWidth,
+    effectiveWidth,
     scaleApi,
     notifyScale,
     redrawSeries,

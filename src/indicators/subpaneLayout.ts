@@ -24,8 +24,10 @@ export type SubpaneBandsResult = {
  * (fraction of `totalHeight`) overrides that default. The price pane shrinks
  * toward `floorRatio` as panes stack, after which every pane's desired height is
  * scaled DOWN proportionally so the floor is honored (per-pane height clamped ≥
- * 4px). Panes stack flush top→bottom below the price pane (separated only by the
- * 1px divider line); `fullHeight` is the lowest pane's bottom (== `totalHeight`).
+ * 4px, then renormalized to the leftover zone if that clamp overshoots — see
+ * below). Panes stack flush top→bottom below the price pane (separated only by the
+ * 1px divider line); `fullHeight` is the lowest pane's bottom, and is guaranteed
+ * ≤ `totalHeight` (== `totalHeight` whenever there is at least one subpane).
  * Volume is now an ordinary subpane (a `'volume'` key in `subpaneKeys`), so it
  * participates in this policy like any oscillator — no reserved volume band.
  *
@@ -66,6 +68,17 @@ export function computeSubpaneBands(params: {
     // proportionally bigger (per-pane clamp ≥ 4px).
     const scale = sumDesired > 0 ? leftover / sumDesired : 0;
     heights = desired.map((h) => Math.max(4, h * scale));
+    // The ≥4px clamp can, with a very large pane count, push the summed subpane
+    // heights back above `leftover` — which would make `fullHeight` exceed
+    // `totalHeight` and let the drawn bottom (bg/clip use `fullHeight`) overflow
+    // the svg (sized to `totalHeight`). Renormalize so the stacked panes fit the
+    // leftover zone exactly. A no-op whenever the clamp did not bind (the common
+    // case), so every reachable layout is byte-identical.
+    const clampedSum = heights.reduce((a, b) => a + b, 0);
+    if (clampedSum > leftover && clampedSum > 0) {
+      const renorm = leftover / clampedSum;
+      heights = heights.map((h) => h * renorm);
+    }
   }
   if (nSub === 0) priceHeight = totalHeight;
 
