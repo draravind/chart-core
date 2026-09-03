@@ -22,9 +22,10 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Setup pnpm
+        # No `version:` here — `packageManager` in package.json is the single
+        # source of truth (pnpm@11.17.0). Pinning both makes action-setup refuse
+        # with ERR_PNPM_BAD_PM_VERSION.
         uses: pnpm/action-setup@v4
-        with:
-          version: 10
 
       - name: Setup Node
         uses: actions/setup-node@v4
