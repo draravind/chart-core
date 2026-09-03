@@ -11,11 +11,7 @@ import {
   type VolumeSettings,
 } from '../src/indicators/builtins/volume';
 import { computeVolumeStats } from '../src/utils/chartCalculations';
-import {
-  getIndicator,
-  defaultConfigFor,
-  SUBPANE_ORDER,
-} from '../src/indicators/registry';
+import { getIndicator, SUBPANE_ORDER } from '../src/indicators/registry';
 
 const DAY = 86_400_000;
 const iso = (i: number): string =>

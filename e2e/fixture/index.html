@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>chart-core gesture fixture</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        background: #181818;
+        color: #ddd;
+        font: 12px system-ui, sans-serif;
+      }
+      #readouts {
+        position: fixed;
+        top: 0;
+        right: 0;
+        z-index: 9999;
+        pointer-events: none;
+        opacity: 0;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/main.tsx"></script>
+  </body>
+</html>
