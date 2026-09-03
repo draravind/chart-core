@@ -90,7 +90,13 @@ export default function SettingsDialog({
   );
 
   return (
-    <div className={styles.settingsDialog} ref={ref} style={style} data-chart-wheel-scroll>
+    <div
+      className={styles.settingsDialog}
+      ref={ref}
+      style={style}
+      data-chart-wheel-scroll
+      data-chart-native-menu
+    >
       <div className={styles.legendPopoverHeader}>
         <span className={styles.legendPopoverTitle}>Chart settings</span>
         <button

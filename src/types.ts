@@ -36,6 +36,25 @@ export type QuarterlyResult = {
 
 export type ChartType = 'candlestick' | 'bar';
 
+// Right-click report. `price` and `value` are mutually exclusive: the price
+// pane fills `price` (and `value` stays null); a subpane fills `value` (and
+// `price` stays null); the gutter and the time strip fill neither. `barIndex`
+// and `date` name the plot column under the cursor, and are null in the gutter,
+// the time strip, and the empty area right of the last bar.
+export type ChartContextMenuInfo = {
+  clientX: number;
+  clientY: number;
+  barIndex: number | null;
+  date: string | null; // Candle.date 'YYYY-MM-DD'
+  price: number | null; // price pane only
+  value: number | null; // subpane only
+  pane:
+    | { kind: 'price' }
+    | { kind: 'subpane'; key: string }
+    | { kind: 'gutter' }
+    | { kind: 'none' };
+};
+
 export type AutoFitMode = 'price' | 'priceAndOverlays';
 
 // Named zoom ranges, in calendar terms. Which of them are *reachable* depends on

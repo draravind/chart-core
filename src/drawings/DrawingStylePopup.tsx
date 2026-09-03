@@ -103,6 +103,7 @@ export default function DrawingStylePopup({
       ref={ref}
       style={style}
       data-chart-wheel-scroll
+      data-chart-native-menu
     >
       <div className={chartStyles.legendPopoverHeader}>
         <span className={chartStyles.legendPopoverTitle}>{TITLES[shape.type]}</span>

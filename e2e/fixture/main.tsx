@@ -7,6 +7,7 @@ import type {
   DrawingTool,
   AutoFitMode,
   AppearanceOverrides,
+  ChartContextMenuInfo,
 } from '../../src/index';
 import { DATA } from './data';
 
@@ -84,6 +85,18 @@ function App() {
   const [drawingsChangeCount, setDrawingsChangeCount] = useState(0);
   const [subpaneChangeCount, setSubpaneChangeCount] = useState(0);
 
+  // Right-click report. `?noctx` mounts the chart WITHOUT the prop so the "no
+  // handler ⇒ native menu (defaultPrevented===false)" case has a route.
+  const noCtx = new URLSearchParams(location.search).has('noctx');
+  const ctxFires = useRef(0);
+  const [ctxPayload, setCtxPayload] = useState('');
+  const [ctxFireCount, setCtxFireCount] = useState(0);
+  const onCtx = (info: ChartContextMenuInfo) => {
+    ctxFires.current += 1;
+    setCtxFireCount(ctxFires.current);
+    setCtxPayload(JSON.stringify(info));
+  };
+
   return (
     <>
       <div
@@ -129,6 +142,7 @@ function App() {
           onActiveDrawingToolChange={setActiveDrawingTool}
           appearance={appearance}
           onAppearanceChange={setAppearance}
+          onContextMenu={noCtx ? undefined : onCtx}
         >
           <ScaleProbe />
         </Chart>
@@ -146,6 +160,8 @@ function App() {
           {JSON.stringify(subpaneHeights)}
         </span>
         <span data-testid="subpaneChangeCount">{subpaneChangeCount}</span>
+        <span data-testid="ctxPayload">{ctxPayload}</span>
+        <span data-testid="ctxFireCount">{ctxFireCount}</span>
         <div>
           {TOOLS.map((t) => (
             <button

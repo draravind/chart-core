@@ -47,6 +47,7 @@ export default function CandleSettingsPopup({
       ref={ref}
       style={style}
       data-chart-wheel-scroll
+      data-chart-native-menu
     >
       <div className={styles.legendPopoverHeader}>
         <span className={styles.legendPopoverTitle}>Candles</span>

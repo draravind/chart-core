@@ -11,6 +11,7 @@ import * as d3 from 'd3';
 import type {
   AutoFitMode,
   Candle,
+  ChartContextMenuInfo,
   ChartType,
   QuarterlyResult,
 } from './types';
@@ -65,6 +66,9 @@ import {
   type RangeMark,
 } from './utils/chartCalculations';
 import { toColumns } from './utils/toColumns';
+import { dateForBarIndex } from './utils/dateBarIndex';
+import { classifyChartRegion } from './gestures/chartRegion';
+import { dragThresholdFor } from './gestures/thresholds';
 import { resolveChartSizing } from './chartSizing';
 import { chooseTimeTicks } from './xAxisTicks';
 import { drawSeries } from './utils/drawSeries';
@@ -238,11 +242,22 @@ type Props = {
   onDrawingsChange?: (next: DrawingShape[]) => void;
   activeDrawingTool?: DrawingTool;
   onActiveDrawingToolChange?: (t: DrawingTool) => void;
+  // Right-click report. When supplied, a right-click anywhere on the chart
+  // surface suppresses the native menu and reports the cursor's location
+  // (price XOR value, the bar under it, and which pane) so the host can raise
+  // its own menu. Absent ⇒ the native browser menu shows as usual. A floating
+  // HTML child that wants to keep its own menu tags its root
+  // `data-chart-native-menu`.
+  onContextMenu?: (info: ChartContextMenuInfo) => void;
   // App overlay plugins; they portal D3 overlays into the published hosts.
   children?: React.ReactNode;
 };
 
 const ZOOM_FACTOR = 1.04;
+
+// Half the subpane-divider grab strip (handleH/2; handleH=8 in the render). A
+// right-click within this of a divider line classifies as `none`, not a pane.
+const DIVIDER_HALF_PX = 4;
 
 // How long after a drawing placement a dblclick still counts as part of that
 // same gesture (comfortably over the OS double-click interval).
@@ -266,6 +281,67 @@ type Sel<E extends d3.BaseType = d3.BaseType> = d3.Selection<
   null,
   undefined
 >;
+
+// Single owner of every held-pointer gesture. Replaces the three scattered
+// stores (pan drag, shape drag, y-axis rescale) with one tagged union so
+// "in flight?" is a single predicate and there is one pointer-identity check.
+// Placement (`draftRef`) is NOT folded in: it holds no pointer between its two
+// clicks and keeps `reduceDrawing`'s DraftState→DraftState signature verbatim.
+// `phase` promotes armed→dragging past the drag threshold (Tier 2).
+type Gesture =
+  | { kind: 'idle' }
+  | {
+      kind: 'pan';
+      phase: 'armed' | 'dragging';
+      pointerId: number;
+      startX: number;
+      startY: number;
+      startOffset: number;
+      baseTx: number;
+      step: number;
+      minOffset: number;
+      maxOffset: number;
+      panY: boolean;
+      startLoLog: number;
+      startHiLog: number;
+      pxPerLog: number;
+      panCapLog: number;
+    }
+  | {
+      kind: 'drawingDrag';
+      phase: 'armed' | 'dragging';
+      pointerId: number;
+      id: string;
+      grab: Hit;
+      startMx: number;
+      startMy: number;
+      origin: DrawingShape;
+    }
+  | {
+      kind: 'yAxis';
+      pointerId: number;
+      startY: number;
+      startLoLog: number;
+      startHiLog: number;
+      priceViewAtStart: [number, number] | null;
+    }
+  | {
+      kind: 'pinch';
+      pointers: Map<number, { x: number; y: number }>;
+      prevDist: number;
+    };
+
+// Mouse events carry no pointerId (Tier 3 migrates the surface to pointer
+// events); until then a sentinel keeps the union's identity field populated.
+const pointerIdOf = (e: MouseEvent): number =>
+  'pointerId' in e && typeof (e as PointerEvent).pointerId === 'number'
+    ? (e as PointerEvent).pointerId
+    : -1;
+
+// Pointer type for the drag threshold ('touch' widens it). A plain MouseEvent
+// (Tier 1/2) reports none → the mouse threshold applies.
+const pointerTypeOf = (e: MouseEvent): string | undefined =>
+  'pointerType' in e ? (e as PointerEvent).pointerType : undefined;
 
 // Replace one endpoint (handle drag) — pure. Index 0 → `a`, 1 → `b`; single-
 // anchor shapes ignore the index. hline/vline carry the relevant scalar only.
@@ -373,6 +449,7 @@ const Chart = ({
   onDrawingsChange,
   activeDrawingTool = 'cursor',
   onActiveDrawingToolChange,
+  onContextMenu,
   children,
 }: Props) => {
   const wrapperRef = useRef<HTMLDivElement | null>(null);
@@ -831,6 +908,10 @@ const Chart = ({
   const onDividerPointerDown = useCallback(
     (index: number) => (e: React.PointerEvent<HTMLDivElement>) => {
       if (!layout) return;
+      // Left button only; a right-click on the strip is left to the frame's
+      // contextmenu handler (which reports it as `none`). stopPropagation below
+      // only stops the pointer event — contextmenu still reaches the frame.
+      if (e.button !== 0 || e.ctrlKey) return;
       e.preventDefault();
       e.stopPropagation();
       e.currentTarget.setPointerCapture(e.pointerId);
@@ -897,35 +978,14 @@ const Chart = ({
   // price+overlays auto-fit. Keeps the button mounted while open.
   const [autoFitMenuOpen, setAutoFitMenuOpen] = useState(false);
   const showAutoFitBtn = yAxisHovered || autoFitHovered || autoFitMenuOpen;
-  const dragStateRef = useRef<{
-    active: boolean;
-    startX: number;
-    startOffset: number;
-    baseTx: number;
-    step: number;
-    minOffset: number;
-    maxOffset: number;
-    startY: number;
-    panY: boolean;
-    startLoLog: number;
-    startHiLog: number;
-    pxPerLog: number;
-    panCapLog: number;
-  }>({
-    active: false,
-    startX: 0,
-    startOffset: 0,
-    baseTx: 0,
-    step: 1,
-    minOffset: 0,
-    maxOffset: 0,
-    startY: 0,
-    panY: false,
-    startLoLog: 0,
-    startHiLog: 0,
-    pxPerLog: 1,
-    panCapLog: 0,
-  });
+  // The one held-pointer gesture (see the Gesture union). 'idle' between
+  // gestures; the pan / shape-drag / y-axis stores all live here now.
+  const gestureRef = useRef<Gesture>({ kind: 'idle' });
+  // "A held-pointer gesture is in flight?" — the single predicate used by the
+  // contextmenu bail and every skip-while-gesture site. Placement (draftRef)
+  // holds no pointer but still counts as busy for the menu bail.
+  const gestureBusy = () =>
+    gestureRef.current.kind !== 'idle' || draftRef.current.phase !== 'idle';
   const onPanOffsetChangeRef = useRef(onPanOffsetChange);
   useEffect(() => {
     onPanOffsetChangeRef.current = onPanOffsetChange;
@@ -953,10 +1013,12 @@ const Chart = ({
   const pendingFrameRef = useRef<number | null>(null);
   const pendingDxRef = useRef<number>(0);
   const pendingDyRef = useRef<number>(0);
-  // True while a body drag is in flight, so Effect B keeps using the live
-  // (uncommitted) horizontal translate instead of snapping X back when a
-  // per-frame setPriceView (Y pan) re-runs it mid-drag.
-  const dragActiveRef = useRef(false);
+  // True while a body drag is actually moving (promoted past the threshold), so
+  // Effect B keeps using the live (uncommitted) horizontal translate instead of
+  // snapping X back when a per-frame setPriceView (Y pan) re-runs it mid-drag,
+  // and so the crosshair yields. Derived from the gesture owner, not a mirror.
+  const panDragging = () =>
+    gestureRef.current.kind === 'pan' && gestureRef.current.phase === 'dragging';
   const chartGroupRef = useRef<SVGGElement | null>(null);
 
   // Long-lived d3 selections built once in Effect 1.
@@ -987,6 +1049,9 @@ const Chart = ({
   // live data tick doesn't leave the legend frozen while the pointer rests on
   // the chart (the crosshair otherwise only re-renders on pointer move).
   const updateCrosshairRef = useRef<(() => void) | null>(null);
+  // Exposes effect-4's local `hideOverlays` so the pan drag (a different effect)
+  // can hide the crosshair when it promotes to dragging.
+  const hideOverlaysRef = useRef<(() => void) | null>(null);
   const priceLabelGroupRef = useRef<Sel<SVGGElement> | null>(null);
   const priceLabelTextRef = useRef<Sel<SVGTextElement> | null>(null);
   const overlayRectRef = useRef<Sel<SVGRectElement> | null>(null);
@@ -1041,15 +1106,9 @@ const Chart = ({
   }, []);
   // Working copy held during a drag (mutated per frame for instant feedback);
   // null when idle. `onDrawingsChange` fires only on mouseup (one commit/gesture).
+  // The in-flight drag bookkeeping (start pointer + grabbed shape) now lives on
+  // the gesture owner as `kind:'drawingDrag'`.
   const workingDrawingsRef = useRef<DrawingShape[] | null>(null);
-  // In-flight drag bookkeeping (start pointer + the grabbed shape).
-  const drawingDragRef = useRef<{
-    id: string;
-    grab: Hit;
-    startMx: number;
-    startMy: number;
-    origin: DrawingShape;
-  } | null>(null);
   const onDrawingsChangeRef = useRef(onDrawingsChange);
   useEffect(() => {
     onDrawingsChangeRef.current = onDrawingsChange;
@@ -1058,6 +1117,18 @@ const Chart = ({
   useEffect(() => {
     onActiveDrawingToolChangeRef.current = onActiveDrawingToolChange;
   }, [onActiveDrawingToolChange]);
+  const onContextMenuRef = useRef(onContextMenu);
+  useEffect(() => {
+    onContextMenuRef.current = onContextMenu;
+  }, [onContextMenu]);
+  // Live pane geometry the right-click handler reads at event time: the lowest
+  // pane's bottom + every subpane band. `scaleApi.width`/`priceHeight` are
+  // already published; these two are not, so mirror them here. Refreshed in the
+  // same paint effect that assigns `scaleApi.priceHeight`.
+  const paneBandsRef = useRef<{ fullHeight: number; bands: SubpaneBand[] }>({
+    fullHeight: 0,
+    bands: [],
+  });
 
   const effectiveDrawings = useMemo<DrawingShape[]>(
     () =>
@@ -1203,7 +1274,12 @@ const Chart = ({
       draftRef.current = res.draft;
       if (res.selectId !== undefined) selectDrawing(res.selectId);
       if (res.draft.phase === 'dragging' && shape.locked !== true) {
-        drawingDragRef.current = {
+        // Armed: a press that never travels past the threshold is a select-only
+        // click (keeps the selection, commits nothing). onMove promotes it.
+        gestureRef.current = {
+          kind: 'drawingDrag',
+          phase: 'armed',
+          pointerId: -1,
           id: shape.id,
           grab: res.draft.grab,
           startMx: mx,
@@ -1255,7 +1331,7 @@ const Chart = ({
       if (e.key === 'Escape') {
         if (
           draftRef.current.phase !== 'idle' ||
-          drawingDragRef.current ||
+          gestureRef.current.kind === 'drawingDrag' ||
           draftPointerRef.current
         ) {
           const res = reduceDrawing(
@@ -1265,7 +1341,8 @@ const Chart = ({
           );
           draftRef.current = res.draft;
           draftPointerRef.current = null;
-          drawingDragRef.current = null;
+          if (gestureRef.current.kind === 'drawingDrag')
+            gestureRef.current = { kind: 'idle' };
           workingDrawingsRef.current = null;
           renderDrawings();
         }
@@ -1299,9 +1376,16 @@ const Chart = ({
     const onMove = (e: MouseEvent) => {
       const root = rootGRef.current;
       if (!root) return;
-      const drag = drawingDragRef.current;
+      const g = gestureRef.current;
+      const drag = g.kind === 'drawingDrag' ? g : null;
       if (drag) {
         const [mx, my] = d3.pointer(e, root.node());
+        // Below the threshold this is still a select-click: don't mutate.
+        if (drag.phase === 'armed') {
+          const dist = Math.hypot(mx - drag.startMx, my - drag.startMy);
+          if (dist < dragThresholdFor(pointerTypeOf(e))) return;
+          drag.phase = 'dragging';
+        }
         const s = buildProjScale();
         const moved =
           drag.grab && drag.grab.kind === 'handle'
@@ -1320,9 +1404,11 @@ const Chart = ({
       }
     };
     const onUp = () => {
-      const drag = drawingDragRef.current;
+      const g = gestureRef.current;
+      const drag = g.kind === 'drawingDrag' ? g : null;
       if (!drag) return;
-      drawingDragRef.current = null;
+      const promoted = drag.phase === 'dragging';
+      gestureRef.current = { kind: 'idle' };
       const moved =
         workingDrawingsRef.current?.find((s) => s.id === drag.id) ?? null;
       const res = reduceDrawing(
@@ -1334,7 +1420,9 @@ const Chart = ({
       workingDrawingsRef.current = null;
       // Drop the grabbing cursor; the next hover move restores grab/default.
       if (wrapperRef.current) wrapperRef.current.style.cursor = '';
-      if (res.commit) commitDrawing(res.commit);
+      // Never promoted → a select-only click: keep the selection, persist
+      // nothing (no redundant onDrawingsChange).
+      if (promoted && res.commit) commitDrawing(res.commit);
       renderDrawings();
     };
     document.addEventListener('mousemove', onMove);
@@ -1617,6 +1705,75 @@ const Chart = ({
     };
   }, [onVisibleBarsChange]);
 
+  // Right-click report. Bound on the FRAME (not the svg) so it also sees clicks
+  // on the HTML children stacked above the <svg> (dividers, legend, stats). With
+  // no host handler it does nothing → the native menu shows. Otherwise it yields
+  // to chrome that keeps its own menu, suppresses the native menu everywhere
+  // else, and reports the cursor's pane + location. Mid-gesture it suppresses the
+  // menu but emits no payload. Same native-listener style as the wheel effect.
+  useEffect(() => {
+    const frame = frameRef.current;
+    if (!frame) return;
+    const onCtx = (e: MouseEvent) => {
+      if (!onContextMenuRef.current) return; // no handler ⇒ native menu
+      const t = e.target as Element | null;
+      if (
+        t?.closest?.(
+          '[data-chart-native-menu],[data-chart-legend],[data-chart-stats]',
+        )
+      )
+        return; // chrome that owns its own right-click
+      if (gestureBusy()) {
+        // Pan / shape drag / placement / y-axis in flight: no menu, no payload.
+        e.preventDefault();
+        return;
+      }
+      e.preventDefault();
+      const root = rootGRef.current;
+      const [mx, my] = root ? d3.pointer(e, root.node()) : [0, 0];
+      const region = classifyChartRegion({
+        mx,
+        my,
+        width: scaleApi.width,
+        priceHeight: scaleApi.priceHeight,
+        fullHeight: paneBandsRef.current.fullHeight,
+        bands: paneBandsRef.current.bands,
+        dividerHalfPx: DIVIDER_HALF_PX,
+      });
+      let barIndex: number | null = null;
+      let date: string | null = null;
+      let price: number | null = null;
+      let value: number | null = null;
+      if (region.kind === 'price' || region.kind === 'subpane') {
+        // Same slot math + bounds guards the crosshair uses: right of the last
+        // bar the index runs past the data, so the column is null there.
+        const slot = Math.floor(mx / scaleApi.step);
+        const bi = scaleApi.visibleStartIdx + slot;
+        if (slot >= 0 && bi >= 0 && bi < scaleApi.data.length) {
+          barIndex = bi;
+          date = dateForBarIndex(scaleApi.data, bi);
+        }
+      }
+      if (region.kind === 'price') {
+        price = scaleApi.yPrice.invert(my);
+      } else if (region.kind === 'subpane') {
+        const sc = scaleApi.subpaneScales.get(region.key);
+        if (sc) value = sc.invert(my);
+      }
+      onContextMenuRef.current({
+        clientX: e.clientX,
+        clientY: e.clientY,
+        barIndex,
+        date,
+        price,
+        value,
+        pane: region,
+      });
+    };
+    frame.addEventListener('contextmenu', onCtx);
+    return () => frame.removeEventListener('contextmenu', onCtx);
+  }, [scaleApi, data]);
+
   useEffect(() => {
     const len = data?.length ?? 0;
     if (len === 0) return;
@@ -1663,15 +1820,21 @@ const Chart = ({
 
   useEffect(() => {
     const endDrag = () => {
-      const s = dragStateRef.current;
-      if (!s.active) return;
-      s.active = false;
-      dragActiveRef.current = false;
+      const s = gestureRef.current;
+      if (s.kind !== 'pan') return;
+      // Never promoted past the threshold → a plain click. Nothing was moved
+      // (no grabbing cursor, no hidden overlays), so just disarm; no
+      // onPanOffsetChange, no notifyScale.
+      if (s.phase === 'armed') {
+        gestureRef.current = { kind: 'idle' };
+        return;
+      }
       if (wrapperRef.current) wrapperRef.current.style.cursor = '';
       if (pendingFrameRef.current != null) {
         cancelAnimationFrame(pendingFrameRef.current);
         pendingFrameRef.current = null;
       }
+      gestureRef.current = { kind: 'idle' };
       const deltaBars = Math.round(pendingDxRef.current / s.step);
       const newOffset = Math.max(
         s.minOffset,
@@ -1693,11 +1856,26 @@ const Chart = ({
       }
     };
     const onMove = (e: MouseEvent) => {
-      const s = dragStateRef.current;
-      if (!s.active) return;
+      const s = gestureRef.current;
+      if (s.kind !== 'pan') return;
       if (e.buttons === 0) {
         endDrag();
         return;
+      }
+      // Promote armed → dragging the first time travel crosses the threshold.
+      // The one promotion site: here we take over the cursor, hide the crosshair
+      // overlays, and stop tracking hover; below the threshold this is a click.
+      if (s.phase === 'armed') {
+        const moved = Math.hypot(e.clientX - s.startX, e.clientY - s.startY);
+        if (moved < dragThresholdFor(pointerTypeOf(e))) return;
+        s.phase = 'dragging';
+        if (crosshairRafRef.current != null) {
+          cancelAnimationFrame(crosshairRafRef.current);
+          crosshairRafRef.current = null;
+        }
+        crosshairLastPosRef.current = null;
+        hideOverlaysRef.current?.();
+        if (wrapperRef.current) wrapperRef.current.style.cursor = 'grabbing';
       }
       const rawDx = e.clientX - s.startX;
       const dx = clampPanDeltaPx(
@@ -1754,6 +1932,51 @@ const Chart = ({
       }
     };
   }, [scaleApi, notifyScale, redrawSeries]);
+
+  // Abort an in-flight pan and snap the view back to where the gesture began.
+  // A never-promoted (armed) press just disarms; a dragging one reverts the live
+  // translate to `baseTx`, restores the frozen price range if it was panning Y,
+  // and repaints. Bound to Escape / window blur / tab-hide below.
+  const cancelPan = useCallback(() => {
+    const s = gestureRef.current;
+    if (s.kind !== 'pan') return;
+    const wasDragging = s.phase === 'dragging';
+    gestureRef.current = { kind: 'idle' };
+    if (pendingFrameRef.current != null) {
+      cancelAnimationFrame(pendingFrameRef.current);
+      pendingFrameRef.current = null;
+    }
+    pendingDxRef.current = 0;
+    pendingDyRef.current = 0;
+    if (wrapperRef.current) wrapperRef.current.style.cursor = '';
+    if (!wasDragging) return; // armed-only: nothing was moved
+    if (chartGroupRef.current)
+      chartGroupRef.current.setAttribute('transform', `translate(${s.baseTx},0)`);
+    scaleApi.baseTranslateX = s.baseTx;
+    notifyScale('pan');
+    patternOverlayHandleRef.current?.setTransform(s.baseTx);
+    drawingOverlayHandleRef.current?.setTransform(s.baseTx);
+    if (s.panY) setPriceView([Math.exp(s.startLoLog), Math.exp(s.startHiLog)]);
+    redrawSeries();
+  }, [scaleApi, notifyScale, redrawSeries]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') cancelPan();
+    };
+    const onBlur = () => cancelPan();
+    const onVis = () => {
+      if (document.visibilityState === 'hidden') cancelPan();
+    };
+    window.addEventListener('keydown', onKey);
+    window.addEventListener('blur', onBlur);
+    document.addEventListener('visibilitychange', onVis);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      window.removeEventListener('blur', onBlur);
+      document.removeEventListener('visibilitychange', onVis);
+    };
+  }, [cancelPan]);
 
   // Effect 1 — Build static SVG structure once. All long-lived selections
   // are cached in refs; size-dependent attrs are set in Effect 2.
@@ -2423,9 +2646,7 @@ const Chart = ({
     // set per-frame by the drag rAF. A per-frame setPriceView (Y pan) re-runs
     // this effect mid-drag; publishing the stale committed X would snap the
     // chart back horizontally. Use the live value while a drag is active.
-    const liveTx = dragActiveRef.current
-      ? scaleApi.baseTranslateX
-      : baseTranslateX;
+    const liveTx = panDragging() ? scaleApi.baseTranslateX : baseTranslateX;
 
     // Publish geometry to the scale api (in place) + notify subscribers.
     scaleApi.data = data;
@@ -2443,6 +2664,8 @@ const Chart = ({
     scaleApi.baseTranslateX = liveTx;
     scaleApi.dataLength = data.length;
     scaleApi.indicators = resolvedIndicators;
+    // Not on the scale api — the right-click classifier reads these at event time.
+    paneBandsRef.current = { fullHeight, bands: subpanes };
     notifyScale('rescale');
 
     // Pattern overlay is a core feature; drive its scales directly.
@@ -2633,27 +2856,25 @@ const Chart = ({
     const PIXELS_PER_E_FOLD = 200;
     const MIN_HALF = 0.002; // extreme zoom-in  (~0.4% range)
     const MAX_HALF = 4; // extreme zoom-out (~e^8 range)
-    let active = false;
-    let startY = 0;
-    let startLoLog = 0;
-    let startHiLog = 0;
     let raf: number | null = null;
     let lastDy = 0;
 
     const flush = () => {
       raf = null;
+      const g = gestureRef.current;
+      if (g.kind !== 'yAxis') return;
       // drag up → lastDy<0 → factor>1 → zoom in (matches the old feel).
       const factor = Math.exp(-lastDy / PIXELS_PER_E_FOLD);
-      const center = (startLoLog + startHiLog) / 2;
+      const center = (g.startLoLog + g.startHiLog) / 2;
       const half = Math.max(
         MIN_HALF,
-        Math.min(MAX_HALF, (startHiLog - startLoLog) / 2 / factor),
+        Math.min(MAX_HALF, (g.startHiLog - g.startLoLog) / 2 / factor),
       );
       setPriceView([Math.exp(center - half), Math.exp(center + half)]);
     };
     const endDrag = () => {
-      if (!active) return;
-      active = false;
+      if (gestureRef.current.kind !== 'yAxis') return;
+      gestureRef.current = { kind: 'idle' };
       if (wrapperRef.current) wrapperRef.current.style.cursor = '';
       if (raf != null) {
         cancelAnimationFrame(raf);
@@ -2661,12 +2882,13 @@ const Chart = ({
       }
     };
     const onMove = (e: MouseEvent) => {
-      if (!active) return;
+      const g = gestureRef.current;
+      if (g.kind !== 'yAxis') return;
       if (e.buttons === 0) {
         endDrag();
         return;
       }
-      lastDy = e.clientY - startY;
+      lastDy = e.clientY - g.startY;
       if (raf == null) raf = requestAnimationFrame(flush);
     };
     document.addEventListener('mousemove', onMove);
@@ -2676,19 +2898,25 @@ const Chart = ({
       const hit = yAxisHitRectRef.current;
       if (!hit) return;
       hit.on('mousedown', function (event: MouseEvent) {
+        // Left button only (macOS Ctrl+click is a contextmenu, not a rescale).
+        if (event.button !== 0 || event.ctrlKey) return;
         // Only the price-pane portion of the gutter drives price rescale; the
         // subpane portions below it are hover-only (they just surface the
         // auto-fit button), so ignore a drag that starts there.
         if (d3.pointer(event, this)[1] > yAxisPriceSplitRef.current) return;
         event.preventDefault();
         event.stopPropagation();
-        active = true;
-        startY = event.clientY;
         // Seed the range once: the frozen view if already manual, else the live
         // auto domain (price units) so the grab is continuous.
         const seed = priceViewRef.current ?? scaleApi.yPrice.domain();
-        startLoLog = Math.log(seed[0]);
-        startHiLog = Math.log(seed[1]);
+        gestureRef.current = {
+          kind: 'yAxis',
+          pointerId: pointerIdOf(event),
+          startY: event.clientY,
+          startLoLog: Math.log(seed[0]),
+          startHiLog: Math.log(seed[1]),
+          priceViewAtStart: priceViewRef.current,
+        };
         if (wrapperRef.current) wrapperRef.current.style.cursor = 'ns-resize';
       });
       hit.on('dblclick', function (event: MouseEvent) {
@@ -2798,6 +3026,7 @@ const Chart = ({
       priceLabelGroupRef.current?.style('visibility', 'hidden');
       patternOverlayHandleRef.current?.setPointer(null, null);
     };
+    hideOverlaysRef.current = hideOverlays;
 
     const updateCrosshair = () => {
       crosshairRafRef.current = null;
@@ -2865,6 +3094,9 @@ const Chart = ({
     updateCrosshairRef.current = updateCrosshair;
 
     overlay.on('mousedown', function (event: MouseEvent) {
+      // Left button only. macOS Ctrl+click fires a contextmenu AND a
+      // button===0 press; excluding ctrlKey keeps that from starting a pan.
+      if (event.button !== 0 || event.ctrlKey) return;
       event.preventDefault();
       if (scaleApi.data.length === 0) return;
       const root = rootGRef.current;
@@ -2904,8 +3136,14 @@ const Chart = ({
         pxPerLog = scaleApi.priceHeight / (startHiLog - startLoLog);
         panCapLog = (startHiLog - startLoLog) * 3; // up to ~3 screen-heights away
       }
-      dragStateRef.current = {
-        active: true,
+      // Arm the pan. It stays a click (no cursor change, overlays untouched,
+      // crosshair still tracking) until the pointer travels past the drag
+      // threshold, at which point onMove promotes it to 'dragging'. A press that
+      // never crosses the threshold ends as a plain click that panned nothing.
+      gestureRef.current = {
+        kind: 'pan',
+        phase: 'armed',
+        pointerId: pointerIdOf(event),
         startX: event.clientX,
         // Clamped, so it and `baseTx` (built from the clamped effectiveOffset)
         // describe the same view. `clampPanDeltaPx` needs startOffset inside
@@ -2927,14 +3165,6 @@ const Chart = ({
       };
       pendingDxRef.current = 0;
       pendingDyRef.current = 0;
-      dragActiveRef.current = true;
-      if (crosshairRafRef.current != null) {
-        cancelAnimationFrame(crosshairRafRef.current);
-        crosshairRafRef.current = null;
-      }
-      crosshairLastPosRef.current = null;
-      hideOverlays();
-      if (wrapperRef.current) wrapperRef.current.style.cursor = 'grabbing';
     });
 
     // What a double-click at (mx, my) — chart-inner coords — would open, or null
@@ -2985,8 +3215,8 @@ const Chart = ({
     // above this rect with pointer-events:all, so a double-click on one never
     // reaches here — intended.)
     //
-    // The two mousedowns of a double-click each start and end a zero-delta pan
-    // drag, which is harmless.
+    // The two mousedowns of a double-click each only ARM a pan (they never move
+    // past the drag threshold), so each disarms on mouseup having panned nothing.
     overlay.on('dblclick', function (event: MouseEvent) {
       event.preventDefault();
       if (
@@ -3011,12 +3241,12 @@ const Chart = ({
     const svgSel = d3.select(svgRef.current);
     svgSel
       .on('mousemove.crosshair', function (event: MouseEvent) {
-        if (dragStateRef.current.active) return;
+        if (panDragging()) return;
         const wrapper = wrapperRef.current;
         // A shape is being dragged → keep the grabbing cursor, skip the crosshair.
         // Checked FIRST: a drag's draft phase is 'dragging' (not 'idle'), so the
         // tool/placement guard below would otherwise stomp the grabbing cursor.
-        if (drawingDragRef.current) return;
+        if (gestureRef.current.kind === 'drawingDrag') return;
         // Drawing tool active or a placement in flight → crosshair cursor and no
         // chart crosshair lines (the drawing layer owns the gesture).
         if (activeToolRef.current !== 'cursor' || draftRef.current.phase !== 'idle') {
@@ -3045,9 +3275,9 @@ const Chart = ({
         }
       })
       .on('mouseleave.crosshair', function (event: MouseEvent) {
-        if (dragStateRef.current.active) return;
+        if (panDragging()) return;
         // Drop any hover (open-hand) cursor when the pointer leaves the chart.
-        if (!drawingDragRef.current && wrapperRef.current)
+        if (gestureRef.current.kind !== 'drawingDrag' && wrapperRef.current)
           wrapperRef.current.style.cursor = '';
         if (crosshairRafRef.current != null) {
           cancelAnimationFrame(crosshairRafRef.current);
@@ -3177,6 +3407,7 @@ const Chart = ({
           {priceBottomPx > 0 && (
             <button
               type="button"
+              data-chart-native-menu=""
               className={`${styles.resetPanBtn} ${panOffset === 0 ? styles.resetPanBtnInactive : ''}`}
               title="Reset pan"
               onClick={() => onPanOffsetChange(0)}
@@ -3189,6 +3420,7 @@ const Chart = ({
           {priceBottomPx > 0 && showAutoFitBtn && (
             <button
               type="button"
+              data-chart-native-menu=""
               className={`${styles.autoFitBtn} ${isAutoFit ? styles.autoFitBtnActive : ''}`}
               title={
                 !isAutoFit
@@ -3253,6 +3485,7 @@ const Chart = ({
             <>
               <button
                 type="button"
+                data-chart-native-menu=""
                 className={styles.settingsGearBtn}
                 title="Chart settings"
                 onMouseDown={(e) => e.stopPropagation()}
