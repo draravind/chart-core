@@ -58,6 +58,15 @@
   width: 100%;
   height: 100%;
   display: block;
+  /* The chart owns finger pans/pinches: the browser must not turn them into
+     page scroll or its own pinch-zoom. Scoped to the svg only so the floating
+     HTML panels above it (legend, stats, dialogs) keep native touch-scroll. */
+  touch-action: none;
+  /* preventDefault() on pointerdown no longer reliably suppresses text
+     selection during a drag, so block it on the plot surface (siblings keep
+     their selectable text). */
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 .empty {

@@ -79,6 +79,10 @@ Public barrel — the only import surface for consumers (never deep-import). Re-
   `step`, `bandwidth`, `baseTranslateX`, `priceHeight`, `width`, `visibleBars`,
   `visibleBarsInt`, `visibleStartIdx`, `dataLength`, `indicators`
   (`ResolvedIndicator[]`), `subscribe(cb)`.
+- `ChartContextMenuInfo` — the right-click report handed to `onContextMenu`:
+  `{clientX, clientY, barIndex: number|null, date: string|null, price: number|null,
+  value: number|null, pane: ChartRegion}`. `price` is set only in the price pane,
+  `value` only in a subpane (mutually exclusive); both null in the gutter / time strip.
 
 ---
 
@@ -97,9 +101,18 @@ Public barrel — the only import surface for consumers (never deep-import). Re-
   `autoFitMode`/`onAutoFitModeChange`, `infoBarExpanded`/`onInfoBarExpandedChange`,
   `symbol`, `bare`, `priceFormatter`, `patterns`, `patternsEnabled`,
   `quarterlyResults` (Results subpane rows), `subpaneHeights`/`onSubpaneHeightsChange`
-  (persisted per-pane drag heights), `children`. Owns canvas rendering, pan/zoom,
+  (persisted per-pane drag heights), `onContextMenu` (right-click report, see
+  `ChartContextMenuInfo`), `children`. Owns canvas rendering, pan/zoom,
   the published `ChartScaleApi`, overlay hosts, the draggable subpane dividers, and
   the bundled pattern overlay. Only default export.
+- **Pointer gesture owner** — every held-pointer gesture (pan, drawing drag, y-axis
+  rescale, two-finger pinch) runs on Pointer Events through one `gestureRef` tagged
+  union. The overlay/gutter `pointerdown` (Effect 4) arms it + `setPointerCapture`s;
+  ONE document `pointermove`/`pointerup`/`pointercancel` effect dispatches by `kind`,
+  checks pointer identity once, and aborts on `pointercancel`. Pinch is armed by
+  `reducePointers` (`src/gestures/pointerReducer.ts`); wheel + pinch feed one
+  `applyZoomFactor`. `paneBandsRef` caches `{fullHeight, bands}` for the right-click
+  region classifier + the divider grab strips.
 - **Double-click to edit** — the overlay rect (price pane AND subpanes) carries a
   `dblclick` that resolves, first hit wins: a drawing (`hitTest`), then a
   paint-time region (`pickHitRegion` over `hitRegionsRef`, the array `drawSeries`
@@ -133,7 +146,7 @@ Public barrel — the only import surface for consumers (never deep-import). Re-
 - `useReportOverlayPriceBounds() → (layer, bounds | null) => void` — reports
   overlay price extents back to auto-fit.
 - `useBackgroundPointerDown() → (cb) => () => void` — subscribe to chart-background
-  mousedowns (pan-drag init).
+  `pointerdown`s (pan-drag init).
 
 ### `src/Chart.module.css`
 
@@ -148,6 +161,20 @@ inside the frame), `.empty`, `.resetPanBtn` (exported as
 `.centeredPanel` (the double-click editors' centred placement + an explicit
 `z-index: 4`, since a centred legend popover would otherwise inherit 3 and sit
 under the drawing-popup layer).
+
+### `src/gestures/` — pure gesture helpers (no DOM, node-testable)
+
+- `chartRegion.ts` — `ChartRegion` = `price | subpane{key} | gutter | none`;
+  `classifyChartRegion({mx,my,width,priceHeight,fullHeight,bands,dividerHalfPx})`
+  maps a rootG-space pixel to a plot region (time strip before gutter; divider
+  strips before panes). Feeds `onContextMenu`. `tests/chartRegion.test.ts`.
+- `thresholds.ts` — `dragThresholdFor(pointerType?) → 4` (mouse/pen) or `10`
+  (touch): the click-vs-drag promotion radius. `tests/dragThreshold.test.ts`.
+- `pointerReducer.ts` — `reducePointers(map, ev) → {mode: idle|pan|pinch, panDx?,
+  panDy?, zoomRatio?}` mutating `map` (a `PointerId → {x,y}` map) in place; the
+  pinch arm for `Chart`. 1 pointer → pan (raw delta); ≥2 → pinch (spread ratio of
+  the first two). `pointerDistance(map)` = first-two spread.
+  `tests/pointerReducer.test.ts`.
 
 ---
 

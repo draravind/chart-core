@@ -69,6 +69,11 @@ import { toColumns } from './utils/toColumns';
 import { dateForBarIndex } from './utils/dateBarIndex';
 import { classifyChartRegion } from './gestures/chartRegion';
 import { dragThresholdFor } from './gestures/thresholds';
+import {
+  reducePointers,
+  pointerDistance,
+  type PointerMap,
+} from './gestures/pointerReducer';
 import { resolveChartSizing } from './chartSizing';
 import { chooseTimeTicks } from './xAxisTicks';
 import { drawSeries } from './utils/drawSeries';
@@ -331,17 +336,9 @@ type Gesture =
       prevDist: number;
     };
 
-// Mouse events carry no pointerId (Tier 3 migrates the surface to pointer
-// events); until then a sentinel keeps the union's identity field populated.
-const pointerIdOf = (e: MouseEvent): number =>
-  'pointerId' in e && typeof (e as PointerEvent).pointerId === 'number'
-    ? (e as PointerEvent).pointerId
-    : -1;
-
-// Pointer type for the drag threshold ('touch' widens it). A plain MouseEvent
-// (Tier 1/2) reports none → the mouse threshold applies.
-const pointerTypeOf = (e: MouseEvent): string | undefined =>
-  'pointerType' in e ? (e as PointerEvent).pointerType : undefined;
+// Pointer type for the drag threshold ('touch' widens it). Every held-pointer
+// gesture now runs on real PointerEvents, so this reads the live type.
+const pointerTypeOf = (e: PointerEvent): string | undefined => e.pointerType;
 
 // Replace one endpoint (handle drag) — pure. Index 0 → `a`, 1 → `b`; single-
 // anchor shapes ignore the index. hline/vline carry the relevant scalar only.
@@ -902,6 +899,7 @@ const Chart = ({
     bands: SubpaneBand[];
     priceHeight: number;
     totalHeight: number;
+    prev: Record<string, number> | null;
     latest: Record<string, number> | null;
   } | null>(null);
 
@@ -921,10 +919,13 @@ const Chart = ({
         bands: layout.subpanes,
         priceHeight: layout.priceHeight,
         totalHeight: layout.totalHeight,
+        // Heights as they were when the drag began, so a cancel restores them
+        // exactly (including "auto" = null) with no commit.
+        prev: paneHeightsState,
         latest: null,
       };
     },
-    [layout],
+    [layout, paneHeightsState],
   );
 
   const onDividerPointerMove = useCallback(
@@ -957,6 +958,20 @@ const Chart = ({
     [onSubpaneHeightsChange],
   );
 
+  // A cancelled divider drag (e.g. a touch `pointercancel`) reverts to the
+  // heights at grab-start and fires NO `onSubpaneHeightsChange` — nothing was
+  // committed.
+  const onDividerPointerCancel = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      const s = subpaneDragRef.current;
+      if (!s) return;
+      e.currentTarget.releasePointerCapture?.(e.pointerId);
+      subpaneDragRef.current = null;
+      setPaneHeightsState(s.prev);
+    },
+    [],
+  );
+
   // Manual price domain [loPrice, hiPrice] in price units (what
   // d3.scaleLog().domain() consumes and scaleApi.yPrice.domain() returns).
   // null = auto-fit (data-derived). Non-null = frozen range used verbatim as
@@ -981,6 +996,10 @@ const Chart = ({
   // The one held-pointer gesture (see the Gesture union). 'idle' between
   // gestures; the pan / shape-drag / y-axis stores all live here now.
   const gestureRef = useRef<Gesture>({ kind: 'idle' });
+  // Every live plot pointer, keyed by pointerId (reducePointers mutates it).
+  // One finger down = a pan; a second turns the gesture into a pinch (the map
+  // is shared into `gestureRef.pinch.pointers`). Emptied as fingers lift.
+  const pointersRef = useRef<PointerMap>(new Map());
   // "A held-pointer gesture is in flight?" — the single predicate used by the
   // contextmenu bail and every skip-while-gesture site. Placement (draftRef)
   // holds no pointer but still counts as busy for the menu bail.
@@ -1013,6 +1032,10 @@ const Chart = ({
   const pendingFrameRef = useRef<number | null>(null);
   const pendingDxRef = useRef<number>(0);
   const pendingDyRef = useRef<number>(0);
+  // Y-axis rescale rAF + last drag delta (moved out of the old y-axis effect's
+  // closure so the unified pointer owner can drive its flush).
+  const yAxisRafRef = useRef<number | null>(null);
+  const yAxisLastDyRef = useRef<number>(0);
   // True while a body drag is actually moving (promoted past the threshold), so
   // Effect B keeps using the live (uncommitted) horizontal translate instead of
   // snapping X back when a per-frame setPriceView (Y pan) re-runs it mid-drag,
@@ -1262,7 +1285,12 @@ const Chart = ({
 
   // Cursor mode + hit: select + start a drag (whole-shape or endpoint).
   const beginDragAt = useCallback(
-    (target: { id: string; hit: Hit }, mx: number, my: number) => {
+    (
+      target: { id: string; hit: Hit },
+      mx: number,
+      my: number,
+      pointerId: number,
+    ) => {
       const shape = effectiveDrawingsRef.current.find((s) => s.id === target.id);
       if (!shape) return;
       const anchor = pointerToAnchor(mx, my);
@@ -1279,7 +1307,7 @@ const Chart = ({
         gestureRef.current = {
           kind: 'drawingDrag',
           phase: 'armed',
-          pointerId: -1,
+          pointerId,
           id: shape.id,
           grab: res.draft.grab,
           startMx: mx,
@@ -1368,70 +1396,9 @@ const Chart = ({
     return () => document.removeEventListener('keydown', onKey);
   }, [selectDrawing, renderDrawings]);
 
-  // Document-level drag/placing follow-through (mirrors the pan drag effect). A
-  // grabbed shape mutates a LOCAL working copy per frame (no persist); a placing
-  // draft tracks the live pointer for the rubber-band preview; mouseup commits a
-  // drag once via `onDrawingsChange`.
-  useEffect(() => {
-    const onMove = (e: MouseEvent) => {
-      const root = rootGRef.current;
-      if (!root) return;
-      const g = gestureRef.current;
-      const drag = g.kind === 'drawingDrag' ? g : null;
-      if (drag) {
-        const [mx, my] = d3.pointer(e, root.node());
-        // Below the threshold this is still a select-click: don't mutate.
-        if (drag.phase === 'armed') {
-          const dist = Math.hypot(mx - drag.startMx, my - drag.startMy);
-          if (dist < dragThresholdFor(pointerTypeOf(e))) return;
-          drag.phase = 'dragging';
-        }
-        const s = buildProjScale();
-        const moved =
-          drag.grab && drag.grab.kind === 'handle'
-            ? setDrawingEndpoint(drag.origin, drag.grab.index, pointerToAnchor(mx, my))
-            : shiftDrawing(drag.origin, mx - drag.startMx, my - drag.startMy, s);
-        workingDrawingsRef.current = effectiveDrawingsRef.current.map((sh) =>
-          sh.id === drag.id ? moved : sh,
-        );
-        renderDrawings();
-        return;
-      }
-      if (draftRef.current.phase === 'placing') {
-        const [mx, my] = d3.pointer(e, root.node());
-        draftPointerRef.current = pointerToAnchor(mx, my);
-        renderDrawings();
-      }
-    };
-    const onUp = () => {
-      const g = gestureRef.current;
-      const drag = g.kind === 'drawingDrag' ? g : null;
-      if (!drag) return;
-      const promoted = drag.phase === 'dragging';
-      gestureRef.current = { kind: 'idle' };
-      const moved =
-        workingDrawingsRef.current?.find((s) => s.id === drag.id) ?? null;
-      const res = reduceDrawing(
-        draftRef.current,
-        { type: 'up', working: moved },
-        { tool: 'cursor', makeId: makeDrawingId },
-      );
-      draftRef.current = res.draft;
-      workingDrawingsRef.current = null;
-      // Drop the grabbing cursor; the next hover move restores grab/default.
-      if (wrapperRef.current) wrapperRef.current.style.cursor = '';
-      // Never promoted → a select-only click: keep the selection, persist
-      // nothing (no redundant onDrawingsChange).
-      if (promoted && res.commit) commitDrawing(res.commit);
-      renderDrawings();
-    };
-    document.addEventListener('mousemove', onMove);
-    document.addEventListener('mouseup', onUp);
-    return () => {
-      document.removeEventListener('mousemove', onMove);
-      document.removeEventListener('mouseup', onUp);
-    };
-  }, [buildProjScale, pointerToAnchor, renderDrawings, commitDrawing]);
+  // The drawing-drag / placement follow-through and the pan follow-through both
+  // live in the single pointer owner (one document pointermove/up/cancel set,
+  // dispatched by `gestureRef.current.kind`) defined below alongside `cancelPan`.
 
   // Reactive overlay hosts published to app plugins (Fix #1). Set after Effect
   // 1 mounts the host <g>s, cleared on unmount.
@@ -1668,11 +1635,29 @@ const Chart = ({
     };
   }, [effectiveWidth, layoutTotalHeight, redrawSeries]);
 
+  // The one zoom sink. Both the wheel and a two-finger pinch multiply the
+  // visible-bar count by a factor; this accumulates factors into a single rAF
+  // and applies the readability clamp (live `maxBarsRef`, floor MIN_VISIBLE_BARS)
+  // exactly once per frame. No-ops when the host holds no `onVisibleBarsChange`.
+  const zoomPendingFactorRef = useRef(1);
+  const zoomRafRef = useRef<number | null>(null);
+  const applyZoomFactor = useCallback((f: number) => {
+    if (!onVisibleBarsChangeRef.current) return;
+    zoomPendingFactorRef.current *= f;
+    if (zoomRafRef.current != null) return;
+    zoomRafRef.current = requestAnimationFrame(() => {
+      zoomRafRef.current = null;
+      const factor = zoomPendingFactorRef.current;
+      zoomPendingFactorRef.current = 1;
+      onVisibleBarsChangeRef.current?.((prev) =>
+        Math.min(maxBarsRef.current, Math.max(MIN_VISIBLE_BARS, prev * factor)),
+      );
+    });
+  }, []);
+
   useEffect(() => {
     const wrapper = wrapperRef.current;
     if (!wrapper || !onVisibleBarsChange) return;
-    let pendingFactor = 1;
-    let pendingFrame: number | null = null;
     function onWheel(e: WheelEvent) {
       // Yield the wheel to any open popover/dialog that scrolls its own content.
       // Without this, the wrapper's preventDefault() cancels the panel's native
@@ -1680,30 +1665,13 @@ const Chart = ({
       // scroll body with data-chart-wheel-scroll (see CLAUDE.md).
       if ((e.target as Element | null)?.closest?.('[data-chart-wheel-scroll]')) return;
       e.preventDefault();
-      const factor = e.deltaY > 0 ? ZOOM_FACTOR : 1 / ZOOM_FACTOR;
-      pendingFactor *= factor;
-      if (pendingFrame == null) {
-        pendingFrame = requestAnimationFrame(() => {
-          pendingFrame = null;
-          const f = pendingFactor;
-          pendingFactor = 1;
-          // Clamp to the readability cap (read live from maxBarsRef — the closure
-          // deps stay [onVisibleBarsChange], so containerWidth would be stale).
-          onVisibleBarsChange!((prev) =>
-            Math.min(
-              maxBarsRef.current,
-              Math.max(MIN_VISIBLE_BARS, prev * f),
-            ),
-          );
-        });
-      }
+      applyZoomFactor(e.deltaY > 0 ? ZOOM_FACTOR : 1 / ZOOM_FACTOR);
     }
     wrapper.addEventListener('wheel', onWheel, { passive: false });
     return () => {
       wrapper.removeEventListener('wheel', onWheel);
-      if (pendingFrame != null) cancelAnimationFrame(pendingFrame);
     };
-  }, [onVisibleBarsChange]);
+  }, [onVisibleBarsChange, applyZoomFactor]);
 
   // Right-click report. Bound on the FRAME (not the svg) so it also sees clicks
   // on the HTML children stacked above the <svg> (dividers, legend, stats). With
@@ -1818,8 +1786,103 @@ const Chart = ({
     if (priceView !== null) setPriceView(null);
   }
 
+  // Release any pointer capture this pointer holds on the plot. The press site
+  // captures on the overlay (plot gestures) or the y-axis hit rect (rescale), so
+  // try both; releasing one it doesn't hold throws, which we swallow.
+  const releasePlotCapture = useCallback((pointerId: number) => {
+    if (pointerId < 0) return;
+    for (const sel of [overlayRectRef.current, yAxisHitRectRef.current]) {
+      try {
+        sel?.node()?.releasePointerCapture?.(pointerId);
+      } catch {
+        /* pointer not captured by this element */
+      }
+    }
+  }, []);
+
+  // Build a fresh (armed) pan gesture from a client-space press. Used by the
+  // bare-chart press in Effect 4 and when a pinch drops back to one finger.
+  const makePanGesture = useCallback(
+    (pointerId: number, clientX: number, clientY: number): Gesture => {
+      // Vertical pan is active only when the price scale is already manual
+      // (auto-fit off); while auto-fit is on, body drag stays X-only so
+      // time-scrolling never drifts vertically.
+      const manual = priceViewRef.current;
+      const panY = manual !== null;
+      let startLoLog = 0;
+      let startHiLog = 0;
+      let pxPerLog = 1;
+      let panCapLog = 0;
+      if (panY && manual) {
+        startLoLog = Math.log(manual[0]);
+        startHiLog = Math.log(manual[1]);
+        pxPerLog = scaleApi.priceHeight / (startHiLog - startLoLog);
+        panCapLog = (startHiLog - startLoLog) * 3; // up to ~3 screen-heights away
+      }
+      return {
+        kind: 'pan',
+        phase: 'armed',
+        pointerId,
+        startX: clientX,
+        // Clamped, so it and `baseTx` (built from the clamped effectiveOffset)
+        // describe the same view.
+        startOffset: clampPanOffset(
+          panOffsetRef.current,
+          scaleApi.data.length,
+          scaleApi.visibleBars,
+        ),
+        baseTx: scaleApi.baseTranslateX,
+        step: scaleApi.step,
+        ...panOffsetLimits(scaleApi.data.length, scaleApi.visibleBars),
+        startY: clientY,
+        panY,
+        startLoLog,
+        startHiLog,
+        pxPerLog,
+        panCapLog,
+      };
+    },
+    [scaleApi],
+  );
+
+  // Abort an in-flight pan and snap the view back to where the gesture began.
+  // A never-promoted (armed) press just disarms; a dragging one reverts the live
+  // translate to `baseTx`, restores the frozen price range if it was panning Y,
+  // and repaints. Bound to Escape / window blur / tab-hide / pointercancel.
+  const cancelPan = useCallback(() => {
+    const s = gestureRef.current;
+    if (s.kind !== 'pan') return;
+    releasePlotCapture(s.pointerId);
+    const wasDragging = s.phase === 'dragging';
+    gestureRef.current = { kind: 'idle' };
+    if (pendingFrameRef.current != null) {
+      cancelAnimationFrame(pendingFrameRef.current);
+      pendingFrameRef.current = null;
+    }
+    pendingDxRef.current = 0;
+    pendingDyRef.current = 0;
+    if (wrapperRef.current) wrapperRef.current.style.cursor = '';
+    if (!wasDragging) return; // armed-only: nothing was moved
+    if (chartGroupRef.current)
+      chartGroupRef.current.setAttribute('transform', `translate(${s.baseTx},0)`);
+    scaleApi.baseTranslateX = s.baseTx;
+    notifyScale('pan');
+    patternOverlayHandleRef.current?.setTransform(s.baseTx);
+    drawingOverlayHandleRef.current?.setTransform(s.baseTx);
+    if (s.panY) setPriceView([Math.exp(s.startLoLog), Math.exp(s.startHiLog)]);
+    redrawSeries();
+  }, [scaleApi, notifyScale, redrawSeries, releasePlotCapture]);
+
+  // The single pointer owner. One document `pointermove`/`pointerup`/
+  // `pointercancel` set drives every held-pointer gesture, dispatched by
+  // `gestureRef.current.kind`. The pointer-identity check runs once (a pointer
+  // that isn't the gesture's own is ignored), each end/abort no-ops off its own
+  // kind, and a two-finger `pinch` (arm from `reducePointers`) feeds the one zoom
+  // sink. The `e.buttons===0` failsafes of the old mouse effects are gone — a
+  // finger pan has `buttons===0`, so that check would kill it.
   useEffect(() => {
-    const endDrag = () => {
+    // --- pan (kept math) ---
+    const panEnd = () => {
       const s = gestureRef.current;
       if (s.kind !== 'pan') return;
       // Never promoted past the threshold → a plain click. Nothing was moved
@@ -1855,13 +1918,9 @@ const Chart = ({
         redrawSeries();
       }
     };
-    const onMove = (e: MouseEvent) => {
+    const panMove = (e: PointerEvent) => {
       const s = gestureRef.current;
       if (s.kind !== 'pan') return;
-      if (e.buttons === 0) {
-        endDrag();
-        return;
-      }
       // Promote armed → dragging the first time travel crosses the threshold.
       // The one promotion site: here we take over the cursor, hide the crosshair
       // overlays, and stop tracking hover; below the threshold this is a click.
@@ -1921,44 +1980,223 @@ const Chart = ({
         });
       }
     };
-    document.addEventListener('mousemove', onMove);
-    document.addEventListener('mouseup', endDrag);
+
+    // --- drawing drag + placement (kept math) ---
+    const drawingMove = (e: PointerEvent) => {
+      const root = rootGRef.current;
+      if (!root) return;
+      const g = gestureRef.current;
+      if (g.kind !== 'drawingDrag') return;
+      const [mx, my] = d3.pointer(e, root.node());
+      // Below the threshold this is still a select-click: don't mutate.
+      if (g.phase === 'armed') {
+        const dist = Math.hypot(mx - g.startMx, my - g.startMy);
+        if (dist < dragThresholdFor(pointerTypeOf(e))) return;
+        g.phase = 'dragging';
+      }
+      const s = buildProjScale();
+      const moved =
+        g.grab && g.grab.kind === 'handle'
+          ? setDrawingEndpoint(g.origin, g.grab.index, pointerToAnchor(mx, my))
+          : shiftDrawing(g.origin, mx - g.startMx, my - g.startMy, s);
+      workingDrawingsRef.current = effectiveDrawingsRef.current.map((sh) =>
+        sh.id === g.id ? moved : sh,
+      );
+      renderDrawings();
+    };
+    const placingMove = (e: PointerEvent) => {
+      const root = rootGRef.current;
+      if (!root || draftRef.current.phase !== 'placing') return;
+      const [mx, my] = d3.pointer(e, root.node());
+      draftPointerRef.current = pointerToAnchor(mx, my);
+      renderDrawings();
+    };
+    const drawingUp = () => {
+      const g = gestureRef.current;
+      if (g.kind !== 'drawingDrag') return;
+      const promoted = g.phase === 'dragging';
+      gestureRef.current = { kind: 'idle' };
+      const moved =
+        workingDrawingsRef.current?.find((s) => s.id === g.id) ?? null;
+      const res = reduceDrawing(
+        draftRef.current,
+        { type: 'up', working: moved },
+        { tool: 'cursor', makeId: makeDrawingId },
+      );
+      draftRef.current = res.draft;
+      workingDrawingsRef.current = null;
+      // Drop the grabbing cursor; the next hover move restores grab/default.
+      if (wrapperRef.current) wrapperRef.current.style.cursor = '';
+      // Never promoted → a select-only click: keep the selection, persist
+      // nothing (no redundant onDrawingsChange).
+      if (promoted && res.commit) commitDrawing(res.commit);
+      renderDrawings();
+    };
+    // Aborted drag: drop the working copy, KEEP the selection, persist nothing.
+    const drawingCancel = () => {
+      if (gestureRef.current.kind !== 'drawingDrag') return;
+      gestureRef.current = { kind: 'idle' };
+      const res = reduceDrawing(
+        draftRef.current,
+        { type: 'escape' },
+        { tool: 'cursor', makeId: makeDrawingId },
+      );
+      draftRef.current = res.draft;
+      workingDrawingsRef.current = null;
+      if (wrapperRef.current) wrapperRef.current.style.cursor = '';
+      renderDrawings();
+    };
+
+    // --- y-axis rescale (kept math) ---
+    const PIXELS_PER_E_FOLD = 200;
+    const MIN_HALF = 0.002; // extreme zoom-in  (~0.4% range)
+    const MAX_HALF = 4; // extreme zoom-out (~e^8 range)
+    const yAxisFlush = () => {
+      yAxisRafRef.current = null;
+      const g = gestureRef.current;
+      if (g.kind !== 'yAxis') return;
+      // drag up → lastDy<0 → factor>1 → zoom in (matches the old feel).
+      const factor = Math.exp(-yAxisLastDyRef.current / PIXELS_PER_E_FOLD);
+      const center = (g.startLoLog + g.startHiLog) / 2;
+      const half = Math.max(
+        MIN_HALF,
+        Math.min(MAX_HALF, (g.startHiLog - g.startLoLog) / 2 / factor),
+      );
+      setPriceView([Math.exp(center - half), Math.exp(center + half)]);
+    };
+    const yAxisMove = (e: PointerEvent) => {
+      const g = gestureRef.current;
+      if (g.kind !== 'yAxis') return;
+      yAxisLastDyRef.current = e.clientY - g.startY;
+      if (yAxisRafRef.current == null)
+        yAxisRafRef.current = requestAnimationFrame(yAxisFlush);
+    };
+    const yAxisEnd = () => {
+      if (gestureRef.current.kind !== 'yAxis') return;
+      gestureRef.current = { kind: 'idle' };
+      if (wrapperRef.current) wrapperRef.current.style.cursor = '';
+      if (yAxisRafRef.current != null) {
+        cancelAnimationFrame(yAxisRafRef.current);
+        yAxisRafRef.current = null;
+      }
+    };
+    const yAxisCancel = () => {
+      const g = gestureRef.current;
+      if (g.kind !== 'yAxis') return;
+      gestureRef.current = { kind: 'idle' };
+      if (wrapperRef.current) wrapperRef.current.style.cursor = '';
+      if (yAxisRafRef.current != null) {
+        cancelAnimationFrame(yAxisRafRef.current);
+        yAxisRafRef.current = null;
+      }
+      setPriceView(g.priceViewAtStart);
+    };
+
+    // Drop a lifted finger from the map; hand a lingering finger back to a fresh
+    // pan, or go idle when the last one lifts.
+    const settlePinchDrop = () => {
+      if (pointersRef.current.size === 1) {
+        const [id, pos] = [...pointersRef.current.entries()][0];
+        pendingDxRef.current = 0;
+        pendingDyRef.current = 0;
+        gestureRef.current = makePanGesture(id, pos.x, pos.y);
+      } else if (pointersRef.current.size === 0) {
+        gestureRef.current = { kind: 'idle' };
+      }
+    };
+
+    const onPointerMove = (e: PointerEvent) => {
+      const g = gestureRef.current;
+      if (g.kind === 'pinch') {
+        const r = reducePointers(pointersRef.current, {
+          type: 'move',
+          pointerId: e.pointerId,
+          x: e.clientX,
+          y: e.clientY,
+        });
+        if (r.zoomRatio && r.zoomRatio > 0) applyZoomFactor(1 / r.zoomRatio);
+        return;
+      }
+      // Placement rubber-band tracks a hovering (button-less) pointer between the
+      // two clicks — no captured pointer, so no identity check.
+      if (g.kind === 'idle') {
+        placingMove(e);
+        return;
+      }
+      // The identity filter: a pointer that isn't this gesture's own is ignored.
+      if (e.pointerId !== g.pointerId) return;
+      if (g.kind === 'pan') panMove(e);
+      else if (g.kind === 'drawingDrag') drawingMove(e);
+      else if (g.kind === 'yAxis') yAxisMove(e);
+    };
+    const onPointerUp = (e: PointerEvent) => {
+      releasePlotCapture(e.pointerId);
+      reducePointers(pointersRef.current, {
+        type: 'up',
+        pointerId: e.pointerId,
+        x: e.clientX,
+        y: e.clientY,
+      });
+      const g = gestureRef.current;
+      if (g.kind === 'pinch') {
+        settlePinchDrop();
+        return;
+      }
+      if (g.kind === 'idle') return;
+      if (e.pointerId !== g.pointerId) return;
+      if (g.kind === 'pan') panEnd();
+      else if (g.kind === 'drawingDrag') drawingUp();
+      else if (g.kind === 'yAxis') yAxisEnd();
+    };
+    const onPointerCancel = (e: PointerEvent) => {
+      releasePlotCapture(e.pointerId);
+      reducePointers(pointersRef.current, {
+        type: 'cancel',
+        pointerId: e.pointerId,
+        x: e.clientX,
+        y: e.clientY,
+      });
+      const g = gestureRef.current;
+      if (g.kind === 'pinch') {
+        settlePinchDrop();
+        return;
+      }
+      if (g.kind === 'idle') return;
+      if (e.pointerId !== g.pointerId) return;
+      if (g.kind === 'pan') cancelPan();
+      else if (g.kind === 'drawingDrag') drawingCancel();
+      else if (g.kind === 'yAxis') yAxisCancel();
+    };
+
+    document.addEventListener('pointermove', onPointerMove);
+    document.addEventListener('pointerup', onPointerUp);
+    document.addEventListener('pointercancel', onPointerCancel);
     return () => {
-      document.removeEventListener('mousemove', onMove);
-      document.removeEventListener('mouseup', endDrag);
+      document.removeEventListener('pointermove', onPointerMove);
+      document.removeEventListener('pointerup', onPointerUp);
+      document.removeEventListener('pointercancel', onPointerCancel);
       if (pendingFrameRef.current != null) {
         cancelAnimationFrame(pendingFrameRef.current);
         pendingFrameRef.current = null;
       }
+      if (yAxisRafRef.current != null) {
+        cancelAnimationFrame(yAxisRafRef.current);
+        yAxisRafRef.current = null;
+      }
     };
-  }, [scaleApi, notifyScale, redrawSeries]);
-
-  // Abort an in-flight pan and snap the view back to where the gesture began.
-  // A never-promoted (armed) press just disarms; a dragging one reverts the live
-  // translate to `baseTx`, restores the frozen price range if it was panning Y,
-  // and repaints. Bound to Escape / window blur / tab-hide below.
-  const cancelPan = useCallback(() => {
-    const s = gestureRef.current;
-    if (s.kind !== 'pan') return;
-    const wasDragging = s.phase === 'dragging';
-    gestureRef.current = { kind: 'idle' };
-    if (pendingFrameRef.current != null) {
-      cancelAnimationFrame(pendingFrameRef.current);
-      pendingFrameRef.current = null;
-    }
-    pendingDxRef.current = 0;
-    pendingDyRef.current = 0;
-    if (wrapperRef.current) wrapperRef.current.style.cursor = '';
-    if (!wasDragging) return; // armed-only: nothing was moved
-    if (chartGroupRef.current)
-      chartGroupRef.current.setAttribute('transform', `translate(${s.baseTx},0)`);
-    scaleApi.baseTranslateX = s.baseTx;
-    notifyScale('pan');
-    patternOverlayHandleRef.current?.setTransform(s.baseTx);
-    drawingOverlayHandleRef.current?.setTransform(s.baseTx);
-    if (s.panY) setPriceView([Math.exp(s.startLoLog), Math.exp(s.startHiLog)]);
-    redrawSeries();
-  }, [scaleApi, notifyScale, redrawSeries]);
+  }, [
+    scaleApi,
+    notifyScale,
+    redrawSeries,
+    buildProjScale,
+    pointerToAnchor,
+    renderDrawings,
+    commitDrawing,
+    applyZoomFactor,
+    cancelPan,
+    makePanGesture,
+    releasePlotCapture,
+  ]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -2849,119 +3087,10 @@ const Chart = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [appCrosshairKey]);
 
-  // Drag on the price-axis hit zone to zoom the price range about its center.
-  // Seeds the frozen range from the live domain on the first touch (no visual
-  // jump at the auto→manual handoff), then scales it in log space.
-  useEffect(() => {
-    const PIXELS_PER_E_FOLD = 200;
-    const MIN_HALF = 0.002; // extreme zoom-in  (~0.4% range)
-    const MAX_HALF = 4; // extreme zoom-out (~e^8 range)
-    let raf: number | null = null;
-    let lastDy = 0;
-
-    const flush = () => {
-      raf = null;
-      const g = gestureRef.current;
-      if (g.kind !== 'yAxis') return;
-      // drag up → lastDy<0 → factor>1 → zoom in (matches the old feel).
-      const factor = Math.exp(-lastDy / PIXELS_PER_E_FOLD);
-      const center = (g.startLoLog + g.startHiLog) / 2;
-      const half = Math.max(
-        MIN_HALF,
-        Math.min(MAX_HALF, (g.startHiLog - g.startLoLog) / 2 / factor),
-      );
-      setPriceView([Math.exp(center - half), Math.exp(center + half)]);
-    };
-    const endDrag = () => {
-      if (gestureRef.current.kind !== 'yAxis') return;
-      gestureRef.current = { kind: 'idle' };
-      if (wrapperRef.current) wrapperRef.current.style.cursor = '';
-      if (raf != null) {
-        cancelAnimationFrame(raf);
-        raf = null;
-      }
-    };
-    const onMove = (e: MouseEvent) => {
-      const g = gestureRef.current;
-      if (g.kind !== 'yAxis') return;
-      if (e.buttons === 0) {
-        endDrag();
-        return;
-      }
-      lastDy = e.clientY - g.startY;
-      if (raf == null) raf = requestAnimationFrame(flush);
-    };
-    document.addEventListener('mousemove', onMove);
-    document.addEventListener('mouseup', endDrag);
-
-    const bind = () => {
-      const hit = yAxisHitRectRef.current;
-      if (!hit) return;
-      hit.on('mousedown', function (event: MouseEvent) {
-        // Left button only (macOS Ctrl+click is a contextmenu, not a rescale).
-        if (event.button !== 0 || event.ctrlKey) return;
-        // Only the price-pane portion of the gutter drives price rescale; the
-        // subpane portions below it are hover-only (they just surface the
-        // auto-fit button), so ignore a drag that starts there.
-        if (d3.pointer(event, this)[1] > yAxisPriceSplitRef.current) return;
-        event.preventDefault();
-        event.stopPropagation();
-        // Seed the range once: the frozen view if already manual, else the live
-        // auto domain (price units) so the grab is continuous.
-        const seed = priceViewRef.current ?? scaleApi.yPrice.domain();
-        gestureRef.current = {
-          kind: 'yAxis',
-          pointerId: pointerIdOf(event),
-          startY: event.clientY,
-          startLoLog: Math.log(seed[0]),
-          startHiLog: Math.log(seed[1]),
-          priceViewAtStart: priceViewRef.current,
-        };
-        if (wrapperRef.current) wrapperRef.current.style.cursor = 'ns-resize';
-      });
-      hit.on('dblclick', function (event: MouseEvent) {
-        // Reset-to-auto only from the price-pane gutter (see mousedown gate).
-        if (d3.pointer(event, this)[1] > yAxisPriceSplitRef.current) return;
-        event.preventDefault();
-        event.stopPropagation();
-        setPriceView(null);
-      });
-      hit.on('mouseenter', function () {
-        setYAxisHovered(true);
-      });
-      hit.on('mouseleave', function () {
-        setYAxisHovered(false);
-      });
-      // Show the ns-resize (drag) cursor only over the draggable price-pane
-      // portion; the subpane gutters below it are hover-only, so let them
-      // inherit the wrapper's crosshair.
-      hit.on('mousemove', function (event: MouseEvent) {
-        this.style.cursor =
-          d3.pointer(event, this)[1] <= yAxisPriceSplitRef.current
-            ? 'ns-resize'
-            : '';
-      });
-    };
-    // The hit rect is created in Effect 1 which runs after this effect on
-    // mount, so retry on the next microtask to bind handlers once it exists.
-    bind();
-    const t = setTimeout(bind, 0);
-    return () => {
-      clearTimeout(t);
-      document.removeEventListener('mousemove', onMove);
-      document.removeEventListener('mouseup', endDrag);
-      const hit = yAxisHitRectRef.current;
-      if (hit)
-        hit
-          .on('mousedown', null)
-          .on('dblclick', null)
-          .on('mouseenter', null)
-          .on('mouseleave', null);
-      if (raf != null) cancelAnimationFrame(raf);
-    };
-    // scaleApi is a stable singleton (built once from scaleRef); read inline.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  // The price-axis rescale drag now lives in the unified pointer owner (its
+  // `yAxis` branch); the gutter's `pointerdown` start + `dblclick` reset + hover
+  // affordances are bound alongside the plot overlay in Effect 4, so this no
+  // longer needs its own effect or a `setTimeout(bind,0)` retry.
 
   // Effect 4 — Bind crosshair / drag-init handlers once. The handlers read
   // the latest scales/data via the scale api; rAF coalesces mousemove.
@@ -3093,12 +3222,45 @@ const Chart = ({
     };
     updateCrosshairRef.current = updateCrosshair;
 
-    overlay.on('mousedown', function (event: MouseEvent) {
+    overlay.on('pointerdown', function (event: PointerEvent) {
       // Left button only. macOS Ctrl+click fires a contextmenu AND a
       // button===0 press; excluding ctrlKey keeps that from starting a pan.
+      // (Right / other buttons are left for the contextmenu handler.)
       if (event.button !== 0 || event.ctrlKey) return;
+      // Suppresses only the compat mouse events; per spec it cannot cancel the
+      // click/dblclick/contextmenu that follow, so the double-tap → settings
+      // route is untouched.
       event.preventDefault();
       if (scaleApi.data.length === 0) return;
+      // Capture so this pointer's moves/up reach us even off the element, and
+      // stay routed here through a lifted finger leaving the plot.
+      this.setPointerCapture?.(event.pointerId);
+
+      // Track every pointer for pinch detection FIRST, before the primary-only
+      // arming below. A second finger over the plot turns a live pan into a
+      // two-finger pinch (panOffset preserved via cancelPan); further fingers
+      // just join the map.
+      const r = reducePointers(pointersRef.current, {
+        type: 'down',
+        pointerId: event.pointerId,
+        x: event.clientX,
+        y: event.clientY,
+      });
+      const curKind = gestureRef.current.kind;
+      if (
+        r.mode === 'pinch' &&
+        (curKind === 'pan' || curKind === 'idle' || curKind === 'pinch')
+      ) {
+        if (curKind === 'pan') cancelPan();
+        gestureRef.current = {
+          kind: 'pinch',
+          pointers: pointersRef.current,
+          prevDist: pointerDistance(pointersRef.current),
+        };
+        hideOverlaysRef.current?.();
+        return;
+      }
+      if (!event.isPrimary) return;
       const root = rootGRef.current;
       const [mx, my] = root ? d3.pointer(event, root.node()) : [0, 0];
 
@@ -3113,58 +3275,75 @@ const Chart = ({
       //    never pans, never deselects.
       const target = drawingOverlayHandleRef.current?.hitTest(mx, my) ?? null;
       if (target) {
-        beginDragAt(target, mx, my);
+        beginDragAt(target, mx, my, event.pointerId);
         return;
       }
 
       // 3) Pure miss in cursor mode → existing behaviour: bare-chart click
       //    deselects overlays + drawings (subscribers), then inits the pan drag.
       for (const cb of bgPointerDownSubsRef.current) cb();
-      // Vertical pan is active only when the price scale is already manual
-      // (auto-fit off) — while auto-fit is on, body drag stays X-only so
-      // time-scrolling never drifts vertically. Seed the vertical basis from
-      // the frozen range.
-      const manual = priceViewRef.current;
-      const panY = manual !== null;
-      let startLoLog = 0;
-      let startHiLog = 0;
-      let pxPerLog = 1;
-      let panCapLog = 0;
-      if (panY && manual) {
-        startLoLog = Math.log(manual[0]);
-        startHiLog = Math.log(manual[1]);
-        pxPerLog = scaleApi.priceHeight / (startHiLog - startLoLog);
-        panCapLog = (startHiLog - startLoLog) * 3; // up to ~3 screen-heights away
-      }
       // Arm the pan. It stays a click (no cursor change, overlays untouched,
       // crosshair still tracking) until the pointer travels past the drag
-      // threshold, at which point onMove promotes it to 'dragging'. A press that
-      // never crosses the threshold ends as a plain click that panned nothing.
-      gestureRef.current = {
-        kind: 'pan',
-        phase: 'armed',
-        pointerId: pointerIdOf(event),
-        startX: event.clientX,
-        // Clamped, so it and `baseTx` (built from the clamped effectiveOffset)
-        // describe the same view. `clampPanDeltaPx` needs startOffset inside
-        // [minOffset, maxOffset] or its delta window inverts.
-        startOffset: clampPanOffset(
-          panOffsetRef.current,
-          scaleApi.data.length,
-          scaleApi.visibleBars,
-        ),
-        baseTx: scaleApi.baseTranslateX,
-        step: scaleApi.step,
-        ...panOffsetLimits(scaleApi.data.length, scaleApi.visibleBars),
-        startY: event.clientY,
-        panY,
-        startLoLog,
-        startHiLog,
-        pxPerLog,
-        panCapLog,
-      };
+      // threshold, at which point the owner's move promotes it to 'dragging'. A
+      // press that never crosses the threshold ends as a plain click.
+      gestureRef.current = makePanGesture(
+        event.pointerId,
+        event.clientX,
+        event.clientY,
+      );
       pendingDxRef.current = 0;
       pendingDyRef.current = 0;
+    });
+
+    // Price-axis gutter: start a rescale drag (unified owner drives it), reset to
+    // auto on a double-click, and surface the auto-fit button + ns-resize cursor
+    // on hover. Bound here (not a separate effect) so it shares the overlay's
+    // create-once timing — no `setTimeout(bind,0)` retry.
+    const hit = yAxisHitRectRef.current;
+    hit?.on('pointerdown', function (event: PointerEvent) {
+      // Left button only (macOS Ctrl+click is a contextmenu, not a rescale).
+      if (event.button !== 0 || event.ctrlKey) return;
+      // Only the price-pane portion of the gutter drives price rescale; the
+      // subpane portions below it are hover-only (they just surface the auto-fit
+      // button), so ignore a drag that starts there.
+      if (d3.pointer(event, this)[1] > yAxisPriceSplitRef.current) return;
+      event.preventDefault();
+      event.stopPropagation();
+      this.setPointerCapture?.(event.pointerId);
+      // Seed the range once: the frozen view if already manual, else the live
+      // auto domain (price units) so the grab is continuous.
+      const seed = priceViewRef.current ?? scaleApi.yPrice.domain();
+      gestureRef.current = {
+        kind: 'yAxis',
+        pointerId: event.pointerId,
+        startY: event.clientY,
+        startLoLog: Math.log(seed[0]),
+        startHiLog: Math.log(seed[1]),
+        priceViewAtStart: priceViewRef.current,
+      };
+      if (wrapperRef.current) wrapperRef.current.style.cursor = 'ns-resize';
+    });
+    hit?.on('dblclick', function (event: MouseEvent) {
+      // Reset-to-auto only from the price-pane gutter (see pointerdown gate).
+      if (d3.pointer(event, this)[1] > yAxisPriceSplitRef.current) return;
+      event.preventDefault();
+      event.stopPropagation();
+      setPriceView(null);
+    });
+    hit?.on('mouseenter', function () {
+      setYAxisHovered(true);
+    });
+    hit?.on('mouseleave', function () {
+      setYAxisHovered(false);
+    });
+    // Show the ns-resize (drag) cursor only over the draggable price-pane
+    // portion; the subpane gutters below it are hover-only, so let them inherit
+    // the wrapper's crosshair.
+    hit?.on('pointermove', function (event: PointerEvent) {
+      this.style.cursor =
+        d3.pointer(event, this)[1] <= yAxisPriceSplitRef.current
+          ? 'ns-resize'
+          : '';
     });
 
     // What a double-click at (mx, my) — chart-inner coords — would open, or null
@@ -3232,7 +3411,7 @@ const Chart = ({
       if (panel) openCenterPanelRef.current(panel);
     });
 
-    // mousemove + mouseleave bind to the SVG root so they keep firing while
+    // pointermove + pointerleave bind to the SVG root so they keep firing while
     // the cursor is over a trade overlay or one of its handles (those sit
     // above the bare-chart overlayRect in paint order and have
     // pointer-events: all). d3.pointer is anchored to rootG so coords stay
@@ -3240,7 +3419,7 @@ const Chart = ({
     // overlayRect-relative coords.
     const svgSel = d3.select(svgRef.current);
     svgSel
-      .on('mousemove.crosshair', function (event: MouseEvent) {
+      .on('pointermove.crosshair', function (event: PointerEvent) {
         if (panDragging()) return;
         const wrapper = wrapperRef.current;
         // A shape is being dragged → keep the grabbing cursor, skip the crosshair.
@@ -3274,7 +3453,7 @@ const Chart = ({
           crosshairRafRef.current = requestAnimationFrame(updateCrosshair);
         }
       })
-      .on('mouseleave.crosshair', function (event: MouseEvent) {
+      .on('pointerleave.crosshair', function (event: PointerEvent) {
         if (panDragging()) return;
         // Drop any hover (open-hand) cursor when the pointer leaves the chart.
         if (gestureRef.current.kind !== 'drawingDrag' && wrapperRef.current)
@@ -3307,8 +3486,14 @@ const Chart = ({
     if (!crosshairLastPosRef.current) showLatestInfo();
 
     return () => {
-      overlay.on('mousedown', null).on('dblclick', null);
-      svgSel.on('mousemove.crosshair', null).on('mouseleave.crosshair', null);
+      overlay.on('pointerdown', null).on('dblclick', null);
+      yAxisHitRectRef.current
+        ?.on('pointerdown', null)
+        .on('dblclick', null)
+        .on('mouseenter', null)
+        .on('mouseleave', null)
+        .on('pointermove', null);
+      svgSel.on('pointermove.crosshair', null).on('pointerleave.crosshair', null);
       if (crosshairRafRef.current != null) {
         cancelAnimationFrame(crosshairRafRef.current);
         crosshairRafRef.current = null;
@@ -3390,6 +3575,7 @@ const Chart = ({
                   onPointerDown={onDividerPointerDown(i)}
                   onPointerMove={onDividerPointerMove}
                   onPointerUp={onDividerPointerUp}
+                  onPointerCancel={onDividerPointerCancel}
                 >
                   <span className={styles.subpaneDividerLine} />
                 </div>

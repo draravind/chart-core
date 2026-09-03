@@ -287,7 +287,44 @@ Everything is exported from the package root — never deep-import. Highlights:
   It stacks directly below price; users can restyle (Vol Up / Vol Down colors),
   toggle the below-average fade, the HVE/HVY labels, and the averaging length via
   its legend popover. The OHLC info bar still shows `Vol:` regardless of the pane.
-- Types: `Candle`, `QuarterlyResult`, `ChartType`, `RangeKey`, `PatternMarker`, etc.
+- Types: `Candle`, `QuarterlyResult`, `ChartType`, `RangeKey`, `PatternMarker`,
+  `ChartContextMenuInfo`, etc.
+
+## Interaction
+
+Pan by dragging the plot, zoom with the wheel, drag the price gutter to rescale,
+double-click a candle / indicator / drawing to edit it.
+
+### Right-click
+
+Pass `onContextMenu?: (info: ChartContextMenuInfo) => void` to report where the user
+right-clicked instead of showing the browser menu:
+
+```ts
+type ChartContextMenuInfo = {
+  clientX: number; clientY: number;      // viewport coords for positioning a menu
+  barIndex: number | null;               // null right of the last bar / off the bars
+  date: string | null;
+  price: number | null;                  // set only in the price pane
+  value: number | null;                  // set only in a subpane (mutually exclusive)
+  pane: { kind: 'price' | 'subpane' | 'gutter' | 'none'; key?: string };
+};
+```
+
+- With **no** `onContextMenu`, the browser's native menu shows as usual.
+- With a handler, the native menu is suppressed everywhere over the chart — including
+  your own children stacked in the plot (legend, stats, trade/trigger overlays), which
+  are classified by geometry. To let one floating child keep its **own** native menu,
+  put `data-chart-native-menu` on its root element.
+- Mid-gesture (a pan/drag in flight) the menu is suppressed and no payload fires.
+
+### Touch
+
+The chart is fully touch-driven: one finger pans, two fingers pinch-zoom, a
+double-tap opens the same editors a double-click does. The plot surface sets
+`touch-action: none`, so a **vertical** finger drag over the chart pans it rather than
+scrolling the page. If the page needs to scroll past the chart on a phone, give the
+chart a bounded height so there is page outside it to scroll.
 
 ## Develop
 

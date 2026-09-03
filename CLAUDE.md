@@ -8,6 +8,10 @@ contract. ~50 source files under `src/`, public surface is the `src/index.ts` ba
 
 - `pnpm build` → `vite build` → `dist/index.js` + `dist/index.d.ts` + `dist/style.css`.
 - `pnpm test` → `vitest run` (node environment, tests in `tests/**/*.test.ts`).
+- `pnpm typecheck` → `tsc --noEmit` **and** `tsc -p tsconfig.e2e.json` (both configs).
+- `pnpm test:e2e` → `playwright test` (real Chromium; the gesture behaviour-lock +
+  contextmenu + touch specs in `e2e/`). These are the LOCAL gate — CI runs no tests,
+  it only builds and force-publishes `dist` (see below), so run all three before a push.
 
 ## Dist-branch gotcha
 
@@ -59,8 +63,11 @@ The split is intentional: the routing table + glossary here are **pay-always**
 | Adjust the price-stats panel                                                  | `src/stats/` (`computeStats.ts` math, `StatsPanel.tsx` panel, `stats.module.css`); `--stats-*` tokens in `src/styles/chart-core.css`; `tests/stats.test.ts`                                                                                                                                 |
 | Add an overlay/annotation plugin                                              | `src/context.tsx` hooks (`useChartScale`, `useChartOverlayHost`) + `src/patterns/mountChartPatternOverlay.ts`                                                                                                                                                                               |
 | Add a new pattern shape                                                       | `src/patterns/renderers/` (new renderer, reuse `_shared.ts` for chip/marker/`xForBar`) + register in `renderers/index.ts`; add a `*Style` to `appearance/types.ts` + default in `registry.ts` + section in `SettingsDialog.tsx` + barrel export in `index.ts`; smoke test in `tests/patternRenderers.test.ts` |
-| Add/adjust a user drawing tool (trend/h-v line, ray, text, ruler)             | `src/drawings/` (pure: `types`/`defaults`/`projection`/`hitTest`/`rulerStats`/`interaction`; D3 mount `mountChartDrawingOverlay.ts` + `renderers/*`; popup `DrawingStylePopup.tsx` — opened by DOUBLE-click, a single click only selects); wired in `Chart.tsx` (mousedown 3-branch, `dblclick` router, document drag effect, mount + pan/rescale) + `ChartControls.tsx` (Draw ▾ dropdown); `tests/drawing*.test.ts` |
+| Add/adjust a user drawing tool (trend/h-v line, ray, text, ruler)             | `src/drawings/` (pure: `types`/`defaults`/`projection`/`hitTest`/`rulerStats`/`interaction`; D3 mount `mountChartDrawingOverlay.ts` + `renderers/*`; popup `DrawingStylePopup.tsx` — opened by DOUBLE-click, a single click only selects); wired in `Chart.tsx` (overlay `pointerdown` 3-branch, `dblclick` router, the single pointer-owner effect drives the drag, mount + pan/rescale) + `ChartControls.tsx` (Draw ▾ dropdown); `tests/drawing*.test.ts` |
 | Fix candle/bar rendering                                                      | `src/Chart.tsx`, `src/utils/drawSeries.ts` (volume is now the `volume` indicator, not here); wick thickness is `CANDLE_WICK_FRACTION` of the body in `appearance/registry.ts`, not a user setting                                                                                            |
+| Fix pan / zoom / a held-pointer gesture (mouse, pen or touch)                 | `src/Chart.tsx` — every gesture runs on Pointer Events. The overlay `pointerdown` (Effect 4) arms it into `gestureRef` (see glossary); ONE document `pointermove`/`pointerup`/`pointercancel` owner effect drives pan/drawing-drag/y-rescale/pinch. Pinch arm is `src/gestures/pointerReducer.ts`; both wheel and pinch feed the single `applyZoomFactor`. `tests/pointerReducer.test.ts`, `e2e/{gesture-lock,gesture-hygiene,touch}.spec.ts` |
+| Right-click / context menu (report the cursor's pane + price/value)          | `src/Chart.tsx` frame `contextmenu` listener → `onContextMenu` prop with a `ChartContextMenuInfo` payload; geometry via `classifyChartRegion` (`src/gestures/chartRegion.ts`) over `paneBandsRef`; no handler ⇒ native menu; chrome keeps its own menu via `data-chart-native-menu`; `e2e/contextmenu.spec.ts` |
+| Change touch / pinch behaviour (drag-to-pan, pinch-zoom, no page scroll)     | `src/Chart.tsx` pointer owner (pinch branch) + `src/gestures/pointerReducer.ts`; drag-vs-click radius in `src/gestures/thresholds.ts` (10px touch); `touch-action:none` + `user-select:none` on `.chartSvg` (`src/Chart.module.css`); `e2e/touch.spec.ts` |
 | Map a date ↔ bar index                                                        | `src/utils/dateBarIndex.ts`                                                                                                                                                                                                                                                                 |
 | Change price/volume formatting or range presets                               | `src/utils/chartCalculations.ts`                                                                                                                                                                                                                                                            |
 | Fix theming / a CSS variable not applying                                     | `src/styles/chart-core.css` (token contract) + README token tables                                                                                                                                                                                                                          |
@@ -133,6 +140,28 @@ settingsOverrides`). `lineStyleFrom` (`src/indicators/lineSettings.ts`) reads
   yields the wheel (native scroll then works on `.panelScrollBody`); otherwise the
   chart zoom hijacks the gesture. Used by `SettingsDialog`,
   `IndicatorSettingsPopover`, `CandleSettingsPopup` and `DrawingStylePopup`.
+  A SEPARATE attribute, `data-chart-native-menu`, opts a floating child OUT of the
+  right-click reporter so it keeps the browser's own context menu (the frame
+  `contextmenu` listener `closest()`-checks for it, alongside `data-chart-legend` /
+  `data-chart-stats`); it does not affect the wheel.
+- **Gesture owner (`gestureRef`)** — the one held-pointer gesture, a tagged union
+  `idle | pan | drawingDrag | yAxis | pinch` in `Chart.tsx`. `gestureBusy()` is the
+  single "in flight?" predicate (used by the contextmenu bail + every skip-while-
+  gesture site); placement is NOT folded in — it stays `draftRef` (holds no pointer
+  between its two clicks). Every gesture runs on Pointer Events: the overlay/gutter
+  `pointerdown` (Effect 4) arms it and `setPointerCapture`s the pointer; ONE document
+  `pointermove`/`pointerup`/`pointercancel` owner effect dispatches by `kind`, runs
+  the pointer-identity check once, aborts on `pointercancel`, and re-seeds after a
+  pinch. A second finger over the plot turns a pan into a `pinch`, armed by the pure
+  `reducePointers` (`src/gestures/pointerReducer.ts`); wheel + pinch share the one
+  `applyZoomFactor` sink. Drag-vs-click radius: `src/gestures/thresholds.ts`.
+- **ChartContextMenuInfo / onContextMenu** — the right-click report (`src/types.ts`):
+  `{clientX, clientY, barIndex, date, price, value, pane}` where `pane` is a
+  `ChartRegion` (`price | subpane | gutter | none`) from `classifyChartRegion`
+  (`src/gestures/chartRegion.ts`, pure, over `paneBandsRef`); `price` XOR `value` is
+  set by pane. No `onContextMenu` handler ⇒ the native menu shows; with one, the
+  native menu is suppressed except over `data-chart-native-menu` chrome, and mid-
+  gesture it suppresses the menu but emits no payload. `e2e/contextmenu.spec.ts`.
 - **Subpane** — a named oscillator pane below the price pane (RSI, MACD…); layout in
   `src/indicators/subpaneLayout.ts`. Heights are user-draggable (divider handles in
   `Chart.tsx`, math in `applySubpaneDrag`), persisted via `subpaneHeights`.
@@ -185,13 +214,13 @@ settingsOverrides`). `lineStyleFrom` (`src/indicators/lineSettings.ts`) reads
 - **Drawing tools** — interactive, persisted annotations (trend lines, h/v lines,
   h/diagonal rays, text boxes, ruler): `src/drawings/`. Built as a CORE layer
   mounted by `Chart` (like the pattern overlay) because only `Chart` can suppress
-  its own pan-drag `mousedown` to claim the gesture. Anchors are `{date, price}`
+  its own pan-drag `pointerdown` to claim the gesture. Anchors are `{date, price}`
   (survive warmup/reslice). Controlled via `drawings`/`onDrawingsChange` (fires once
   per placement/edit-commit/delete, never per drag frame; selection + in-flight
   draft are ephemeral `Chart` state) + `activeDrawingTool`/`onActiveDrawingToolChange`
   (host-held ephemeral, shared with `ChartControls`'s "Draw ▾" dropdown, like
   `patternsEnabled`). All shapes are `pointer-events:none`; the overlayRect keeps the
-  mousedown and `mountChartDrawingOverlay`'s `hitTest` does manual detection.
+  `pointerdown` and `mountChartDrawingOverlay`'s `hitTest` does manual detection.
   Defaults live in `src/drawings/defaults.ts` + `--chart-drawing*` tokens, NOT in
   `ChartAppearance`. The `ruler` is a persistent drawing (saved/movable/deletable),
   not a transient measure.
