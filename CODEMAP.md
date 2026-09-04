@@ -231,9 +231,11 @@ under the drawing-popup layer).
   popover, extracted from `IndicatorLegend` so BOTH the legend gear (anchored
   under its row via `.legendPopover`) and Chart's double-click panel (centred via
   `.centeredPanel`) render one implementation. Props: `config`, `def`,
-  `onCommit`/`onReset`/`onResetKeys`, `resolveColor?`, `onClose`, `className?`,
-  `style?`. Placement-agnostic; closes on outside-mousedown + Escape; root
-  carries `data-chart-wheel-scroll`.
+  `onCommit`/`onReset`/`onResetKeys`, `resolveColor?`, `onClose`, `triggerRef?`
+  (the legend's separate gear button, counted as "inside"), `className?`,
+  `style?`. Placement-agnostic; dismissal via the shared `useDismissable` layer
+  stack (capture-phase pointerdown + bubble-phase Escape); root carries
+  `data-chart-wheel-scroll`.
 
 ### `src/controls/CandleSettingsPopup.tsx`
 
@@ -268,7 +270,9 @@ under the drawing-popup layer).
 
 - `default SettingsDialog` (React.FC) — gear-triggered appearance dialog. Props:
   `appearance: AppearanceOverrides`, `onAppearanceChange`, `resolveColor`,
-  `onClose`, `style?`. Sections: **Chart appearance** (price up/down — the
+  `onClose`, `triggerRef?` (the appearance gear, counted as "inside"), `style?`.
+  Dismissal via the shared `useDismissable` layer stack. Sections: **Chart
+  appearance** (price up/down — the
   chart-wide `--chart-positive`/`--chart-negative` pair, also read by the OHLC
   readout, Volume's default bars, the `--qr-growth-*` aliases and the ruler;
   background top/bottom/radius; axis color/opacity/tick; crosshair color/opacity/
@@ -287,11 +291,30 @@ under the drawing-popup layer).
 - `default AutoFitMenu` (React.FC) — right-click checklist for the "A" auto-fit
   button; picks which contributor groups feed the price+overlays fit. Props:
   `contributors: {key,label}[]`, `excluded: string[]`, `onExcludedChange`,
-  `onClose`, `style?`. Checked = included; toggling a row adds/removes its group
-  key from the persisted `excluded` set (`'trade'`/`'trigger'`/an indicator
-  `defKey`). Mirrors `SettingsDialog`'s click-outside (`mousedown`) + Escape close
-  handling. Mounted inside `Chart` next to the "A" button; opened via the button's
-  `onContextMenu` (only in `priceAndOverlays` mode with `priceZoom === 1`).
+  `onClose`, `triggerRef?` (the "A" button, counted as "inside"), `style?`.
+  Checked = included; toggling a row adds/removes its group key from the
+  persisted `excluded` set (`'trade'`/`'trigger'`/an indicator `defKey`).
+  Dismissal via the shared `useDismissable` layer stack. Mounted inside `Chart`
+  next to the "A" button; opened via the button's `onContextMenu` (only in
+  `priceAndOverlays` mode with `priceZoom === 1`).
+
+### `src/controls/useDismissable.ts`
+
+- Layer-aware dismissal primitive shared by every chart popup. A module-level
+  STACK of open layers plus two `document` listeners attached while it is
+  non-empty: `pointerdown` in the **capture** phase (decides dismissal for the
+  TOPMOST layer only) and `keydown` in the **bubble** phase (Escape closes the
+  topmost; skipped while `isComposing`). Capture is load-bearing — it runs before
+  the plot's `preventDefault` (which cancels only the compat `mousedown` the old
+  listeners heard) and the price-axis strip's `stopPropagation`, the two reasons
+  a chart click failed to dismiss. It also runs before whatever OPENS a popup, so
+  a layer can't self-close (retires the old `timeStamp` guards). Exports
+  `registerLayer(layer) → unregister` (plain TS, testable by dispatching raw
+  events) and the React wrapper `useDismissable(open, close, refs, opts?)` —
+  `refs` is a LIST (content + any SEPARATE trigger so pressing the trigger reads
+  as "inside"), `opts.outsidePress` (default `true`; `false` = Escape-only). Read
+  through a ref refreshed each render, so a fresh `close` identity never
+  re-registers (which would reorder the stack). NOT in `src/index.ts` — internal.
 
 ---
 
@@ -703,8 +726,10 @@ Chart props. All shapes are `pointer-events:none`; hit detection is manual.
   Edits route through `onChange` (replace-by-id). `src/drawings/drawings.module.css`
   = popup chrome. Opened by a DOUBLE-click on a shape (a single click only
   selects) or, as a carve-out, by placing a `text` box so its field can be typed
-  into immediately. Closes on outside-mousedown + Escape. `className?` lets Chart
-  add `.centeredPanel`.
+  into immediately. Dismissal via the shared `useDismissable` layer stack — the
+  old `timeStamp` self-close guard is gone because capture-phase pointerdown runs
+  before the placing press mounts this popup. `className?` lets Chart add
+  `.centeredPanel`.
 
 ---
 

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { ChevronDown, ChevronUp } from 'lucide-react';
 import type {
   IndicatorConfig,
@@ -84,6 +84,11 @@ function LegendBlock({
   // that pane's list down to just this header.
   toggle?: { expanded: boolean; onToggle: () => void };
 }) {
+  // Only one popover is open at a time across every block, so a single ref —
+  // attached to whichever gear is currently open — is what the popover counts as
+  // its separate trigger. Declared before the early return to keep hook order
+  // stable.
+  const gearRef = useRef<HTMLButtonElement | null>(null);
   if (configs.length === 0 && !toggle) return null;
   const rc = resolveColor ?? ((e: string) => e);
   return (
@@ -121,10 +126,10 @@ function LegendBlock({
                 type="button"
                 className={styles.legendBtn}
                 title={`Edit ${def.label}`}
-                // Stop the mousedown reaching the open popover's outside-click
-                // listener (which would close-then-reopen) and the chart's
-                // background pan handler.
-                onMouseDown={(e) => e.stopPropagation()}
+                // The open popover counts this gear as "inside" via `gearRef`
+                // (below), so its own click toggles cleanly — no dismiss-then-
+                // reopen. Only the currently-open gear carries the ref.
+                ref={openId === config.id ? gearRef : null}
                 onClick={() =>
                   setOpenId(openId === config.id ? null : config.id)
                 }
@@ -148,6 +153,7 @@ function LegendBlock({
                 onReset={(key) => onReset(config, key)}
                 onResetKeys={(keys) => onResetKeys(config, keys)}
                 resolveColor={resolveColor}
+                triggerRef={gearRef}
                 onClose={() => setOpenId(null)}
               />
             )}
@@ -159,7 +165,6 @@ function LegendBlock({
           type="button"
           className={styles.legendToggle}
           title={toggle.expanded ? 'Collapse indicators' : 'Expand indicators'}
-          onMouseDown={(e) => e.stopPropagation()}
           onClick={toggle.onToggle}
         >
           {toggle.expanded ? (

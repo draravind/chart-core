@@ -1,6 +1,7 @@
-import { useEffect, useRef } from 'react';
+import { useRef } from 'react';
 import type { AppearanceOverrides } from '../appearance/types';
 import { CandleRows } from './appearanceFields';
+import { useDismissable } from './useDismissable';
 import { cn } from '../internal/cn';
 import styles from '../Chart.module.css';
 
@@ -26,20 +27,8 @@ export default function CandleSettingsPopup({
   style,
 }: Props) {
   const ref = useRef<HTMLDivElement | null>(null);
-  useEffect(() => {
-    const onDown = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) onClose();
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
-    };
-    document.addEventListener('mousedown', onDown);
-    document.addEventListener('keydown', onKey);
-    return () => {
-      document.removeEventListener('mousedown', onDown);
-      document.removeEventListener('keydown', onKey);
-    };
-  }, [onClose]);
+  // Double-click-opened, no persistent trigger → just the panel ref.
+  useDismissable(true, onClose, [ref]);
 
   return (
     <div

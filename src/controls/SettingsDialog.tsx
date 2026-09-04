@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import type { RefObject } from 'react';
 import type { AppearanceOverrides } from '../appearance/types';
 import {
   CandleRows,
@@ -6,6 +7,7 @@ import {
   makeAppearanceRows,
   type Path,
 } from './appearanceFields';
+import { useDismissable } from './useDismissable';
 import styles from '../Chart.module.css';
 
 // ---------------------------------------------------------------------------
@@ -50,6 +52,9 @@ type Props = {
   onAppearanceChange: (next: AppearanceOverrides) => void;
   resolveColor: (expr: string) => string;
   onClose: () => void;
+  // The appearance gear lives in Chart, separate from this dialog; its ref is
+  // passed here so a press on it toggles cleanly instead of dismiss-then-reopen.
+  triggerRef?: RefObject<HTMLElement | null>;
   style?: React.CSSProperties;
 };
 
@@ -58,23 +63,11 @@ export default function SettingsDialog({
   onAppearanceChange,
   resolveColor,
   onClose,
+  triggerRef,
   style,
 }: Props) {
   const ref = useRef<HTMLDivElement | null>(null);
-  useEffect(() => {
-    const onDown = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) onClose();
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
-    };
-    document.addEventListener('mousedown', onDown);
-    document.addEventListener('keydown', onKey);
-    return () => {
-      document.removeEventListener('mousedown', onDown);
-      document.removeEventListener('keydown', onKey);
-    };
-  }, [onClose]);
+  useDismissable(true, onClose, triggerRef ? [ref, triggerRef] : [ref]);
 
   const rowCtx = { appearance, onAppearanceChange, resolveColor };
   const { eff, commit, colorVarRow, colorRow, numberRow, sliderRow } =

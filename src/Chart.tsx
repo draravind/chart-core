@@ -528,6 +528,10 @@ const Chart = ({
   const [colorEpoch, setColorEpoch] = useState(0);
   // Gear-triggered appearance dialog open state.
   const [settingsOpen, setSettingsOpen] = useState(false);
+  // The appearance gear lives here, separate from the dialog it opens; its ref is
+  // passed to SettingsDialog so a press on the gear reads as "inside" and its own
+  // click toggles cleanly (the layer-stack dismissal takes the press in capture).
+  const settingsGearRef = useRef<HTMLButtonElement | null>(null);
   // Double-click-opened centred editor (candles / one indicator / one drawing).
   const [centerPanel, setCenterPanel] = useState<CenterPanel>(null);
   // Opening a centred panel closes the gear dialog and vice-versa, so only one
@@ -992,6 +996,9 @@ const Chart = ({
   // Right-click checklist popover for choosing which groups feed the
   // price+overlays auto-fit. Keeps the button mounted while open.
   const [autoFitMenuOpen, setAutoFitMenuOpen] = useState(false);
+  // The "A" button lives here, separate from the menu it opens; its ref goes to
+  // AutoFitMenu so a press on it is treated as "inside" the layer.
+  const autoFitBtnRef = useRef<HTMLButtonElement | null>(null);
   const showAutoFitBtn = yAxisHovered || autoFitHovered || autoFitMenuOpen;
   // The one held-pointer gesture (see the Gesture union). 'idle' between
   // gestures; the pan / shape-drag / y-axis stores all live here now.
@@ -3606,6 +3613,7 @@ const Chart = ({
           {priceBottomPx > 0 && showAutoFitBtn && (
             <button
               type="button"
+              ref={autoFitBtnRef}
               data-chart-native-menu=""
               className={`${styles.autoFitBtn} ${isAutoFit ? styles.autoFitBtnActive : ''}`}
               title={
@@ -3615,10 +3623,9 @@ const Chart = ({
                     ? 'Auto-fit: price + overlays (click for price-only)'
                     : 'Auto-fit: price-only (click to include overlays)'
               }
-              // stopPropagation mirrors the gear button so the menu's
-              // click-outside listener doesn't fire on the button itself,
-              // letting onContextMenu toggle the menu cleanly.
-              onMouseDown={(e) => e.stopPropagation()}
+              // The menu counts this button as "inside" via `autoFitBtnRef`, so
+              // onContextMenu toggles it cleanly. (Old `onMouseDown
+              // stopPropagation` guarded the removed mousedown listener.)
               onClick={() => {
                 // A left-click changes mode/range, making the exclusion menu
                 // stale — close it so it doesn't linger or pin the button.
@@ -3658,6 +3665,7 @@ const Chart = ({
               contributors={autoFitContributors}
               excluded={autoFitExcluded}
               onExcludedChange={onAutoFitExcludedChange}
+              triggerRef={autoFitBtnRef}
               onClose={() => setAutoFitMenuOpen(false)}
               style={{
                 bottom: MARGIN.bottom + 28,
@@ -3671,10 +3679,10 @@ const Chart = ({
             <>
               <button
                 type="button"
+                ref={settingsGearRef}
                 data-chart-native-menu=""
                 className={styles.settingsGearBtn}
                 title="Chart settings"
-                onMouseDown={(e) => e.stopPropagation()}
                 onClick={() => {
                   // Only one floating editor at a time.
                   setCenterPanel(null);
@@ -3691,6 +3699,7 @@ const Chart = ({
                   resolveColor={(v) =>
                     colorResolverRef.current?.resolve(v) ?? '#888888'
                   }
+                  triggerRef={settingsGearRef}
                   onClose={() => setSettingsOpen(false)}
                   style={{ right: MARGIN.right + 4, bottom: MARGIN.bottom + 4 }}
                 />

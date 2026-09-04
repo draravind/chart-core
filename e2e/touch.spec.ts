@@ -52,7 +52,11 @@ async function settle(page: Page) {
 // Chrome diffs against the previous set to emit pointer down/move/up, so a
 // start/end need only add/remove a point from the live set.
 type Pt = { id: number; x: number; y: number };
-async function touch(cdp: CDPSession, type: string, points: Pt[]) {
+async function touch(
+  cdp: CDPSession,
+  type: 'touchStart' | 'touchEnd' | 'touchMove' | 'touchCancel',
+  points: Pt[],
+) {
   await cdp.send('Input.dispatchTouchEvent', {
     type,
     touchPoints: points.map((p) => ({ x: p.x, y: p.y, id: p.id })),

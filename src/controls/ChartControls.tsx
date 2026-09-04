@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useRef, useState } from 'react';
 import {
   Minus,
   MousePointer2,
@@ -19,6 +19,7 @@ import {
   SUBPANE_ORDER,
 } from '../indicators/registry';
 import { cn } from '../internal/cn';
+import { useDismissable } from './useDismissable';
 import { PATTERN_CATALOG, PATTERN_NAMES } from '../patterns/catalog';
 import './controls.css';
 import styles from './ChartControls.module.css';
@@ -107,59 +108,15 @@ export default function ChartControls({
   const [drawPickerOpen, setDrawPickerOpen] = useState(false);
   const drawPickerRef = useRef<HTMLDivElement | null>(null);
 
-  useEffect(() => {
-    if (!drawPickerOpen) return;
-    const onDown = (e: MouseEvent) => {
-      if (drawPickerRef.current && !drawPickerRef.current.contains(e.target as Node))
-        setDrawPickerOpen(false);
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setDrawPickerOpen(false);
-    };
-    document.addEventListener('mousedown', onDown);
-    document.addEventListener('keydown', onKey);
-    return () => {
-      document.removeEventListener('mousedown', onDown);
-      document.removeEventListener('keydown', onKey);
-    };
-  }, [drawPickerOpen]);
-
-  useEffect(() => {
-    if (!pickerOpen) return;
-    const onDown = (e: MouseEvent) => {
-      if (pickerRef.current && !pickerRef.current.contains(e.target as Node))
-        setPickerOpen(false);
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setPickerOpen(false);
-    };
-    document.addEventListener('mousedown', onDown);
-    document.addEventListener('keydown', onKey);
-    return () => {
-      document.removeEventListener('mousedown', onDown);
-      document.removeEventListener('keydown', onKey);
-    };
-  }, [pickerOpen]);
-
-  useEffect(() => {
-    if (!patternPickerOpen) return;
-    const onDown = (e: MouseEvent) => {
-      if (
-        patternPickerRef.current &&
-        !patternPickerRef.current.contains(e.target as Node)
-      )
-        setPatternPickerOpen(false);
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setPatternPickerOpen(false);
-    };
-    document.addEventListener('mousedown', onDown);
-    document.addEventListener('keydown', onKey);
-    return () => {
-      document.removeEventListener('mousedown', onDown);
-      document.removeEventListener('keydown', onKey);
-    };
-  }, [patternPickerOpen]);
+  // Each picker's outer ref already WRAPS its own toggle button, so a press on
+  // the button reads as "inside" and no separate trigger ref is needed.
+  useDismissable(drawPickerOpen, () => setDrawPickerOpen(false), [drawPickerRef]);
+  useDismissable(pickerOpen, () => setPickerOpen(false), [pickerRef]);
+  useDismissable(
+    patternPickerOpen,
+    () => setPatternPickerOpen(false),
+    [patternPickerRef],
+  );
 
   // Per-pattern visibility helpers. `undefined` visible set ⇒ all visible.
   const isVisible = (name: string) =>

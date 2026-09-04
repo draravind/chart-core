@@ -1,4 +1,6 @@
-import { useEffect, useRef } from 'react';
+import { useRef } from 'react';
+import type { RefObject } from 'react';
+import { useDismissable } from './useDismissable';
 import styles from '../Chart.module.css';
 
 // ---------------------------------------------------------------------------
@@ -15,6 +17,10 @@ type Props = {
   excluded: string[];
   onExcludedChange: (next: string[]) => void;
   onClose: () => void;
+  // The "A" button lives in Chart, separate from this menu, so its ref is passed
+  // in and counted as "inside" — a press on it toggles cleanly instead of
+  // dismiss-then-reopen.
+  triggerRef?: RefObject<HTMLElement | null>;
   style?: React.CSSProperties;
 };
 
@@ -23,23 +29,11 @@ export default function AutoFitMenu({
   excluded,
   onExcludedChange,
   onClose,
+  triggerRef,
   style,
 }: Props) {
   const ref = useRef<HTMLDivElement | null>(null);
-  useEffect(() => {
-    const onDown = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) onClose();
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
-    };
-    document.addEventListener('mousedown', onDown);
-    document.addEventListener('keydown', onKey);
-    return () => {
-      document.removeEventListener('mousedown', onDown);
-      document.removeEventListener('keydown', onKey);
-    };
-  }, [onClose]);
+  useDismissable(true, onClose, triggerRef ? [ref, triggerRef] : [ref]);
 
   const toggle = (key: string) => {
     onExcludedChange(

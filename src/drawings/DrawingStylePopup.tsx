@@ -10,6 +10,7 @@ import {
   NumberField,
   SliderField,
 } from '../controls/SettingsFields';
+import { useDismissable } from '../controls/useDismissable';
 import { cn } from '../internal/cn';
 import chartStyles from '../Chart.module.css';
 import styles from './drawings.module.css';
@@ -53,32 +54,12 @@ export default function DrawingStylePopup({
   const eff = effectiveDrawingStyle(shape.style);
   const isText = shape.type === 'text';
 
-  // Uniform dismissal across every floating editor: outside-mousedown + Escape.
-  //
-  // The timestamp guard is load-bearing, not defensive: placing a TEXT box opens
-  // this popup from the placing MOUSEDOWN. React flushes that discrete update
-  // synchronously, so this listener is registered while that very mousedown is
-  // still propagating up to document — and its target (the chart overlay rect) is
-  // outside the popup, which would close it the instant it opened. `timeStamp`
-  // and `performance.now()` share a time origin, so anything at or before mount
-  // is the opening event itself. A double-click-opened popup is unaffected: both
-  // of its mousedowns precede the panel.
-  useEffect(() => {
-    const mountedAt = performance.now();
-    const onDown = (e: MouseEvent) => {
-      if (e.timeStamp <= mountedAt) return;
-      if (ref.current && !ref.current.contains(e.target as Node)) onClose();
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
-    };
-    document.addEventListener('mousedown', onDown);
-    document.addEventListener('keydown', onKey);
-    return () => {
-      document.removeEventListener('mousedown', onDown);
-      document.removeEventListener('keydown', onKey);
-    };
-  }, [onClose]);
+  // Uniform dismissal via the shared layer stack. The old `timeStamp` open-guard
+  // is gone: placing a TEXT box opens this popup from the placing press, but the
+  // stack's pointerdown listener runs in the CAPTURE phase — before React
+  // flushes that press into the mount — so the opening press has already
+  // dispatched by the time this layer registers and can never self-close it.
+  useDismissable(true, onClose, [ref]);
 
   // Focus the text field when a freshly-placed (empty) text box opens.
   useEffect(() => {

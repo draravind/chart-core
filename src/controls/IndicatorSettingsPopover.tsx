@@ -1,4 +1,5 @@
-import { useEffect, useRef } from 'react';
+import { useRef } from 'react';
+import type { RefObject } from 'react';
 import type { IndicatorConfig, IndicatorDef } from '../indicators/types';
 import { formatIndicatorParams } from '../indicators/registry';
 import {
@@ -8,6 +9,7 @@ import {
   ColorField,
   LineField,
 } from './SettingsFields';
+import { useDismissable } from './useDismissable';
 import { cn } from '../internal/cn';
 import styles from '../Chart.module.css';
 
@@ -28,6 +30,11 @@ type Props = {
   onResetKeys: (keys: string[]) => void;
   resolveColor?: (expr: string) => string;
   onClose: () => void;
+  // The legend renders this beside a SEPARATE gear button (in IndicatorLegend);
+  // that gear's ref is passed here so a press on it toggles cleanly. Chart's
+  // centred (double-click-opened) instance has no persistent trigger and omits
+  // it.
+  triggerRef?: RefObject<HTMLElement | null>;
   className?: string;
   style?: React.CSSProperties;
 };
@@ -40,24 +47,12 @@ export default function IndicatorSettingsPopover({
   onResetKeys,
   resolveColor,
   onClose,
+  triggerRef,
   className,
   style,
 }: Props) {
   const ref = useRef<HTMLDivElement | null>(null);
-  useEffect(() => {
-    const onDown = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) onClose();
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
-    };
-    document.addEventListener('mousedown', onDown);
-    document.addEventListener('keydown', onKey);
-    return () => {
-      document.removeEventListener('mousedown', onDown);
-      document.removeEventListener('keydown', onKey);
-    };
-  }, [onClose]);
+  useDismissable(true, onClose, triggerRef ? [ref, triggerRef] : [ref]);
 
   const summary = formatIndicatorParams(config);
   const resolve = resolveColor ?? ((e: string) => e);
