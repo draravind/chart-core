@@ -1,16 +1,16 @@
-/* Floating "Price Stats" panel. The host spans the frame and ignores pointer
- * events; the panel itself is interactive — the whole panel is a drag handle
- * (placement anywhere over the main price pane). Geometry is inline left/top set
- * by StatsPanel, resolved each render from the stored anchor against the
- * price-pane rect (not from clamped drag pixels). */
-.statsHost {
+/* Corner-pinned "Quarterly Earnings" table. Same structure as the Price-Stats
+ * panel: the host spans the frame and ignores pointer events; the panel itself
+ * is interactive (whole panel = drag handle) and stays over the main price pane.
+ * Geometry is inline left/top set by EarningsPanel from the stored anchor.
+ * Consumes the existing global --stats-* colour tokens (no new colour token). */
+.earningsHost {
   position: absolute;
   inset: 0;
   z-index: 2;
   pointer-events: none;
 }
 
-.statsPanel {
+.earningsPanel {
   position: absolute;
   pointer-events: auto;
   cursor: grab;
@@ -25,18 +25,28 @@
   font-variant-numeric: tabular-nums;
 }
 
-.statsTable {
+.earningsTable {
   border-collapse: collapse;
 }
 
-.statsTable td {
-  padding: 1px 8px;
-  text-align: center;
+.earningsTable td {
+  padding: 1px 6px;
+  text-align: right;
   white-space: nowrap;
   line-height: 1.45;
 }
 
-/* ---- Threshold / text color levels ---------------------------------- */
+/* The quarter-label column (col 0 body) reads left, as a row header. */
+.earningsTable td.label {
+  text-align: left;
+}
+
+/* The score dot column centres its ●. */
+.earningsTable td.score {
+  text-align: center;
+}
+
+/* ---- Threshold / text colour levels (shared --stats-* tokens) -------- */
 .lvlStrong {
   color: var(--stats-strong);
 }

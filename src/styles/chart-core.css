@@ -105,6 +105,10 @@
    * dark canvas and is near-invisible against --stats-bg's raised panel. */
   --stats-muted: var(--text-muted);
   --stats-bg: var(--surface-panel-raised);
+  /* Shared background for the two floating corner boxes (Price-Stats +
+     Earnings). Its own semantic token so both boxes recolour together and an app
+     can override the box surface without touching the raised-panel token. */
+  --panel-box-bg: var(--surface-panel-box);
   --stats-border: var(--chart-separator);
   --stats-radius: var(--radius-sm);
 
@@ -123,6 +127,9 @@
   --color-dark-700: #30302e;
   --surface-panel-raised: #30302e;
   --surface-panel-header: #202020;
+  /* Floating corner boxes (Price-Stats + Earnings) — a touch darker than the
+     raised panel so they read as their own chrome over the chart. */
+  --surface-panel-box: #252525;
   /* Toolbar dropdown panels (indicator/pattern pickers) — darker than the raised
      panel so they read as floating chrome over the chart. */
   --surface-dropdown: #191919;

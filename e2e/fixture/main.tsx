@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { Chart, useChartScale, defaultConfigFor } from '../../src/index';
+import { Chart, ChartControls, useChartScale, defaultConfigFor } from '../../src/index';
 import type {
   IndicatorConfig,
   DrawingShape,
@@ -11,11 +11,25 @@ import type {
   StatsPosition,
   LegacyStatsPosition,
   StatsSize,
+  QuarterlyResult,
 } from '../../src/index';
 import { DATA } from './data';
 
 const CHART_W = 1200;
 const CHART_H = 700;
+
+// Eight quarters ~91 days apart, each with EPS / revenue-per-share / net margin,
+// so the Earnings box renders a full table (the box reads only this feed, not the
+// bars). Values rise each quarter so YoY resolves once four quarters accumulate.
+const EARNINGS: QuarterlyResult[] = Array.from({ length: 8 }, (_, i) => ({
+  label: `Q${i}`,
+  date: new Date(Date.UTC(2023, 0, 15) + i * 91 * 86_400_000)
+    .toISOString()
+    .slice(0, 10),
+  eps: 10 + i,
+  rps: 100 + i * 5,
+  npm: 15,
+}));
 
 // A stored value the fixture can seed that no reader can parse — the spec proves
 // an unreadable (or newer) stored value falls back to the default and is never
@@ -80,6 +94,19 @@ function App() {
   const [statsPosition, setStatsPosition] = useState<StoredStats>(null);
   const statsChanges = useRef(0);
   const [statsChangeCount, setStatsChangeCount] = useState(0);
+  // Earnings box: off by default (driven by the ChartControls "Earnings" button
+  // below), position + change-count exposed the way the stats box exposes its own.
+  const [earningsEnabled, setEarningsEnabled] = useState(false);
+  // Whether the earnings feed has arrived. Starts true; a spec drops it to []
+  // BEFORE enabling the box, then restores it, to reproduce the real cold-load
+  // path — the box's model is empty until an async feed lands, so its measured
+  // div mounts only on a LATER render (a mount a one-shot effect would miss).
+  const [earningsHasData, setEarningsHasData] = useState(true);
+  const [earningsPosition, setEarningsPosition] = useState<StatsPosition | null>(
+    null,
+  );
+  const earningsChanges = useRef(0);
+  const [earningsChangeCount, setEarningsChangeCount] = useState(0);
   const [drawings, setDrawings] = useState<DrawingShape[]>([]);
   const [activeDrawingTool, setActiveDrawingTool] =
     useState<DrawingTool>('cursor');
@@ -168,6 +195,15 @@ function App() {
             setStatsChangeCount(statsChanges.current);
             setStatsPosition(p);
           }}
+          earningsEnabled={earningsEnabled}
+          earningsResults={earningsHasData ? EARNINGS : []}
+          earningsFreeFloatPercent={45}
+          earningsPosition={earningsPosition}
+          onEarningsPositionChange={(p) => {
+            earningsChanges.current += 1;
+            setEarningsChangeCount(earningsChanges.current);
+            setEarningsPosition(p);
+          }}
         >
           <ScaleProbe />
         </Chart>
@@ -189,6 +225,30 @@ function App() {
         <span data-testid="ctxFireCount">{ctxFireCount}</span>
         <span data-testid="statsPosition">{JSON.stringify(statsPosition)}</span>
         <span data-testid="statsChangeCount">{statsChangeCount}</span>
+        <span data-testid="earningsPosition">
+          {JSON.stringify(earningsPosition)}
+        </span>
+        <span data-testid="earningsChangeCount">{earningsChangeCount}</span>
+        <button
+          data-testid="earnings-data"
+          onClick={() => setEarningsHasData((v) => !v)}
+        >
+          toggle-feed
+        </button>
+        {/* Real ChartControls so a spec drives the actual "Earnings" toggle
+            button (which lives in ChartControls, not the fixture). */}
+        <ChartControls
+          chartType="candlestick"
+          onChartTypeChange={() => {}}
+          indicators={indicators}
+          onIndicatorsChange={setIndicators}
+          patternsEnabled={false}
+          onPatternsToggle={() => {}}
+          statsEnabled={statsEnabled}
+          onStatsToggle={() => setStatsEnabled((v) => !v)}
+          earningsEnabled={earningsEnabled}
+          onEarningsToggle={() => setEarningsEnabled((v) => !v)}
+        />
         <div>
           <button
             data-testid="stats-toggle"

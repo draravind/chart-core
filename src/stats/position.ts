@@ -73,11 +73,26 @@ export function anchorFromDrop(
   };
 }
 
-/** Default placement: top-right, 8px inset. A plain constant — the price-axis
+/** A corner anchor from an explicit (ax, ay) edge fraction + fixed px offset.
+ * Each corner-pinned box picks its own home corner through this — the price-axis
  * gutter now lives outside the pane rect, so nothing size-dependent is needed.
  * Local only, never persisted. */
+export function defaultPanelPosition(
+  ax: number,
+  ay: number,
+  dx: number,
+  dy: number,
+): StatsPosition {
+  return { v: 2, ax, ay, dx, dy };
+}
+
+/** Default placement for the Price-Stats box: bottom-right, 8px inset (right
+ * edge, 8px up from the bottom). Moved from the old top-right so the Earnings
+ * box can take the top-right corner; the two then stack on the right edge
+ * without overlapping. Applies only when nothing was ever dragged (stored
+ * position null). */
 export function defaultStatsPosition(): StatsPosition {
-  return { v: 2, ax: 1, ay: 0, dx: -8, dy: 8 };
+  return defaultPanelPosition(1, 1, -8, -8);
 }
 
 /** Read-tolerance on the untrusted persisted prop, mirroring `normalizeDrawing`.

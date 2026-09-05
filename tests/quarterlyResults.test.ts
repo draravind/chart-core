@@ -9,6 +9,7 @@ import type { HitRegionSpec } from '../src/indicators/hitRegions';
 import {
   quarterlyResultsDef,
   computeYoYGrowth,
+  yearAgoIndex,
   filterColumnsBySpacing,
   type QuarterlyResultsSettings,
   type QrRow,
@@ -125,6 +126,36 @@ describe('computeYoYGrowth', () => {
       { label: 'cur', date: cur, eps: 1 },
     ];
     expect(computeYoYGrowth(rows, 'eps')[1]).toBeCloseTo(150, 6);
+  });
+});
+
+describe('yearAgoIndex', () => {
+  // Pure extraction from computeYoYGrowth's inner loop — the ±40-day match to the
+  // row ~one year back. Feeds both the growth % and the earnings box's year-ago
+  // levels, so a single source keeps them agreeing.
+  const YEAR = 365 * DAY;
+  const T = new Date('2025-06-15').getTime();
+
+  it('an exact 365-day-back row matches', () => {
+    const times = [T - YEAR, T];
+    expect(yearAgoIndex(times, 1)).toBe(0);
+  });
+
+  it('40 days off the year-ago target is inside tolerance; 41 is not', () => {
+    const inside = [T - YEAR + 40 * DAY, T];
+    const outside = [T - YEAR + 41 * DAY, T];
+    expect(yearAgoIndex(inside, 1)).toBe(0);
+    expect(yearAgoIndex(outside, 1)).toBe(-1);
+  });
+
+  it('the nearer of two in-tolerance candidates wins', () => {
+    // Target is T − 365d. Candidate 0 is 15d off, candidate 1 is 5d off.
+    const times = [T - YEAR - 15 * DAY, T - YEAR + 5 * DAY, T];
+    expect(yearAgoIndex(times, 2)).toBe(1);
+  });
+
+  it('no row within tolerance → -1', () => {
+    expect(yearAgoIndex([T], 0)).toBe(-1);
   });
 });
 

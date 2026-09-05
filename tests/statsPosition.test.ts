@@ -4,6 +4,7 @@ import {
   clampStatsToPane,
   anchorFromDrop,
   defaultStatsPosition,
+  defaultPanelPosition,
   normalizeStatsPosition,
   migrateLegacy,
 } from '../src/stats/position';
@@ -178,17 +179,37 @@ describe('clampStatsToPane', () => {
   });
 });
 
-describe('defaultStatsPosition', () => {
-  it('is the fixed top-right anchor', () => {
-    expect(defaultStatsPosition()).toEqual({ v: 2, ax: 1, ay: 0, dx: -8, dy: 8 });
+describe('defaultPanelPosition', () => {
+  it('returns the literal anchor it is given', () => {
+    expect(defaultPanelPosition(1, 0, -8, 8)).toEqual({ v: 2, ax: 1, ay: 0, dx: -8, dy: 8 });
+    expect(defaultPanelPosition(0, 1, 4, -4)).toEqual({ v: 2, ax: 0, ay: 1, dx: 4, dy: -4 });
   });
 
-  it('resolves to an 8px inset from the top-right at two widths', () => {
+  it('the earnings (top-right) and stats (bottom-right) defaults resolve to different pixels', () => {
+    // The regression this guards is the two boxes landing on top of each other:
+    // both are right-anchored, but the earnings box sits at the top and the stats
+    // box at the bottom, so their resolved top differs by the pane's height.
+    const p = pane();
+    const earnings = resolveStatsPosition(defaultPanelPosition(1, 0, -8, 8), p, PW, PH);
+    const stats = resolveStatsPosition(defaultStatsPosition(), p, PW, PH);
+    expect(earnings.left).toBe(stats.left); // same right edge
+    expect(earnings.top).not.toBe(stats.top); // different vertical corner
+    expect(earnings.top).toBe(8); // top-right, 8px down
+    expect(stats.top).toBe(p.height - PH - 8); // bottom-right, 8px up
+  });
+});
+
+describe('defaultStatsPosition', () => {
+  it('is the fixed bottom-right anchor', () => {
+    expect(defaultStatsPosition()).toEqual({ v: 2, ax: 1, ay: 1, dx: -8, dy: -8 });
+  });
+
+  it('resolves to an 8px inset from the bottom-right at two widths', () => {
     for (const width of [1200, 900]) {
       const p = pane({ width });
       const { left, top } = resolveStatsPosition(defaultStatsPosition(), p, PW, PH);
       expect(width - (left + PW)).toBe(8);
-      expect(top).toBe(8);
+      expect(p.height - (top + PH)).toBe(8);
     }
   });
 });

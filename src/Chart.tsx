@@ -40,6 +40,8 @@ import SettingsDialog from './controls/SettingsDialog';
 import AutoFitMenu from './controls/AutoFitMenu';
 import StatsPanel from './stats/StatsPanel';
 import { computeStats } from './stats/computeStats';
+import EarningsPanel from './earnings/EarningsPanel';
+import { computeEarnings } from './earnings/computeEarnings';
 import type {
   StatsMarket,
   StatsPosition,
@@ -234,6 +236,19 @@ type Props = {
   statsPosition?: StatsPosition | LegacyStatsPosition | null;
   onStatsPositionChange?: (p: StatsPosition) => void;
   statsSize?: StatsSize;
+  // Corner-pinned "Quarterly Earnings" table — the last six reported quarters
+  // (EPS/revenue/margin + YoY + a score dot). Standalone toggle (not an
+  // indicator), a sibling of the Price-Stats box; the app wires both
+  // `earningsEnabled` here and the "Earnings" pill on ChartControls. Reuses the
+  // `quarterlyResults` feed (now carrying `npm`) and the published free-float %.
+  earningsEnabled?: boolean;
+  earningsResults?: QuarterlyResult[];
+  earningsFreeFloatPercent?: number;
+  // Persisted placement — a v:2 anchor against the price pane, or null for the
+  // default top-right placement. A brand-new preference key, so (unlike the stats
+  // box) there is no legacy {x,y} shape to migrate.
+  earningsPosition?: StatsPosition | null;
+  onEarningsPositionChange?: (p: StatsPosition) => void;
   // User-editable chart appearance — a sparse `AppearanceOverrides` delta the
   // app persists via `onAppearanceChange` (same controlled-prop + sparse-delta
   // contract as `indicators`/`onIndicatorsChange`). Absent ⇒ baked defaults.
@@ -444,6 +459,11 @@ const Chart = ({
   statsPosition = null,
   onStatsPositionChange,
   statsSize = 'small',
+  earningsEnabled,
+  earningsResults,
+  earningsFreeFloatPercent,
+  earningsPosition = null,
+  onEarningsPositionChange,
   appearance,
   onAppearanceChange,
   drawings,
@@ -806,6 +826,14 @@ const Chart = ({
       measuredBarsPerYear,
     );
   }, [data, warmupSeed, statsTable, statsMarket, measuredBarsPerYear]);
+
+  // Earnings-box view-model — the last six quarters baked into a corner table.
+  // Independent of the price bars (it reads only the quarterly feed + free-float),
+  // so it does not use `warmupSeed`/`measuredBarsPerYear`.
+  const earningsModel = useMemo(
+    () => computeEarnings(earningsResults, earningsFreeFloatPercent),
+    [earningsResults, earningsFreeFloatPercent],
+  );
 
   // Everything the canvas redraw needs that is NOT a live scale field. Rebuilt
   // in Effect B (after the y-scale exists); the pan path reuses it with only a
@@ -1184,6 +1212,13 @@ const Chart = ({
     () => normalizeStatsPosition(statsPosition),
     [statsPosition],
   );
+
+  // Same read-tolerance for the earnings box, but its key is new so there is no
+  // legacy {x,y} shape: keep only a v:2 anchor, else the default (null).
+  const normalizedEarningsPosition = useMemo(() => {
+    const p = normalizeStatsPosition(earningsPosition);
+    return p && 'v' in p ? p : null;
+  }, [earningsPosition]);
 
   // ProjScale snapshot from the live scale api (read on every pointer event).
   const buildProjScale = useCallback(
@@ -1707,7 +1742,7 @@ const Chart = ({
       const t = e.target as Element | null;
       if (
         t?.closest?.(
-          '[data-chart-native-menu],[data-chart-legend],[data-chart-stats]',
+          '[data-chart-native-menu],[data-chart-legend],[data-chart-stats],[data-chart-earnings]',
         )
       )
         return; // chrome that owns its own right-click
@@ -3490,7 +3525,9 @@ const Chart = ({
         if (
           rt &&
           typeof rt.closest === 'function' &&
-          (rt.closest('[data-chart-legend]') || rt.closest('[data-chart-stats]'))
+          (rt.closest('[data-chart-legend]') ||
+            rt.closest('[data-chart-stats]') ||
+            rt.closest('[data-chart-earnings]'))
         ) {
           crosshairVRef.current?.style('visibility', 'hidden');
           crosshairHRef.current?.style('visibility', 'hidden');
@@ -3613,6 +3650,20 @@ const Chart = ({
               }}
               position={normalizedStatsPosition}
               onPositionChange={onStatsPositionChange}
+            />
+          )}
+          {layout != null && earningsEnabled && earningsModel && dataLength > 0 && (
+            <EarningsPanel
+              model={earningsModel}
+              size={statsSize}
+              pane={{
+                left: MARGIN.left,
+                top: MARGIN.top,
+                width: layout.width,
+                height: layout.priceHeight,
+              }}
+              position={normalizedEarningsPosition}
+              onPositionChange={onEarningsPositionChange}
             />
           )}
           {priceBottomPx > 0 && (

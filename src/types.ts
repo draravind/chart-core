@@ -32,6 +32,7 @@ export type QuarterlyResult = {
   date: string; // 'YYYY-MM-DD' period end
   eps?: number; // earnings per share, ccy/share
   rps?: number; // revenue per share, ccy/share
+  npm?: number; // net profit margin % (net profit ÷ revenue × 100)
 };
 
 export type ChartType = 'candlestick' | 'bar';

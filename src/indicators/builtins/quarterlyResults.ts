@@ -57,6 +57,27 @@ const growthText = (g: number): string =>
   `${g >= 0 ? '+' : ''}${g.toFixed(1)}%`;
 
 /**
+ * Index of the row nearest (times[i] − 1 year) within ±40 days, or −1 if none
+ * falls inside the tolerance. `times` are epoch-ms of rows pre-sorted ascending
+ * by date. The single source of the year-ago match — both `computeYoYGrowth`
+ * (for its growth %) and the earnings box (for the year-ago LEVEL) call it, so
+ * the two never disagree on which quarter is "a year ago".
+ */
+export function yearAgoIndex(times: readonly number[], i: number): number {
+  const target = times[i] - YEAR_MS;
+  let bestIdx = -1;
+  let bestDiff = Infinity;
+  for (let j = 0; j < times.length; j++) {
+    const diffDays = Math.abs(times[j] - target) / DAY_MS;
+    if (diffDays <= YOY_TOLERANCE_DAYS && diffDays < bestDiff) {
+      bestDiff = diffDays;
+      bestIdx = j;
+    }
+  }
+  return bestIdx;
+}
+
+/**
  * YoY growth % per row for one field. `rows` pre-sorted ascending by date. For
  * each row find the row nearest (row.date − 1 year) within ±40 days; growth =
  * (cur − base) / |base| × 100 (|base| so a negative-EPS base signs improvement
@@ -74,16 +95,7 @@ export function computeYoYGrowth(
   for (let i = 0; i < n; i++) {
     const cur = rows[i][field];
     if (cur == null || !Number.isFinite(cur)) continue;
-    const target = times[i] - YEAR_MS;
-    let bestIdx = -1;
-    let bestDiff = Infinity;
-    for (let j = 0; j < n; j++) {
-      const diffDays = Math.abs(times[j] - target) / DAY_MS;
-      if (diffDays <= YOY_TOLERANCE_DAYS && diffDays < bestDiff) {
-        bestDiff = diffDays;
-        bestIdx = j;
-      }
-    }
+    const bestIdx = yearAgoIndex(times, i);
     if (bestIdx < 0) continue;
     const base = rows[bestIdx][field];
     if (base == null || !Number.isFinite(base) || base === 0) continue;

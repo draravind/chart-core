@@ -155,7 +155,7 @@ test('dragging toward the price axis stops at the pane edge and saves the stoppe
 
 test('panel growth re-resolves a right-anchored box (gap unchanged)', async ({ page }) => {
   await enableStats(page);
-  // Default placement is top-right (ax:1) — no drag needed.
+  // Default placement is bottom-right (ax:1) — right-anchored, no drag needed.
   const before = await rightGap(page);
   await page.getByTestId('toggle-size').click(); // small → large
   await settle(page);
@@ -203,8 +203,9 @@ test('an unparseable stored value falls back to the default and is never overwri
   await enableStats(page);
   await page.getByTestId('seed-bad').click(); // { x: 'a' }
   await settle(page);
-  // Default top-right placement (8px inset), unchanged change count.
+  // Default bottom-right placement (8px inset on both edges), unchanged change count.
   expect(Math.abs((await rightGap(page)) - 8)).toBeLessThanOrEqual(1.5);
+  expect(Math.abs((await bottomGap(page)) - 8)).toBeLessThanOrEqual(1.5);
   await page.getByTestId('shrink-width').click();
   await settle(page);
   expect(await num(page, 'statsChangeCount')).toBe(0);

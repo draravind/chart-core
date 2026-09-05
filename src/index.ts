@@ -35,6 +35,11 @@ export type {
   StatsSize,
 } from './stats/types';
 export { normalizeStatsPosition } from './stats/position';
+export type {
+  EarningsCell,
+  EarningsRow,
+  EarningsViewModel,
+} from './earnings/types';
 
 // Date <-> bar-index helpers. Trade/trigger overlay hooks need these to map
 // between a calendar date and a positional bar index; exported here so

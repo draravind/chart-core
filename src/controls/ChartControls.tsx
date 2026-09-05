@@ -53,6 +53,11 @@ type Props = {
   // Price-stats panel — like Patterns, a standalone toggle (not an indicator).
   statsEnabled: boolean;
   onStatsToggle: () => void;
+  // Quarterly-earnings box — a second standalone toggle (a sibling of Stats).
+  // Both optional: a consumer that passes neither renders exactly as before, and
+  // the "Earnings" button shows only when `onEarningsToggle` is supplied.
+  earningsEnabled?: boolean;
+  onEarningsToggle?: () => void;
   // Drawing tools — `activeDrawingTool` is host-held ephemeral state passed to
   // BOTH this control (renders the dropdown) and Chart (drives interaction), like
   // the patterns pair. The dropdown only renders when `onActiveDrawingToolChange`
@@ -95,6 +100,8 @@ export default function ChartControls({
   onVisiblePatternsChange,
   statsEnabled,
   onStatsToggle,
+  earningsEnabled,
+  onEarningsToggle,
   activeDrawingTool = 'cursor',
   onActiveDrawingToolChange,
   hasDrawings,
@@ -334,6 +341,18 @@ export default function ChartControls({
         >
           Stats
         </button>
+        {onEarningsToggle && (
+          <button
+            className={cn(
+              'pill-toggle-btn',
+              'pill-toggle-btn-sm',
+              earningsEnabled && 'is-active',
+            )}
+            onClick={onEarningsToggle}
+          >
+            Earnings
+          </button>
+        )}
       </div>
     </div>
   );
