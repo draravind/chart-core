@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import type { Candle } from '../src/types';
-import { computeRulerStats } from '../src/drawings/rulerStats';
+import { computeRulerStats, directionFill } from '../src/drawings/rulerStats';
+import { DRAWING_DEFAULTS } from '../src/drawings/defaults';
 
 function makeData(n: number): Candle[] {
   const out: Candle[] = [];
@@ -87,5 +88,82 @@ describe('computeRulerStats', () => {
       data,
     );
     expect(r.bars).toBe(5);
+  });
+
+  it('reports whole calendar days between two consecutive-day anchors', () => {
+    // 2024-02-03 → 2024-02-08 is exactly 5 calendar days.
+    const r = computeRulerStats(
+      { date: data[2].date, price: 100 },
+      { date: data[7].date, price: 120 },
+      data,
+    );
+    expect(r.calendarDays).toBe(5);
+  });
+
+  it('gives the same calendar-day magnitude when the anchor order is reversed', () => {
+    const r = computeRulerStats(
+      { date: data[7].date, price: 120 },
+      { date: data[2].date, price: 100 },
+      data,
+    );
+    expect(r.calendarDays).toBe(5);
+  });
+
+  it('counts whole calendar days to a synthesized future date', () => {
+    // Real 2024-02-10 → synthesized 2024-02-15 is 5 calendar days.
+    const r = computeRulerStats(
+      { date: data[9].date, price: 100 },
+      { date: '2024-02-15', price: 110 },
+      data,
+    );
+    expect(r.calendarDays).toBe(5);
+  });
+
+  it('sums volume inclusive of BOTH endpoint bars', () => {
+    // Indices 2↔7 span 5 bars but TOUCH 6 candles (1000 volume each) → 6000.
+    const r = computeRulerStats(
+      { date: data[2].date, price: 100 },
+      { date: data[7].date, price: 120 },
+      data,
+    );
+    expect(r.bars).toBe(5);
+    expect(r.volume).toBe(6000);
+  });
+
+  it('contributes zero volume when the end is before the first bar', () => {
+    const r = computeRulerStats(
+      { date: '1999-01-01', price: 100 },
+      { date: data[3].date, price: 110 },
+      data,
+    );
+    expect(r.volume).toBe(0);
+  });
+
+  it('sums only real bars when the end is in future space', () => {
+    // Index 9 → future 2024-02-15: clamp to [9, 11] → 3 candles → 3000.
+    const r = computeRulerStats(
+      { date: data[9].date, price: 100 },
+      { date: '2024-02-15', price: 110 },
+      data,
+    );
+    expect(r.volume).toBe(3000);
+  });
+});
+
+describe('directionFill', () => {
+  const resolve = (expr: string) => expr; // identity resolver
+
+  it('uses an explicit style.color override regardless of direction', () => {
+    expect(directionFill({ direction: 'up' }, { color: '#abcdef' }, resolve)).toBe('#abcdef');
+    expect(directionFill({ direction: 'down' }, { color: '#abcdef' }, resolve)).toBe('#abcdef');
+  });
+
+  it('returns the positive / negative token by direction when no override', () => {
+    expect(directionFill({ direction: 'up' }, undefined, resolve)).toBe('var(--chart-positive)');
+    expect(directionFill({ direction: 'down' }, undefined, resolve)).toBe('var(--chart-negative)');
+  });
+
+  it('falls back to the drawing default when flat', () => {
+    expect(directionFill({ direction: 'flat' }, undefined, resolve)).toBe(DRAWING_DEFAULTS.color);
   });
 });

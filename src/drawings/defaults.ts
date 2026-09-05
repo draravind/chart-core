@@ -13,6 +13,7 @@ export const DRAWING_DEFAULTS = {
   fontSize: 12,
   bgColor: 'var(--chart-drawing-bg)',
   bgOpacity: 0.85,
+  boxWidth: 180,
 } as const;
 
 export type EffectiveDrawingStyle = {
@@ -24,6 +25,7 @@ export type EffectiveDrawingStyle = {
   fontSize: number;
   bgColor: string;
   bgOpacity: number;
+  boxWidth: number;
 };
 
 // Pure sparse merge: defaults ← (optional) per-shape overrides. Never mutates the
@@ -38,5 +40,6 @@ export function effectiveDrawingStyle(style?: DrawingStyle): EffectiveDrawingSty
     fontSize: style?.fontSize ?? DRAWING_DEFAULTS.fontSize,
     bgColor: style?.bgColor ?? DRAWING_DEFAULTS.bgColor,
     bgOpacity: style?.bgOpacity ?? DRAWING_DEFAULTS.bgOpacity,
+    boxWidth: style?.boxWidth ?? DRAWING_DEFAULTS.boxWidth,
   };
 }

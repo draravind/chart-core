@@ -8,8 +8,8 @@ export type DrawingAnchor = { date: string; price: number };
 
 // Per-shape style overrides. All optional — `effectiveDrawingStyle` fills the
 // gaps from `DRAWING_DEFAULTS`. `style`: 0 solid | 1 dashed | 2 dotted (matches
-// the indicator `LINE_STYLE_OPTIONS` encoding). The text* fields apply only to
-// text drawings.
+// the indicator `LINE_STYLE_OPTIONS` encoding). The text*/boxWidth fields apply
+// only to text drawings.
 export type DrawingStyle = {
   color?: string;
   width?: number;
@@ -19,6 +19,8 @@ export type DrawingStyle = {
   fontSize?: number;
   bgColor?: string;
   bgOpacity?: number;
+  // Fixed on-chart width (px) a text box wraps within; height grows with lines.
+  boxWidth?: number;
 };
 
 // `v` is an optional version tag for forward-compatible read-tolerance. New

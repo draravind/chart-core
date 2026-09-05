@@ -4,7 +4,8 @@ import type { Candle } from '../types';
 import type { DrawingAnchor, DrawingShape } from './types';
 import { buildDrawing, clicksFor, type DraftState } from './interaction';
 import type { Hit } from './hitTest';
-import type { ProjScale } from './projection';
+import { projectAnchor, type ProjScale } from './projection';
+import { computeRulerStats, directionFill } from './rulerStats';
 import { drawDrawing, type DrawLayers, type DrawnHit } from './renderers';
 
 // Mirrors `mountChartPatternOverlay`: a D3 handle `Chart` mounts once and drives
@@ -29,6 +30,7 @@ export type DrawingOverlayCtx = DrawingScaleCtx & {
   draft: DraftState;
   draftPointer: DrawingAnchor | null;
   selectedId: string | null;
+  editingId: string | null;
   marginTop: number;
   resolveColor: (expr: string) => string;
 };
@@ -44,6 +46,53 @@ export type ChartDrawingOverlayHandle = {
 };
 
 type HitEntry = { id: string; locked: boolean; hit: DrawnHit };
+
+type LabelSel = d3.Selection<SVGGElement, unknown, null, undefined>;
+
+// Cursor-following Δprice / Δ% chip painted while a two-click tool is placing.
+// Numbers come from `computeRulerStats` (the exact Δ the second click commits,
+// since the pointer x is already bar-snapped upstream); direction colour matches
+// the ruler chip.
+function drawPlacingChip(
+  labelG: LabelSel,
+  anchor: DrawingAnchor,
+  pointer: DrawingAnchor,
+  s: ProjScale,
+  resolveColor: (expr: string) => string,
+): void {
+  const stats = computeRulerStats(anchor, pointer, s.data);
+  const fill = directionFill(stats, undefined, resolveColor);
+  const sign = stats.priceDelta >= 0 ? '+' : '';
+  const label = `${sign}${stats.priceDelta.toFixed(2)}  (${sign}${stats.pricePct.toFixed(2)}%)`;
+  const p = projectAnchor(pointer, s);
+  const padX = 6;
+  const padY = 4;
+  const fontH = 12;
+
+  const chip = labelG
+    .append('g')
+    .attr('transform', `translate(${p.x + 12},${p.y - fontH - 2 * padY - 6})`)
+    .style('pointer-events', 'none');
+  const text = chip
+    .append('text')
+    .attr('x', padX)
+    .attr('y', padY)
+    .attr('dominant-baseline', 'hanging')
+    .style('font-size', 'var(--text-3xs)')
+    .style('font-weight', 'var(--font-weight-semibold)')
+    .attr('fill', resolveColor('var(--chart-drawing-label-text)'))
+    .text(label);
+  const tw = text.node()?.getBBox().width ?? label.length * 6;
+  chip
+    .insert('rect', 'text')
+    .attr('x', 0)
+    .attr('y', 0)
+    .attr('width', tw + 2 * padX)
+    .attr('height', fontH + 2 * padY)
+    .attr('rx', 3)
+    .attr('fill', fill)
+    .attr('fill-opacity', 0.85);
+}
 
 export function mountChartDrawingOverlay(
   parent: SVGGElement,
@@ -121,6 +170,7 @@ export function mountChartDrawingOverlay(
         s,
         resolveColor: ctx.resolveColor,
         selected: shape.id === ctx.selectedId,
+        editingId: ctx.editingId,
       });
       hitEntries.push({ id: shape.id, locked: shape.locked === true, hit });
     }
@@ -135,7 +185,16 @@ export function mountChartDrawingOverlay(
         s,
         resolveColor: ctx.resolveColor,
         selected: false,
+        editingId: ctx.editingId,
       });
+
+      // Live feedback chip: signed Δprice + Δ% from the first anchor to the
+      // cursor, near the cursor, coloured by direction (green up / red down) —
+      // the same math the ruler chip uses. Only the two-click tools have a
+      // first anchor to measure from.
+      if (ctx.draft.anchors.length >= 1) {
+        drawPlacingChip(labelG, ctx.draft.anchors[0], ctx.draftPointer, s, ctx.resolveColor);
+      }
     }
   };
 

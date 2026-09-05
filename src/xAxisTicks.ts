@@ -67,6 +67,17 @@ export function labelForTick(
 }
 
 /**
+ * Crosshair date-pill text, mirroring TradingView's "DD Mon 'YY" (e.g.
+ * 2026-06-22 → "22 Jun '26"). Reads the ISO string's prefixes, not `new Date()`,
+ * to avoid the timezone skew this file documents.
+ */
+export function formatCrosshairDate(iso: string): string {
+  const day = +iso.slice(8, 10);
+  const month = MONTH_ABBR[+iso.slice(5, 7) - 1] ?? '';
+  return `${day} ${month} '${iso.slice(2, 4)}`;
+}
+
+/**
  * Choose x-axis ticks as indices into the bar series. `dateAt(i)` yields the
  * i-th bar's date string; ticks are scanned over [from, to); `step` is pixels
  * per bar and `minGapPx` the closest two labels may sit.

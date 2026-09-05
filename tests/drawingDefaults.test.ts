@@ -12,6 +12,16 @@ describe('effectiveDrawingStyle', () => {
     expect(eff.fontSize).toBe(DRAWING_DEFAULTS.fontSize);
     expect(eff.bgColor).toBe(DRAWING_DEFAULTS.bgColor);
     expect(eff.bgOpacity).toBe(DRAWING_DEFAULTS.bgOpacity);
+    expect(eff.boxWidth).toBe(DRAWING_DEFAULTS.boxWidth);
+  });
+
+  it('carries a default box width, overridable sparsely', () => {
+    expect(typeof DRAWING_DEFAULTS.boxWidth).toBe('number');
+    const eff = effectiveDrawingStyle({ boxWidth: 260 });
+    expect(eff.boxWidth).toBe(260);
+    // other fields untouched
+    expect(eff.fontSize).toBe(DRAWING_DEFAULTS.fontSize);
+    expect(eff.color).toBe(DRAWING_DEFAULTS.color);
   });
 
   it('merges sparse overrides over defaults without mutating the input', () => {
@@ -62,5 +72,23 @@ describe('normalizeDrawing read-tolerance', () => {
   it('round-trips an unknown type rather than crashing', () => {
     const future = { id: 'z', type: 'fibonacci', levels: [0, 0.5, 1] };
     expect(normalizeDrawing(future)).toBe(future);
+  });
+
+  it('round-trips a text shape with and without a boxWidth override', () => {
+    const withWidth = {
+      id: 't1',
+      type: 'text',
+      a: { date: '2024-01-01', price: 5 },
+      style: { text: 'hi', boxWidth: 240 },
+    };
+    const withoutWidth = {
+      id: 't2',
+      type: 'text',
+      a: { date: '2024-01-01', price: 5 },
+      style: { text: 'hi' },
+    };
+    // Older payloads have neither field — read-tolerance keeps both.
+    expect(normalizeDrawing(withWidth)).toBe(withWidth);
+    expect(normalizeDrawing(withoutWidth)).toBe(withoutWidth);
   });
 });

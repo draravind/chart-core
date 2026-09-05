@@ -1,5 +1,20 @@
 import { describe, it, expect } from 'vitest';
-import { chooseTimeTicks, labelForTick } from '../src/xAxisTicks';
+import { chooseTimeTicks, formatCrosshairDate, labelForTick } from '../src/xAxisTicks';
+
+describe('formatCrosshairDate', () => {
+  it("formats a normal date as DD Mon 'YY", () => {
+    expect(formatCrosshairDate('2026-06-22')).toBe("22 Jun '26");
+  });
+
+  it('drops the leading zero on a single-digit day', () => {
+    expect(formatCrosshairDate('2026-06-05')).toBe("5 Jun '26");
+  });
+
+  it('maps the month-index boundaries (Jan / Dec, no off-by-one)', () => {
+    expect(formatCrosshairDate('2026-01-15')).toBe("15 Jan '26");
+    expect(formatCrosshairDate('2026-12-15')).toBe("15 Dec '26");
+  });
+});
 
 // Generate `count` weekday (Mon–Fri) 'YYYY-MM-DD' dates ending ON `endISO`,
 // ascending — ~21 bars a month, like real daily NSE data.

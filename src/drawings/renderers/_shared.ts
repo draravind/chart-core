@@ -17,6 +17,10 @@ export type DrawCtx = {
   s: ProjScale;
   resolveColor: (expr: string) => string;
   selected: boolean;
+  // Id of the text shape currently open in the on-canvas editor. Only `text.ts`
+  // reads it (to skip its SVG body while the HTML editor owns the pixels); the
+  // other renderers ignore it.
+  editingId?: string | null;
 };
 
 // A renderer returns a hit closure: `(mx, my, tx)` are viewport coords + the live

@@ -80,7 +80,7 @@ import {
   type PointerMap,
 } from './gestures/pointerReducer';
 import { resolveChartSizing } from './chartSizing';
-import { chooseTimeTicks } from './xAxisTicks';
+import { chooseTimeTicks, formatCrosshairDate } from './xAxisTicks';
 import { drawSeries } from './utils/drawSeries';
 import {
   createColorResolver,
@@ -99,7 +99,7 @@ import {
   mountChartDrawingOverlay,
   type ChartDrawingOverlayHandle,
 } from './drawings/mountChartDrawingOverlay';
-import type { DrawingShape, DrawingTool } from './drawings/types';
+import type { DrawingShape, DrawingTool, TextDrawing } from './drawings/types';
 import { normalizeDrawing } from './drawings/types';
 import {
   reduceDrawing,
@@ -116,6 +116,7 @@ import {
 import type { DrawingAnchor } from './drawings/types';
 import type { Hit } from './drawings/hitTest';
 import DrawingStylePopup from './drawings/DrawingStylePopup';
+import TextEditorOverlay from './drawings/TextEditorOverlay';
 import {
   createChartScaleApi,
   ChartScaleProvider,
@@ -125,6 +126,8 @@ import {
 } from './context';
 
 const MARGIN = { top: 4, right: 60, bottom: 30, left: 0 };
+// Width of the crosshair date pill in the time-axis gutter ("DD Mon 'YY").
+const CROSSHAIR_DATE_PILL_W = 72;
 // Canvas/SVG font family reaches draw code via the token (SVG `.style()` accepts
 // var(); canvas composes it through the probe — see composeCanvasFont).
 const FONT_FAMILY_VAR = 'var(--font-family-base)';
@@ -1133,6 +1136,9 @@ const Chart = ({
   const hideOverlaysRef = useRef<(() => void) | null>(null);
   const priceLabelGroupRef = useRef<Sel<SVGGElement> | null>(null);
   const priceLabelTextRef = useRef<Sel<SVGTextElement> | null>(null);
+  // Date pill on the time axis, mirroring the price pill on the right axis.
+  const dateLabelGroupRef = useRef<Sel<SVGGElement> | null>(null);
+  const dateLabelTextRef = useRef<Sel<SVGTextElement> | null>(null);
   const overlayRectRef = useRef<Sel<SVGRectElement> | null>(null);
   const yAxisHitRectRef = useRef<Sel<SVGRectElement> | null>(null);
   // Local-y boundary (in the y-axis hit rect's own coords) between the price
@@ -1183,6 +1189,13 @@ const Chart = ({
     selectedIdRef.current = id;
     setSelectedId(id);
   }, []);
+  // The text shape currently open in the on-canvas editor (null = none).
+  // Placing a text box or double-clicking one opens it; the SVG text renderer
+  // skips that shape's body while it's editing (the HTML <textarea> owns the
+  // pixels). A ref mirror lets the imperative render read it without rebinding.
+  const [editingTextId, setEditingTextId] = useState<string | null>(null);
+  const editingTextIdRef = useRef<string | null>(null);
+  editingTextIdRef.current = editingTextId;
   // Working copy held during a drag (mutated per frame for instant feedback);
   // null when idle. `onDrawingsChange` fires only on mouseup (one commit/gesture).
   // The in-flight drag bookkeeping (start pointer + grabbed shape) now lives on
@@ -1283,6 +1296,7 @@ const Chart = ({
       draft: draftRef.current,
       draftPointer: draftPointerRef.current,
       selectedId: selectedIdRef.current,
+      editingId: editingTextIdRef.current,
       xScale: scaleApi.xScale,
       yPrice: scaleApi.yPrice,
       step: scaleApi.step,
@@ -1342,11 +1356,11 @@ const Chart = ({
         // commit leaves `selectId` undefined and never reaches this path.
         justPlacedAtRef.current = performance.now();
         commitDrawing(res.commit);
-        // Text carve-out: a freshly placed text box opens its popup immediately
-        // so you can type. `DrawingStylePopup` focuses the field for an empty
-        // box. Every other tool places silently.
-        if (res.commit.type === 'text')
-          openCenterPanel({ kind: 'drawing', id: res.commit.id });
+        // Text carve-out: a freshly placed text box opens the on-canvas editor
+        // immediately so you can type in place. Every other tool places
+        // silently. (The dblclick guard above swallows the placement's own fast
+        // double-click, so the style popup does NOT also open here.)
+        if (res.commit.type === 'text') setEditingTextId(res.commit.id);
         if (activeToolRef.current !== 'cursor') {
           activeToolRef.current = 'cursor';
           onActiveDrawingToolChangeRef.current?.('cursor');
@@ -1359,7 +1373,6 @@ const Chart = ({
       selectDrawing,
       commitDrawing,
       renderDrawings,
-      openCenterPanel,
     ],
   );
 
@@ -1420,6 +1433,38 @@ const Chart = ({
         : null,
     [centerPanel, indicators],
   );
+
+  // The text shape open in the on-canvas editor, resolved BY ID against the live
+  // set — so a delete / symbol swap unmounts the editor on its own (mirrors
+  // `panelDrawing`).
+  const editingTextShape = useMemo<TextDrawing | null>(() => {
+    if (!editingTextId) return null;
+    const s = effectiveDrawings.find((d) => d.id === editingTextId);
+    return s && s.type === 'text' ? s : null;
+  }, [editingTextId, effectiveDrawings]);
+
+  // Commit the edited text (one write per edit) and close; empty → delete.
+  const commitEditorText = useCallback(
+    (text: string) => {
+      const shape = effectiveDrawingsRef.current.find(
+        (s) => s.id === editingTextIdRef.current,
+      );
+      if (shape && shape.type === 'text')
+        commitDrawing({ ...shape, style: { ...shape.style, text } });
+      setEditingTextId(null);
+    },
+    [commitDrawing],
+  );
+  const deleteEditingText = useCallback(() => {
+    const id = editingTextIdRef.current;
+    if (id) {
+      onDrawingsChangeRef.current?.(
+        effectiveDrawingsRef.current.filter((s) => s.id !== id),
+      );
+      if (selectedIdRef.current === id) selectDrawing(null);
+    }
+    setEditingTextId(null);
+  }, [selectDrawing]);
 
   // Drawing selection clears via the existing background-pointerdown fan-out
   // (only the pure-miss path runs it), matching overlay-plugin deselect.
@@ -2489,6 +2534,29 @@ const Chart = ({
       .style('font-weight', '500')
       .attr('fill', 'currentColor') as Sel<SVGTextElement>;
 
+    // Date pill on the time axis, built exactly like the price pill above so the
+    // two match. Wider rect for the "DD Mon 'YY" string; positioned per-frame in
+    // updateCrosshair (bottom gutter, centred on the crosshair x).
+    const dateLabelG = g.append('g').style('visibility', 'hidden');
+    dateLabelGroupRef.current = dateLabelG as Sel<SVGGElement>;
+    dateLabelG
+      .append('rect')
+      .attr('width', CROSSHAIR_DATE_PILL_W)
+      .attr('height', 18)
+      .attr('rx', 3)
+      .attr('fill', 'var(--bg-card)')
+      .attr('stroke', 'currentColor')
+      .attr('stroke-opacity', 0.2);
+    dateLabelTextRef.current = dateLabelG
+      .append('text')
+      .attr('x', CROSSHAIR_DATE_PILL_W / 2)
+      .attr('y', 13)
+      .attr('text-anchor', 'middle')
+      .style('font-size', 'var(--text-3xs)')
+      .style('font-family', FONT_FAMILY_VAR)
+      .style('font-weight', '500')
+      .attr('fill', 'currentColor') as Sel<SVGTextElement>;
+
     overlayRectRef.current = g
       .append('rect')
       .attr('fill', 'transparent') as Sel<SVGRectElement>;
@@ -2549,6 +2617,8 @@ const Chart = ({
       infoSpansRef.current = [];
       priceLabelGroupRef.current = null;
       priceLabelTextRef.current = null;
+      dateLabelGroupRef.current = null;
+      dateLabelTextRef.current = null;
       overlayRectRef.current = null;
       yAxisHitRectRef.current = null;
       priceClipRectRef.current = null;
@@ -3168,7 +3238,7 @@ const Chart = ({
   useEffect(() => {
     renderDrawings();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [effectiveDrawings, selectedId, layout, scaleApi, colorEpoch, renderDrawings]);
+  }, [effectiveDrawings, selectedId, editingTextId, layout, scaleApi, colorEpoch, renderDrawings]);
 
   // Re-apply crosshair styling (stroke / opacity / dash) from `app.crosshair`
   // whenever it changes. The crosshair lines are created once in Effect 1; SVG
@@ -3252,6 +3322,7 @@ const Chart = ({
       showLatestInfo();
       notifyHover(null);
       priceLabelGroupRef.current?.style('visibility', 'hidden');
+      dateLabelGroupRef.current?.style('visibility', 'hidden');
       patternOverlayHandleRef.current?.setPointer(null, null);
     };
     hideOverlaysRef.current = hideOverlays;
@@ -3278,46 +3349,54 @@ const Chart = ({
         .attr('y2', my)
         .style('visibility', 'visible');
 
+      // Vertical line: snap to the hovered bar centre when over a bar, else
+      // track the raw cursor x (edge / future space).
+      const slot = Math.floor(mx / step);
+      const onBar = slot >= 0 && slot < visibleBarsInt;
+      const realIdx = onBar ? visibleStartIdx + slot : -1;
+      const hasBar = realIdx >= 0 && realIdx < stateData.length;
+      const lineX = onBar ? slot * step + bandwidth / 2 : mx;
+      crosshairVRef
+        .current!.attr('x1', lineX)
+        .attr('x2', lineX)
+        .style('visibility', 'visible');
+
+      // OHLC readout + indicator legend track the hovered bar; off a bar, freeze
+      // on the latest candle (as before). Now live while a tool is armed too.
+      if (hasBar) {
+        renderInfoAt(realIdx);
+        notifyHover(realIdx);
+      } else {
+        showLatestInfo();
+        notifyHover(null);
+      }
+
+      // Price pill (right axis) + date pill (bottom gutter) appear and vanish
+      // together, both gated on the pointer being inside the price pane.
       if (my <= priceHeight && mx <= width) {
-        const priceAtMouse = yPrice.invert(my);
         priceLabelGroupRef
           .current!.attr('transform', `translate(${width + 2},${my - 9})`)
           .style('visibility', 'visible');
-        priceLabelTextRef.current!.text(fmtPriceRef.current(priceAtMouse));
+        priceLabelTextRef.current!.text(fmtPriceRef.current(yPrice.invert(my)));
+
+        // Over a bar: that bar's date. In the empty space right of the last
+        // candle: the synthesized future date `dateForX` maps the cursor to —
+        // the exact inverse the drawing placement uses, so it never blanks.
+        const dateStr = hasBar
+          ? stateData[realIdx].date
+          : dateForX(mx - scaleApi.baseTranslateX, buildProjScale());
+        const px = Math.max(
+          0,
+          Math.min(width - CROSSHAIR_DATE_PILL_W, lineX - CROSSHAIR_DATE_PILL_W / 2),
+        );
+        dateLabelGroupRef
+          .current!.attr('transform', `translate(${px},${priceHeight + 4})`)
+          .style('visibility', 'visible');
+        dateLabelTextRef.current!.text(formatCrosshairDate(dateStr));
       } else {
         priceLabelGroupRef.current!.style('visibility', 'hidden');
+        dateLabelGroupRef.current!.style('visibility', 'hidden');
       }
-
-      const slot = Math.floor(mx / step);
-      if (slot < 0 || slot >= visibleBarsInt) {
-        crosshairVRef
-          .current!.attr('x1', mx)
-          .attr('x2', mx)
-          .style('visibility', 'visible');
-        // Off the bar range (e.g. right of the latest bar): show the latest candle.
-        showLatestInfo();
-        notifyHover(null);
-        return;
-      }
-
-      const cx = slot * step + bandwidth / 2;
-      crosshairVRef
-        .current!.attr('x1', cx)
-        .attr('x2', cx)
-        .style('visibility', 'visible');
-
-      const realIdx = visibleStartIdx + slot;
-      if (realIdx < 0 || realIdx >= stateData.length) {
-        showLatestInfo();
-        notifyHover(null);
-        return;
-      }
-
-      renderInfoAt(realIdx);
-
-      // Publish the hovered bar; the React indicator legend reads each config's
-      // series at this index to show live values per row.
-      notifyHover(realIdx);
     };
     updateCrosshairRef.current = updateCrosshair;
 
@@ -3508,6 +3587,13 @@ const Chart = ({
       const [mx, my] = root ? d3.pointer(event, root.node()) : [0, 0];
       const panel = panelTargetAt(mx, my);
       if (panel) openCenterPanelRef.current(panel);
+      // A text box also opens the on-canvas editor for its text (the popup keeps
+      // colour / size / background / box width). Text is edited in place, never
+      // in the popup.
+      if (panel?.kind === 'drawing') {
+        const hit = effectiveDrawingsRef.current.find((s) => s.id === panel.id);
+        if (hit?.type === 'text') setEditingTextId(panel.id);
+      }
     });
 
     // pointermove + pointerleave bind to the SVG root so they keep firing while
@@ -3525,21 +3611,23 @@ const Chart = ({
         // Checked FIRST: a drag's draft phase is 'dragging' (not 'idle'), so the
         // tool/placement guard below would otherwise stomp the grabbing cursor.
         if (gestureRef.current.kind === 'drawingDrag') return;
-        // Drawing tool active or a placement in flight → crosshair cursor and no
-        // chart crosshair lines (the drawing layer owns the gesture).
-        if (activeToolRef.current !== 'cursor' || draftRef.current.phase !== 'idle') {
-          if (wrapper) wrapper.style.cursor = 'crosshair';
-          return;
-        }
         const root = rootGRef.current;
         if (!root) return;
         const [mx, my] = d3.pointer(event, root.node());
-        // Hover affordance, resolved through the SAME `panelTargetAt` the
-        // double-click uses, so a hand cursor always means "double-click edits
-        // this". A drawing keeps the open hand — it is also draggable here, and
-        // `grab` says both — while a candle or an indicator mark gets the
-        // pointing hand. Anything else restores the default chart cursor.
-        if (wrapper) {
+        // Drawing tool active or a placement in flight → force the crosshair
+        // cursor and SKIP the hover affordance (an armed tool passing over an
+        // existing drawing must not offer the open-hand `grab`), but keep the
+        // crosshair lines + axis tags LIVE so the anchor's exact level reads off
+        // the axes while you draw (matching TradingView). Cursor mode is
+        // untouched: it still runs the affordance path below.
+        if (activeToolRef.current !== 'cursor' || draftRef.current.phase !== 'idle') {
+          if (wrapper) wrapper.style.cursor = 'crosshair';
+        } else if (wrapper) {
+          // Hover affordance, resolved through the SAME `panelTargetAt` the
+          // double-click uses, so a hand cursor always means "double-click edits
+          // this". A drawing keeps the open hand — it is also draggable here, and
+          // `grab` says both — while a candle or an indicator mark gets the
+          // pointing hand. Anything else restores the default chart cursor.
           const panel = panelTargetAt(mx, my);
           wrapper.style.cursor = !panel
             ? ''
@@ -3572,11 +3660,13 @@ const Chart = ({
           (rt.closest('[data-chart-legend]') ||
             rt.closest('[data-chart-stats]') ||
             rt.closest('[data-chart-earnings]') ||
-            rt.closest('[data-chart-drawtoolbar]'))
+            rt.closest('[data-chart-drawtoolbar]') ||
+            rt.closest('[data-chart-texteditor]'))
         ) {
           crosshairVRef.current?.style('visibility', 'hidden');
           crosshairHRef.current?.style('visibility', 'hidden');
           priceLabelGroupRef.current?.style('visibility', 'hidden');
+          dateLabelGroupRef.current?.style('visibility', 'hidden');
           return;
         }
         crosshairLastPosRef.current = null;
@@ -3601,7 +3691,7 @@ const Chart = ({
         crosshairRafRef.current = null;
       }
     };
-  }, [scaleApi, placeAnchorAt, beginDragAt]);
+  }, [scaleApi, placeAnchorAt, beginDragAt, buildProjScale]);
 
   if (!data || data.length === 0) {
     return (
@@ -3906,6 +3996,22 @@ const Chart = ({
               }
               onClose={closeCenterPanel}
               className={styles.centeredPanel}
+            />
+          )}
+          {/* On-canvas text editor. Only when the host can persist edits. */}
+          {onDrawingsChange && editingTextShape && (
+            <TextEditorOverlay
+              key={editingTextShape.id}
+              shape={editingTextShape}
+              scaleApi={scaleApi}
+              buildProjScale={buildProjScale}
+              marginLeft={MARGIN.left}
+              marginTop={MARGIN.top}
+              resolveColor={(v) =>
+                colorResolverRef.current?.resolve(v) ?? FALLBACK_COLOR
+              }
+              onCommit={commitEditorText}
+              onDeleteEmpty={deleteEditingText}
             />
           )}
           {children}

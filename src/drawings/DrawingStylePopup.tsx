@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useRef } from 'react';
 import { Trash2 } from 'lucide-react';
 
 import type { DrawingShape, DrawingStyle } from './types';
@@ -50,22 +50,13 @@ export default function DrawingStylePopup({
   style,
 }: Props) {
   const ref = useRef<HTMLDivElement | null>(null);
-  const textRef = useRef<HTMLInputElement | null>(null);
   const eff = effectiveDrawingStyle(shape.style);
   const isText = shape.type === 'text';
 
-  // Uniform dismissal via the shared layer stack. The old `timeStamp` open-guard
-  // is gone: placing a TEXT box opens this popup from the placing press, but the
-  // stack's pointerdown listener runs in the CAPTURE phase — before React
-  // flushes that press into the mount — so the opening press has already
-  // dispatched by the time this layer registers and can never self-close it.
+  // Uniform dismissal via the shared layer stack. This popup now carries only
+  // colour / size / background / box-width for a text shape — the text itself is
+  // edited on-canvas — so it no longer opens from a placing press.
   useDismissable(true, onClose, [ref]);
-
-  // Focus the text field when a freshly-placed (empty) text box opens.
-  useEffect(() => {
-    if (isText && !shape.style?.text) textRef.current?.focus();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [shape.id]);
 
   const patch = (partial: Partial<DrawingStyle>) =>
     onChange({ ...shape, style: { ...shape.style, ...partial } });
@@ -74,9 +65,6 @@ export default function DrawingStylePopup({
     delete next[key];
     onChange({ ...shape, style: next });
   };
-
-  const [textDraft, setTextDraft] = useState(shape.style?.text ?? '');
-  useEffect(() => setTextDraft(shape.style?.text ?? ''), [shape.id, shape.style?.text]);
 
   return (
     <div
@@ -100,20 +88,6 @@ export default function DrawingStylePopup({
       <div className={chartStyles.panelScrollBody}>
         {isText ? (
           <>
-            <label className={chartStyles.legendPopoverField}>
-              <span>Text</span>
-              <input
-                ref={textRef}
-                type="text"
-                value={textDraft}
-                spellCheck={false}
-                autoComplete="off"
-                onChange={(e) => {
-                  setTextDraft(e.target.value);
-                  patch({ text: e.target.value });
-                }}
-              />
-            </label>
             <ColorField
               label="Text color"
               colorExpr={shape.style?.color ?? eff.color}
@@ -134,6 +108,19 @@ export default function DrawingStylePopup({
               }}
               value={eff.fontSize}
               onCommit={(v) => patch({ fontSize: v })}
+            />
+            <NumberField
+              spec={{
+                key: 'boxWidth',
+                label: 'Box width',
+                kind: 'number',
+                default: eff.boxWidth,
+                min: 80,
+                max: 600,
+                step: 1,
+              }}
+              value={eff.boxWidth}
+              onCommit={(v) => patch({ boxWidth: v })}
             />
             <ColorField
               label="Background"
