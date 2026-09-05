@@ -33,8 +33,10 @@ Public barrel — the only import surface for consumers (never deep-import). Re-
   `maxVisibleBarsForWidth`, `formatPrice`, `formatVolume`, `formatVolumeTick`,
   `computeVolumeStats`, types `RangeMark`, `VolumeLabel`, `VolumeStats`.
 - From `patterns/types`: `PatternMarker`.
-- From `stats/types`: `StatsTableData`, `StatsMarket`, `StatsPosition`, `StatsSize`
-  (the price-stats panel's public props; compute/component stay internal).
+- From `stats/types`: `StatsTableData`, `StatsMarket`, `StatsPosition`,
+  `LegacyStatsPosition`, `StatsPaneRect`, `StatsSize` (the price-stats panel's
+  public props; compute/component stay internal). Plus `normalizeStatsPosition`
+  (from `stats/position`) — read-tolerance on the persisted position.
 - From `utils/dateBarIndex`: `barIndexForDate`, `dateForBarIndex`.
 - `panButtonClass: string` — hashed CSS class of the reset-pan button (from
   `Chart.module.css`), re-exported so overlay plugins reuse the bundled styling.
@@ -740,8 +742,13 @@ Chart props. All shapes are `pointer-events:none`; hit detection is manual.
 - `StatsMarket` = `'India' | 'US'` — drives Mkt-Cap units/thresholds.
 - `StatsTableData` — app-supplied raw financials: `{sector?, industry?,
 sharesOutstanding?, freeFloatPercent?, eps?}` (all optional; absent → blanked).
-- `StatsPosition` = `{x, y}` — free-drag placement in pixels from the
-  chart-wrapper top-left. `null` prop → default top-right placement.
+- `StatsPosition` = `{v: 2, ax, ay, dx, dy}` — anchored placement in the main
+  price pane: `ax/ay ∈ {0,0.5,1}` (corner/edge fraction), `dx/dy` fixed px offset.
+  Re-resolved to pixels each render, so the box holds its corner on resize.
+- `LegacyStatsPosition` = `{x, y}` — the pre-anchor persisted shape (pixels from
+  frame top-left). Read + migrated once on load, never written.
+- `StatsPaneRect` = `{left, top, width, height}` — the price-pane rect (frame-space
+  px) the anchor is resolved against; Chart derives it from its `layout` memo.
 - `StatsSize` = `'tiny' | 'small' | 'normal' | 'large'` (default `'small'`).
 
 ### `src/stats/computeStats.ts`
@@ -762,19 +769,36 @@ sharesOutstanding?, freeFloatPercent?, eps?}` (all optional; absent → blanked)
 
 ### `src/stats/position.ts`
 
-- `clampStatsPosition(pos, hostW, hostH, panelW, panelH)` — keeps the panel fully
-  inside the host bounds (pins to 0 when the panel exceeds the host).
-- `defaultStatsPosition(hostW, panelW, marginRight)` — top-right placement, left
-  of the price-axis gutter: `{x: max(0, hostW − panelW − marginRight − 8), y: 8}`.
+Pure geometry over a price-pane rect (frame-space px), following the
+`classifyChartRegion` precedent (geometry passed in explicitly).
+- `resolveStatsPosition(pos, pane, panelW, panelH) → {left, top}` — anchor →
+  pixels: `left = pane.left + ax*(pane.width − panelW) + dx` (y-analogue).
+- `clampStatsToPane(left, top, pane, panelW, panelH) → {left, top}` — confine into
+  the pane (pins to `pane.left`/`pane.top`, not 0).
+- `anchorFromDrop(left, top, pane, panelW, panelH) → StatsPosition` — snap the
+  anchor from the box centre's fraction, back out the offset. **Input must be
+  clamped first** (anchoring an unclamped drop jumps the box on release).
+- `defaultStatsPosition() → StatsPosition` = `{v:2, ax:1, ay:0, dx:-8, dy:8}` —
+  plain constant, local only, never persisted.
+- `normalizeStatsPosition(raw) → StatsPosition | LegacyStatsPosition | null` —
+  read-tolerance on the untrusted persisted prop (mirrors `normalizeDrawing`).
+  Dispatches on `v`: 2 → require finite `ax/ay/dx/dy`; absent → legacy `{x,y}`;
+  any other `v` or non-object → null (caller renders the default). Called at the
+  Chart boundary.
+- `migrateLegacy(old, pane, panelW, panelH) → StatsPosition` — clamp the old
+  frame-space pixels into the pane, then `anchorFromDrop`.
 
 ### `src/stats/StatsPanel.tsx`
 
-- `StatsPanel` (default) — floating HTML table over `.chartWrapper`, free-draggable
-  (whole panel = drag handle, pointer capture; host stays `pointer-events:none`,
-  panel is `auto`). Props: `model`, `size`, `marginRight` (default-placement
-  gutter), `position: StatsPosition | null`, `onPositionChange?` (fired on drag
-  end with the clamped drop). Null position → measured default placement (local
-  only, never persisted); a ResizeObserver on host + panel re-clamps on resize.
+- `StatsPanel` (default) — floating HTML table over the frame, draggable within the
+  main price pane (whole panel = drag handle, pointer capture; host stays
+  `pointer-events:none`, panel is `auto`). Props: `model`, `size`, `pane:
+  StatsPaneRect` (from Chart's layout), `position: StatsPosition |
+  LegacyStatsPosition | null` (already normalised by Chart), `onPositionChange?`
+  (fired on pointerup with the anchored drop). Placement is re-resolved from the
+  anchor each render (holds its corner on resize); a ResizeObserver on the PANEL
+  only tracks its own size. A legacy value is migrated in render (correct first
+  paint) and backfilled once from an effect after measurement.
 - `src/stats/stats.module.css` — panel chrome (grab/grabbing cursors,
   `touch-action:none`) + 4 size presets + one color class per level (reads
   `--stats-*` tokens directly); panel geometry is inline `left`/`top`.
@@ -937,5 +961,6 @@ sharesOutstanding?, freeFloatPercent?, eps?}` (all optional; absent → blanked)
   - `toHex6.test.ts` — color-format normalization.
   - `stats.test.ts` — price-stats math: ATR parity + bands, short-history blank,
     fundamentals (FF%/PE/Mkt-Cap India·US), PE/guard edge cases, collapse.
-  - `statsPosition.test.ts` — stats-panel drag geometry: clamp bounds + default
-    top-right placement.
+  - `statsPosition.test.ts` — stats-panel anchor geometry: resolve/clamp against
+    the pane, anchor-from-drop snap + round-trip, default, `normalizeStatsPosition`
+    read-tolerance, legacy migration.

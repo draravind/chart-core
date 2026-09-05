@@ -43,9 +43,11 @@ import { computeStats } from './stats/computeStats';
 import type {
   StatsMarket,
   StatsPosition,
+  LegacyStatsPosition,
   StatsSize,
   StatsTableData,
 } from './stats/types';
+import { normalizeStatsPosition } from './stats/position';
 import type { DomainSpec } from './indicators/types';
 import {
   applySubpaneDrag,
@@ -225,9 +227,11 @@ type Props = {
   statsTable?: StatsTableData;
   statsEnabled?: boolean;
   statsMarket?: StatsMarket;
-  // Persisted free-drag position ({x,y} wrapper pixels) or null for the
-  // default top-right placement; the app persists drops via the callback.
-  statsPosition?: StatsPosition | null;
+  // Persisted placement — a v:2 anchor (corner/edge fraction + fixed px offset
+  // against the price pane), a legacy {x,y} pixel value migrated once on load,
+  // or null for the default top-right placement. The app persists drops (always
+  // the new anchor shape) via the callback and otherwise stores the blob opaquely.
+  statsPosition?: StatsPosition | LegacyStatsPosition | null;
   onStatsPositionChange?: (p: StatsPosition) => void;
   statsSize?: StatsSize;
   // User-editable chart appearance — a sparse `AppearanceOverrides` delta the
@@ -1171,6 +1175,15 @@ const Chart = ({
   // without rebinding (their effects keep narrow deps).
   const effectiveDrawingsRef = useRef(effectiveDrawings);
   effectiveDrawingsRef.current = effectiveDrawings;
+
+  // Read-tolerance on the untrusted persisted stats position at the Chart
+  // boundary (like the normalizeDrawing map above): a v:2 anchor, a legacy {x,y},
+  // or null. Memoised so StatsPanel sees a stable identity across re-renders
+  // (its one-shot legacy backfill ref depends on it).
+  const normalizedStatsPosition = useMemo(
+    () => normalizeStatsPosition(statsPosition),
+    [statsPosition],
+  );
 
   // ProjScale snapshot from the live scale api (read on every pointer event).
   const buildProjScale = useCallback(
@@ -3588,12 +3601,17 @@ const Chart = ({
                 </div>
               );
             })}
-          {statsEnabled !== false && statsModel && dataLength > 0 && (
+          {layout != null && statsEnabled !== false && statsModel && dataLength > 0 && (
             <StatsPanel
               model={statsModel}
               size={statsSize}
-              marginRight={MARGIN.right}
-              position={statsPosition ?? null}
+              pane={{
+                left: MARGIN.left,
+                top: MARGIN.top,
+                width: layout.width,
+                height: layout.priceHeight,
+              }}
+              position={normalizedStatsPosition}
               onPositionChange={onStatsPositionChange}
             />
           )}

@@ -8,11 +8,19 @@ import type {
   AutoFitMode,
   AppearanceOverrides,
   ChartContextMenuInfo,
+  StatsPosition,
+  LegacyStatsPosition,
+  StatsSize,
 } from '../../src/index';
 import { DATA } from './data';
 
 const CHART_W = 1200;
 const CHART_H = 700;
+
+// A stored value the fixture can seed that no reader can parse — the spec proves
+// an unreadable (or newer) stored value falls back to the default and is never
+// overwritten. Not assignable to the Chart prop's type, hence the cast below.
+type StoredStats = StatsPosition | LegacyStatsPosition | { x: string } | null;
 
 // Reads the live, mutated-in-place scale API through the public overlay hook and
 // mirrors the geometry the specs need (step/width/priceHeight/visibleStartIdx +
@@ -63,6 +71,15 @@ const TOOLS: DrawingTool[] = [
 function App() {
   const [panOffset, setPanOffset] = useState(0);
   const [visibleBars, setVisibleBars] = useState(120);
+  // Chart box size the stats specs drive (resize → re-anchor). State, not consts.
+  const [chartW, setChartW] = useState(CHART_W);
+  const [chartH, setChartH] = useState(CHART_H);
+  // Stats panel: off by default so the five existing specs keep today's DOM.
+  const [statsEnabled, setStatsEnabled] = useState(false);
+  const [statsSize, setStatsSize] = useState<StatsSize>('small');
+  const [statsPosition, setStatsPosition] = useState<StoredStats>(null);
+  const statsChanges = useRef(0);
+  const [statsChangeCount, setStatsChangeCount] = useState(0);
   const [drawings, setDrawings] = useState<DrawingShape[]>([]);
   const [activeDrawingTool, setActiveDrawingTool] =
     useState<DrawingTool>('cursor');
@@ -104,14 +121,14 @@ function App() {
           position: 'absolute',
           top: 0,
           left: 0,
-          width: CHART_W,
-          height: CHART_H,
+          width: chartW,
+          height: chartH,
         }}
       >
         <Chart
           data={DATA}
-          width={CHART_W}
-          height={CHART_H}
+          width={chartW}
+          height={chartH}
           visibleBars={visibleBars}
           onVisibleBarsChange={setVisibleBars}
           panOffset={panOffset}
@@ -143,6 +160,14 @@ function App() {
           appearance={appearance}
           onAppearanceChange={setAppearance}
           onContextMenu={noCtx ? undefined : onCtx}
+          statsEnabled={statsEnabled}
+          statsSize={statsSize}
+          statsPosition={statsPosition as StatsPosition | LegacyStatsPosition | null}
+          onStatsPositionChange={(p) => {
+            statsChanges.current += 1;
+            setStatsChangeCount(statsChanges.current);
+            setStatsPosition(p);
+          }}
         >
           <ScaleProbe />
         </Chart>
@@ -162,6 +187,54 @@ function App() {
         <span data-testid="subpaneChangeCount">{subpaneChangeCount}</span>
         <span data-testid="ctxPayload">{ctxPayload}</span>
         <span data-testid="ctxFireCount">{ctxFireCount}</span>
+        <span data-testid="statsPosition">{JSON.stringify(statsPosition)}</span>
+        <span data-testid="statsChangeCount">{statsChangeCount}</span>
+        <div>
+          <button
+            data-testid="stats-toggle"
+            onClick={() => setStatsEnabled((v) => !v)}
+          >
+            stats
+          </button>
+          <button data-testid="shrink-width" onClick={() => setChartW(900)}>
+            shrink-w
+          </button>
+          <button data-testid="shrink-height" onClick={() => setChartH(500)}>
+            shrink-h
+          </button>
+          <button data-testid="tiny-width" onClick={() => setChartW(50)}>
+            tiny-w
+          </button>
+          <button
+            data-testid="restore-size"
+            onClick={() => {
+              setChartW(CHART_W);
+              setChartH(CHART_H);
+            }}
+          >
+            restore
+          </button>
+          <button
+            data-testid="toggle-size"
+            onClick={() =>
+              setStatsSize((s) => (s === 'large' ? 'small' : 'large'))
+            }
+          >
+            size
+          </button>
+          <button
+            data-testid="seed-legacy"
+            onClick={() => setStatsPosition({ x: 1000, y: 600 })}
+          >
+            legacy
+          </button>
+          <button
+            data-testid="seed-bad"
+            onClick={() => setStatsPosition({ x: 'a' })}
+          >
+            bad
+          </button>
+        </div>
         <div>
           {TOOLS.map((t) => (
             <button

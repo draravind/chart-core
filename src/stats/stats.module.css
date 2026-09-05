@@ -1,7 +1,8 @@
-/* Floating "Price Stats" panel. The host spans the wrapper and ignores pointer
+/* Floating "Price Stats" panel. The host spans the frame and ignores pointer
  * events; the panel itself is interactive — the whole panel is a drag handle
- * (free placement anywhere over the wrapper). Geometry is inline left/top set
- * by StatsPanel from the live drag position, clamped to the host bounds. */
+ * (placement anywhere over the main price pane). Geometry is inline left/top set
+ * by StatsPanel, resolved each render from the stored anchor against the
+ * price-pane rect (not from clamped drag pixels). */
 .statsHost {
   position: absolute;
   inset: 0;

@@ -18,7 +18,11 @@ export type StatsTableData = {
   eps?: number;
 };
 
-/** Free-drag placement: pixels from the chart-wrapper's top-left. */
-export type StatsPosition = { x: number; y: number };
+/** Anchored placement in the main price pane. ax/ay ∈ {0,0.5,1}; dx/dy fixed px.
+ *  `v` is the stored-shape version; the reader dispatches on it, never on keys. */
+export type StatsPosition = { v: 2; ax: number; ay: number; dx: number; dy: number };
+/** Pre-anchor persisted shape (pixels from frame top-left). Read + migrated, never written. */
+export type LegacyStatsPosition = { x: number; y: number };
+export type StatsPaneRect = { left: number; top: number; width: number; height: number };
 
 export type StatsSize = 'tiny' | 'small' | 'normal' | 'large';
