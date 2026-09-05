@@ -38,6 +38,7 @@ import IndicatorSettingsPopover from './controls/IndicatorSettingsPopover';
 import CandleSettingsPopup from './controls/CandleSettingsPopup';
 import SettingsDialog from './controls/SettingsDialog';
 import AutoFitMenu from './controls/AutoFitMenu';
+import DrawToolbar from './controls/DrawToolbar';
 import StatsPanel from './stats/StatsPanel';
 import { computeStats } from './stats/computeStats';
 import EarningsPanel from './earnings/EarningsPanel';
@@ -269,6 +270,15 @@ type Props = {
   onDrawingsChange?: (next: DrawingShape[]) => void;
   activeDrawingTool?: DrawingTool;
   onActiveDrawingToolChange?: (t: DrawingTool) => void;
+  // Floating draw-tool palette (the vertical icon card). Off by default: an
+  // explicit opt-in, not a callback-presence guard — the phone feed passes real
+  // (no-op) drawing callbacks yet must NOT show the card. Same shape as
+  // `statsEnabled`/`earningsEnabled`. Its placement persists via the position
+  // pair below (a v:2 anchor against the price pane, or null for the default
+  // left-edge/vertically-centred spot — a brand-new key, no legacy {x,y}).
+  drawToolbarEnabled?: boolean;
+  drawToolbarPosition?: StatsPosition | LegacyStatsPosition | null;
+  onDrawToolbarPositionChange?: (p: StatsPosition) => void;
   // Right-click report. When supplied, a right-click anywhere on the chart
   // surface suppresses the native menu and reports the cursor's location
   // (price XOR value, the bar under it, and which pane) so the host can raise
@@ -473,6 +483,9 @@ const Chart = ({
   onDrawingsChange,
   activeDrawingTool = 'cursor',
   onActiveDrawingToolChange,
+  drawToolbarEnabled = false,
+  drawToolbarPosition = null,
+  onDrawToolbarPositionChange,
   onContextMenu,
   children,
 }: Props) => {
@@ -1224,6 +1237,13 @@ const Chart = ({
     return p && 'v' in p ? p : null;
   }, [earningsPosition]);
 
+  // Same read-tolerance for the floating draw-toolbar; its key is new, so no
+  // legacy {x,y} shape — keep only a v:2 anchor, else the default (null).
+  const normalizedDrawToolbarPosition = useMemo(() => {
+    const p = normalizeStatsPosition(drawToolbarPosition);
+    return p && 'v' in p ? p : null;
+  }, [drawToolbarPosition]);
+
   // ProjScale snapshot from the live scale api (read on every pointer event).
   const buildProjScale = useCallback(
     (): ProjScale => ({
@@ -1747,7 +1767,7 @@ const Chart = ({
       const t = e.target as Element | null;
       if (
         t?.closest?.(
-          '[data-chart-native-menu],[data-chart-legend],[data-chart-stats],[data-chart-earnings]',
+          '[data-chart-native-menu],[data-chart-legend],[data-chart-stats],[data-chart-earnings],[data-chart-drawtoolbar]',
         )
       )
         return; // chrome that owns its own right-click
@@ -3551,7 +3571,8 @@ const Chart = ({
           typeof rt.closest === 'function' &&
           (rt.closest('[data-chart-legend]') ||
             rt.closest('[data-chart-stats]') ||
-            rt.closest('[data-chart-earnings]'))
+            rt.closest('[data-chart-earnings]') ||
+            rt.closest('[data-chart-drawtoolbar]'))
         ) {
           crosshairVRef.current?.style('visibility', 'hidden');
           crosshairHRef.current?.style('visibility', 'hidden');
@@ -3688,6 +3709,24 @@ const Chart = ({
               }}
               position={normalizedEarningsPosition}
               onPositionChange={onEarningsPositionChange}
+            />
+          )}
+          {layout != null && drawToolbarEnabled && onActiveDrawingToolChange && (
+            <DrawToolbar
+              activeTool={activeDrawingTool}
+              onToolChange={onActiveDrawingToolChange}
+              drawingCount={drawings?.length ?? 0}
+              onDeleteAll={
+                onDrawingsChange ? () => onDrawingsChange([]) : undefined
+              }
+              pane={{
+                left: MARGIN.left,
+                top: MARGIN.top,
+                width: layout.width,
+                height: layout.priceHeight,
+              }}
+              position={normalizedDrawToolbarPosition}
+              onPositionChange={onDrawToolbarPositionChange}
             />
           )}
           {priceBottomPx > 0 && (

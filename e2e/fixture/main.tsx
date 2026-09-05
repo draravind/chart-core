@@ -110,6 +110,14 @@ function App() {
   const [drawings, setDrawings] = useState<DrawingShape[]>([]);
   const [activeDrawingTool, setActiveDrawingTool] =
     useState<DrawingTool>('cursor');
+  // Floating draw-toolbar placement + change-count, exposed the way the stats box
+  // exposes its own. Enabled unconditionally on the Chart below — its default
+  // footprint (left edge, vertically centred) clears every coordinate the other
+  // specs drive, so it needs no gate.
+  const [drawToolbarPosition, setDrawToolbarPosition] =
+    useState<StatsPosition | null>(null);
+  const drawToolbarChanges = useRef(0);
+  const [drawToolbarChangeCount, setDrawToolbarChangeCount] = useState(0);
   const [subpaneHeights, setSubpaneHeights] = useState<Record<
     string,
     number
@@ -184,6 +192,13 @@ function App() {
           }}
           activeDrawingTool={activeDrawingTool}
           onActiveDrawingToolChange={setActiveDrawingTool}
+          drawToolbarEnabled
+          drawToolbarPosition={drawToolbarPosition}
+          onDrawToolbarPositionChange={(p) => {
+            drawToolbarChanges.current += 1;
+            setDrawToolbarChangeCount(drawToolbarChanges.current);
+            setDrawToolbarPosition(p);
+          }}
           appearance={appearance}
           onAppearanceChange={setAppearance}
           onContextMenu={noCtx ? undefined : onCtx}
@@ -229,6 +244,12 @@ function App() {
           {JSON.stringify(earningsPosition)}
         </span>
         <span data-testid="earningsChangeCount">{earningsChangeCount}</span>
+        <span data-testid="drawToolbarPosition">
+          {JSON.stringify(drawToolbarPosition)}
+        </span>
+        <span data-testid="drawToolbarChangeCount">
+          {drawToolbarChangeCount}
+        </span>
         <button
           data-testid="earnings-data"
           onClick={() => setEarningsHasData((v) => !v)}

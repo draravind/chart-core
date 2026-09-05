@@ -1,0 +1,81 @@
+/* Floating drawing-tool palette. The host spans the frame but is click-through;
+   the card is the interactive layer, its left/top set inline by useDraggablePanel. */
+.host {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+}
+
+.card {
+  position: absolute; /* left/top set inline by useDraggablePanel */
+  pointer-events: auto;
+  touch-action: none;
+  user-select: none;
+  /* `cursor` inherits, and the chart wrapper sets `crosshair` — without this the
+     card's padding and the gaps between buttons would flicker to a crosshair as
+     the pointer crosses them. Grip (grab) and buttons (pointer) override below. */
+  cursor: default;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-1);
+  border-radius: var(--radius-md);
+  background: var(--surface-dropdown);
+  box-shadow: var(--shadow-card);
+}
+
+.card.dragging {
+  cursor: grabbing;
+}
+
+/* While dragging, buttons are click-inert so a drop over one doesn't select it. */
+.card.dragging .toolBtn {
+  pointer-events: none;
+}
+
+.grip {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 16px;
+  color: var(--text-muted);
+}
+
+.toolBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--text-muted);
+  transition: background-color var(--transition-fast), color var(--transition-fast);
+}
+
+.toolBtn:not(:disabled):hover {
+  background: var(--surface-panel-header);
+  color: var(--text-primary);
+}
+
+.toolBtnActive {
+  background: var(--surface-panel-header);
+  color: var(--text-primary);
+}
+
+.toolBtn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.divider {
+  width: 60%;
+  height: 1px;
+  margin: var(--space-1) 0;
+  background: var(--chart-separator);
+}

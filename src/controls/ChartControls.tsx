@@ -1,17 +1,6 @@
 import { useRef, useState } from 'react';
-import {
-  Minus,
-  MousePointer2,
-  MoveHorizontal,
-  MoveVertical,
-  Ruler,
-  Slash,
-  TrendingUp,
-  Type,
-} from 'lucide-react';
 import type { ChartType } from '../types';
 import type { IndicatorConfig, IndicatorDef } from '../indicators/types';
-import type { DrawingTool } from '../drawings/types';
 import {
   listIndicators,
   defaultConfigFor,
@@ -23,18 +12,6 @@ import { useDismissable } from './useDismissable';
 import { PATTERN_CATALOG, PATTERN_NAMES } from '../patterns/catalog';
 import './controls.css';
 import styles from './ChartControls.module.css';
-
-// The Draw dropdown catalog (cursor + every tool), in display order.
-const DRAW_TOOLS: { tool: DrawingTool; label: string; Icon: typeof Minus }[] = [
-  { tool: 'cursor', label: 'Cursor', Icon: MousePointer2 },
-  { tool: 'trendline', label: 'Trend line', Icon: TrendingUp },
-  { tool: 'ray', label: 'Ray', Icon: Slash },
-  { tool: 'hline', label: 'Horizontal line', Icon: Minus },
-  { tool: 'vline', label: 'Vertical line', Icon: MoveVertical },
-  { tool: 'hray', label: 'Horizontal ray', Icon: MoveHorizontal },
-  { tool: 'text', label: 'Text', Icon: Type },
-  { tool: 'ruler', label: 'Ruler', Icon: Ruler },
-];
 
 type Props = {
   chartType: ChartType;
@@ -58,14 +35,6 @@ type Props = {
   // the "Earnings" button shows only when `onEarningsToggle` is supplied.
   earningsEnabled?: boolean;
   onEarningsToggle?: () => void;
-  // Drawing tools — `activeDrawingTool` is host-held ephemeral state passed to
-  // BOTH this control (renders the dropdown) and Chart (drives interaction), like
-  // the patterns pair. The dropdown only renders when `onActiveDrawingToolChange`
-  // is supplied. `hasDrawings`/`onDeleteAllDrawings` back the "Delete all" item.
-  activeDrawingTool?: DrawingTool;
-  onActiveDrawingToolChange?: (t: DrawingTool) => void;
-  hasDrawings?: boolean;
-  onDeleteAllDrawings?: () => void;
   className?: string;
 };
 
@@ -102,22 +71,15 @@ export default function ChartControls({
   onStatsToggle,
   earningsEnabled,
   onEarningsToggle,
-  activeDrawingTool = 'cursor',
-  onActiveDrawingToolChange,
-  hasDrawings,
-  onDeleteAllDrawings,
   className,
 }: Props) {
   const [pickerOpen, setPickerOpen] = useState(false);
   const pickerRef = useRef<HTMLDivElement | null>(null);
   const [patternPickerOpen, setPatternPickerOpen] = useState(false);
   const patternPickerRef = useRef<HTMLDivElement | null>(null);
-  const [drawPickerOpen, setDrawPickerOpen] = useState(false);
-  const drawPickerRef = useRef<HTMLDivElement | null>(null);
 
   // Each picker's outer ref already WRAPS its own toggle button, so a press on
   // the button reads as "inside" and no separate trigger ref is needed.
-  useDismissable(drawPickerOpen, () => setDrawPickerOpen(false), [drawPickerRef]);
   useDismissable(pickerOpen, () => setPickerOpen(false), [pickerRef]);
   useDismissable(
     patternPickerOpen,
@@ -274,61 +236,6 @@ export default function ChartControls({
           </div>
         )}
       </div>
-
-      {onActiveDrawingToolChange && (
-        <div className={styles.indicatorPicker} ref={drawPickerRef}>
-          <button
-            type="button"
-            className={cn(
-              'pill-toggle-btn',
-              'pill-toggle-btn-sm',
-              (drawPickerOpen || activeDrawingTool !== 'cursor') && 'is-active',
-            )}
-            onClick={() => setDrawPickerOpen((o) => !o)}
-          >
-            Draw ▾
-          </button>
-          {drawPickerOpen && (
-            <div className={styles.pickerPanel}>
-              <div className={styles.pickerScroll}>
-                {DRAW_TOOLS.map(({ tool, label, Icon }) => (
-                  <button
-                    key={tool}
-                    type="button"
-                    className={cn(
-                      styles.drawToolRow,
-                      activeDrawingTool === tool && styles.drawToolRowActive,
-                    )}
-                    onClick={() => {
-                      onActiveDrawingToolChange(tool);
-                      setDrawPickerOpen(false);
-                    }}
-                  >
-                    <Icon size={14} />
-                    <span className={styles.pickerLabel}>{label}</span>
-                  </button>
-                ))}
-                {onDeleteAllDrawings && (
-                  <>
-                    <div className={styles.drawToolDivider} />
-                    <button
-                      type="button"
-                      className={styles.drawToolRow}
-                      disabled={!hasDrawings}
-                      onClick={() => {
-                        onDeleteAllDrawings();
-                        setDrawPickerOpen(false);
-                      }}
-                    >
-                      <span className={styles.pickerLabel}>Delete all</span>
-                    </button>
-                  </>
-                )}
-              </div>
-            </div>
-          )}
-        </div>
-      )}
 
       <div className="pill-toggle-group">
         <button

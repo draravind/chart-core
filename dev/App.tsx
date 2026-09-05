@@ -115,10 +115,6 @@ export function App() {
           onStatsToggle={() => setStatsEnabled((v) => !v)}
           earningsEnabled={earningsEnabled}
           onEarningsToggle={() => setEarningsEnabled((v) => !v)}
-          activeDrawingTool={activeDrawingTool}
-          onActiveDrawingToolChange={setActiveDrawingTool}
-          hasDrawings={drawings.length > 0}
-          onDeleteAllDrawings={() => setDrawings([])}
         />
         <div style={{ minWidth: 220 }}>
           <ZoomSlider
@@ -165,6 +161,7 @@ export function App() {
             onDrawingsChange={setDrawings}
             activeDrawingTool={activeDrawingTool}
             onActiveDrawingToolChange={setActiveDrawingTool}
+            drawToolbarEnabled
             subpaneHeights={subpaneHeights}
             onSubpaneHeightsChange={setSubpaneHeights}
           />
