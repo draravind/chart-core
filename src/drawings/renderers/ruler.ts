@@ -48,9 +48,9 @@ export function renderRuler(
     .attr('x', padX)
     .attr('y', padY)
     .attr('dominant-baseline', 'hanging')
-    .attr('font-size', fontSize)
-    .attr('font-weight', 600)
-    .attr('fill', '#ffffff')
+    .style('font-size', 'var(--text-3xs)')
+    .style('font-weight', 'var(--font-weight-semibold)')
+    .attr('fill', rc('var(--chart-drawing-label-text)'))
     .text(label);
   const tw = text.node()?.getBBox().width ?? label.length * 6;
   chip
@@ -65,8 +65,9 @@ export function renderRuler(
 
   if (ctx.selected) {
     const c = rc(eff.color);
-    drawHandle(layers.label, pa.x, pa.y, c);
-    drawHandle(layers.label, pb.x, pb.y, c);
+    const handleFill = rc('var(--chart-drawing-handle)');
+    drawHandle(layers.label, pa.x, pa.y, c, handleFill);
+    drawHandle(layers.label, pb.x, pb.y, c, handleFill);
   }
 
   return (mx, my, tx) => hitSegment(mx - tx, my, pa, pb);

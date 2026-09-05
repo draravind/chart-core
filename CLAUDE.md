@@ -81,6 +81,14 @@ The split is intentional: the routing table + glossary here are **pay-always**
 
 ## Glossary → home module
 
+- **Design tokens (two tiers)** — `src/styles/chart-core.css`. Tier 1 **primitives**
+  (`--cc-*`, at the TOP of the file) record each raw value once; Tier 2 **semantic**
+  tokens (`--chart-*`, `--ti-*`, `--stats-*`, `--text-*`, …) are `var(--cc-*)`
+  aliases and are the only supported override surface. `--cc-*` is internal — never
+  alias across roles or override it from an app. Canvas/`ctx.font` reach the tokens
+  via the probe resolver (`createColorResolver` + `composeCanvasFont` in
+  `src/utils/resolveChartColors.ts`); `tests/tokens.test.ts` locks "each value once",
+  the name set, and that every semantic token still resolves to its pre-refactor hex.
 - **Candle** — OHLCV bar (+ optional historical-high columns): `src/types.ts`.
 - **ChartScaleApi / ChartScaleReason** — the stable, mutated-in-place scale &
   geometry object overlay plugins read and subscribe to; defined in `src/types.ts`,

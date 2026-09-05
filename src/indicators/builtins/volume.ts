@@ -5,6 +5,7 @@ import {
   formatVolumeTick,
 } from '../../utils/chartCalculations';
 import { cellAt } from '../draw';
+import { composeCanvasFont } from '../../utils/resolveChartColors';
 
 // ---------------------------------------------------------------------------
 // Volume — the old hardcoded volume zone, re-expressed as a first-class subpane
@@ -41,7 +42,10 @@ const LABEL_GAP = 2; // px gap between the label baseline and the bar top
 // the tallest bar, the label's natural `barTop − LABEL_GAP` spot already clears
 // this, so this only guards degenerate cases (e.g. no headroom).
 const LABEL_MIN_Y = 9;
-const VOL_LABEL_FONT = "600 9px 'Helvetica Neue', Helvetica, Arial, sans-serif";
+// Composed at draw time from weight/size/family tokens via the probe (canvas
+// reads no CSS vars); the literal is the fallback when the probe is unmounted.
+const VOL_LABEL_FONT_FALLBACK =
+  "600 9px 'Helvetica Neue', Helvetica, Arial, sans-serif";
 
 function compute(input: IndicatorInput, s: VolumeSettings): IndicatorSeries {
   const n = input.c.length;
@@ -155,7 +159,12 @@ const draw: IndicatorDef<VolumeSettings>['draw'] = (
   // labels at Chart.tsx). `volLabel` is empty when `milestones` is off.
   if (volLabel) {
     ctx.fillStyle = labelColor;
-    ctx.font = VOL_LABEL_FONT;
+    ctx.font = composeCanvasFont(
+      resolveColor,
+      'var(--font-weight-semibold)',
+      'var(--text-2hxs)',
+      VOL_LABEL_FONT_FALLBACK,
+    );
     ctx.textAlign = 'center';
     ctx.textBaseline = 'alphabetic';
     for (let g = renderStart; g < renderEnd; g++) {

@@ -30,7 +30,14 @@ export function renderHRay(
     .attr('y2', p.y);
   applyLine(line, eff, ctx.resolveColor);
 
-  if (ctx.selected) drawHandle(layers.label, p.x, p.y, ctx.resolveColor(eff.color));
+  if (ctx.selected)
+    drawHandle(
+      layers.label,
+      p.x,
+      p.y,
+      ctx.resolveColor(eff.color),
+      ctx.resolveColor('var(--chart-drawing-handle)'),
+    );
 
   return (mx, my, tx) =>
     hitAnchoredSegment(mx - tx, my, p, { x: x2, y: p.y });

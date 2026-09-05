@@ -171,6 +171,16 @@ custom properties. The bundled `style.css` ships **0-specificity
 styled out of the box. To re-theme, declare any of these on your own `:root`
 (specificity ≥ 0,0,1) and your value wins.
 
+**Two tiers.** The **semantic** tokens documented below (`--chart-*`, `--ti-*`,
+`--stats-*`, `--text-*`, …) are the **supported override surface** — theme the
+chart by redeclaring these. Internally each is defined as `var(--cc-…)`, a
+**primitive** that records a raw value once (e.g. `--cc-green-600: #16a34a`,
+aliased by `--chart-positive`). The `--cc-*` primitives are an **internal
+implementation detail, not an override surface** — the prefix keeps an unrelated
+app token from colliding with one; override the semantic token instead. The
+tables below show each semantic token's **effective default** (what it resolves
+to), not the `var(--cc-…)` indirection.
+
 ### Chart colors
 
 `--chart-positive` / `--chart-negative` are the chart-wide price-direction pair
@@ -196,10 +206,45 @@ candle tokens only when you want the price series to differ from everything else
 | `--chart-high-2y-label` | `#f59e0b` |
 | `--chart-high-3y-label` | `#8b5cf6` |
 | `--chart-high-all-label` | `#06b6d4` |
+| `--chart-rs-label` | `#ec4899` |
+| `--chart-rs-signal-label` | `#eab308` |
 | `--bg-card` | `#ffffff` |
 
-(The `--ema-*` / `--high-*` aliases the SVG strokes read default to the matching
-`--chart-*-label` token.)
+(The `--ema-*` / `--high-*` / `--rs-*` aliases the SVG strokes read default to the
+matching `--chart-*-label` token.)
+
+### Indicator library colors (TA-Lib overlays & subpanes)
+
+Price-pane overlays and oscillator subpanes each read one stroke token.
+
+| Token | Default | | Token | Default |
+| --- | --- | --- | --- | --- |
+| `--ti-sma` | `#3b82f6` | | `--rsi-line` | `#8b5cf6` |
+| `--ti-ema` | `#ef4444` | | `--macd-line` | `#3b82f6` |
+| `--ti-wma` | `#a855f7` | | `--macd-signal` | `#f59e0b` |
+| `--ti-dema` | `#f59e0b` | | `--macd-hist-up` | `#16a34a` |
+| `--ti-tema` | `#14b8a6` | | `--macd-hist-down` | `#dc2626` |
+| `--bb-upper` | `#60a5fa` | | `--stoch-k` | `#3b82f6` |
+| `--bb-mid` | `#9ca3af` | | `--stoch-d` | `#f59e0b` |
+| `--bb-lower` | `#60a5fa` | | `--willr-line` | `#ec4899` |
+| `--stage2-band` | `#22c55e` | | `--adx-line` | `#14b8a6` |
+| `--subpane-guide` | `#888888` | | `--dx-line` | `#a855f7` |
+| | | | `--atr-line` | `#06b6d4` |
+| | | | `--natr-line` | `#0ea5e9` |
+| | | | `--trange-line` | `#22c55e` |
+
+### Drawing tools, patterns & background
+
+| Token | Default | Notes |
+| --- | --- | --- |
+| `--chart-drawing` | `#3b82f6` | default shape stroke |
+| `--chart-drawing-bg` | `#1e293b` | text-box background |
+| `--chart-drawing-handle` | `#ffffff` | endpoint grab handles |
+| `--chart-drawing-label-text` | `#ffffff` | ruler chip text |
+| `--chart-pattern-fill` | `#252525` | all pattern lines/boxes/markers/chips |
+| `--chart-pattern-label-text` | `#ffffff` | pattern label text |
+| `--chart-bg-top` | `#6e7b8b` | background gradient (top) |
+| `--chart-bg-bottom` | `#776a5a` | background gradient (bottom) |
 
 ### Price-stats panel
 
@@ -241,13 +286,18 @@ values; growth %s use the up/down tokens; `--qr-label` colors the quarter label.
 | --- | --- |
 | `--surface-panel-raised` | `#30302e` |
 | `--surface-panel-header` | `#202020` |
+| `--surface-panel-box` | `#252525` |
+| `--surface-dropdown` | `#191919` |
 | `--color-dark-700` | `#30302e` |
+| `--panel-box-bg` | `var(--surface-panel-box)` |
 | `--shadow-card` | `0 1px 3px 0 rgb(0 0 0 / 0.08), 0 2px 6px 0 rgb(0 0 0 / 0.06)` |
 | `--shadow-inset-track` | `inset 0 1px 2px rgba(0, 0, 0, 0.08)` |
 | `--shadow-pill-active` | `0 1px 2px rgba(0, 0, 0, 0.06)` |
+| `--shadow-popover` | `0 8px 24px rgba(0, 0, 0, 0.45), 0 2px 6px rgba(0, 0, 0, 0.3)` |
 | `--radius-sm` | `6px` |
 | `--radius-md` | `12px` |
 | `--radius-full` | `9999px` |
+| `--radius-popover` | `10px` |
 | `--space-1` | `0.25rem` |
 | `--space-2` | `0.5rem` |
 | `--space-3` | `0.75rem` |
@@ -255,12 +305,29 @@ values; growth %s use the up/down tokens; `--qr-label` colors the quarter label.
 | `--text-base` | `0.875rem` |
 | `--text-xs` | `0.75rem` |
 | `--text-sm` | `13px` |
+| `--text-2xs` | `11px` |
 | `--text-3xs` | `10px` |
 | `--text-2hxs` | `9px` |
+| `--text-md` | `16px` |
 | `--text-primary` | `#bcbab6` |
 | `--text-muted` | `#8e8b86` |
+| `--font-family-base` | `'Helvetica Neue', Helvetica, Arial, sans-serif` |
 | `--font-weight-medium` | `500` |
+| `--font-weight-semibold` | `600` |
+| `--field-invalid` | `#d6705f` |
+| `--color-focus-ring` | `#5b8def` |
+| `--panel-border` | `color-mix(in srgb, var(--text-muted) 22%, transparent)` |
+| `--field-border` | `color-mix(in srgb, var(--text-muted) 26%, transparent)` |
+| `--field-bg` | `color-mix(in srgb, var(--surface-panel-header) 70%, #000)` |
 | `--transition-fast` | `0.15s ease` |
+
+### Primitives (`--cc-*`) — internal, not an override surface
+
+Every raw value above is recorded once as a `--cc-*` primitive at the top of
+`chart-core.css` (e.g. `--cc-green-600: #16a34a`, `--cc-blue-500: #3b82f6`, the
+warm `--cc-stone-*` surfaces). They exist so no hex is typed twice; they are **not
+a theming API** and may change. Override the semantic token that aliases one, not
+the primitive.
 
 ## Public API
 

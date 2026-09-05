@@ -1,12 +1,70 @@
 /*
- * Default --chart-* token contract for chart-core. Declared on :where(:root)
+ * chart-core token contract. Two tiers, both declared on :where(:root)
  * (specificity 0,0,0) so any app-provided :root declaration overrides these
  * regardless of import order — in this app, tokens.semantic.css keeps winning
  * and there is zero visual change. A standalone consumer gets these fallbacks.
+ *
+ *   Tier 1 — PRIMITIVES (--cc-*): every raw value (colour, radius, black point)
+ *   written exactly once. INTERNAL implementation detail, NOT a theming surface.
+ *   The --cc- prefix keeps an unrelated app token (say --blue-500) from silently
+ *   retheming chart internals. Do not override these from an app.
+ *
+ *   Tier 2 — SEMANTIC (--chart-*, --ti-*, --text-*, --stats-*, …): named by role
+ *   and defined as var(--cc-*) aliases. THIS is the supported override surface —
+ *   an app themes the chart by redeclaring these, never the primitives.
  */
 :where(:root) {
-  --chart-positive: #16a34a;
-  --chart-negative: #dc2626;
+  /* ------------------------------------------------------------------------
+   * Tier 1 — primitives. Each raw value appears on exactly one line.
+   * ---------------------------------------------------------------------- */
+  /* Tailwind-scale accents (named by scale). */
+  --cc-blue-400: #60a5fa;
+  --cc-blue-500: #3b82f6;
+  --cc-red-500: #ef4444;
+  --cc-red-600: #dc2626;
+  --cc-green-500: #22c55e;
+  --cc-green-600: #16a34a;
+  --cc-amber-500: #f59e0b;
+  --cc-orange-500: #f97316;
+  --cc-yellow-500: #eab308;
+  --cc-lime-500: #84cc16;
+  --cc-teal-500: #14b8a6;
+  --cc-cyan-500: #06b6d4;
+  --cc-sky-500: #0ea5e9;
+  --cc-violet-500: #8b5cf6;
+  --cc-purple-500: #a855f7;
+  --cc-pink-500: #ec4899;
+  --cc-gray-400: #9ca3af;
+  --cc-gray-500: #6b7280;
+
+  /* Neutrals + black/white points. */
+  --cc-neutral-300: #cccccc;
+  --cc-neutral-500: #888888;
+  --cc-white: #ffffff;
+  --cc-black: #000;
+
+  /* Bespoke warm surface + text scale (value-descriptive names). */
+  --cc-stone-950: #202020;
+  --cc-stone-900: #30302e;
+  --cc-stone-850: #252525;
+  --cc-stone-750: #191919;
+  --cc-stone-400: #8e8b86;
+  --cc-stone-200: #bcbab6;
+  --cc-slate-800: #1e293b;
+
+  /* Bespoke accents. */
+  --cc-focus: #5b8def;
+  --cc-clay-500: #d6705f;
+
+  /* Background gradient stops. */
+  --cc-bg-slate: #6e7b8b;
+  --cc-bg-taupe: #776a5a;
+
+  /* ------------------------------------------------------------------------
+   * Tier 2 — semantic tokens (the supported override surface).
+   * ---------------------------------------------------------------------- */
+  --chart-positive: var(--cc-green-600);
+  --chart-negative: var(--cc-red-600);
 
   /* Candle/bar body fills. Default to the chart-wide price-direction pair, so
    * an app that only themes --chart-positive/--chart-negative still recolours
@@ -15,22 +73,22 @@
    * Volume's default bar colours, the --qr-growth-* aliases and the ruler. */
   --candle-up: var(--chart-positive);
   --candle-down: var(--chart-negative);
-  --chart-axis-label: #888888;
-  --chart-separator: #cccccc;
-  --chart-tooltip-label: #888888;
+  --chart-axis-label: var(--cc-neutral-500);
+  --chart-separator: var(--cc-neutral-300);
+  --chart-tooltip-label: var(--cc-neutral-500);
 
-  --chart-ema-10-label: #3b82f6;
-  --chart-ema-20-label: #6b7280;
-  --chart-ema-50-label: #ef4444;
-  --chart-ema-200-label: #22c55e;
+  --chart-ema-10-label: var(--cc-blue-500);
+  --chart-ema-20-label: var(--cc-gray-500);
+  --chart-ema-50-label: var(--cc-red-500);
+  --chart-ema-200-label: var(--cc-green-500);
 
-  --chart-high-1y-label: #ef4444;
-  --chart-high-2y-label: #f59e0b;
-  --chart-high-3y-label: #8b5cf6;
-  --chart-high-all-label: #06b6d4;
+  --chart-high-1y-label: var(--cc-red-500);
+  --chart-high-2y-label: var(--cc-amber-500);
+  --chart-high-3y-label: var(--cc-violet-500);
+  --chart-high-all-label: var(--cc-cyan-500);
 
-  --chart-rs-label: #ec4899; /* RS line — pink (avoids --high-3y violet #8b5cf6) */
-  --chart-rs-signal-label: #eab308; /* signal dots — yellow (avoids --high-2y amber #f59e0b) */
+  --chart-rs-label: var(--cc-pink-500); /* RS line — pink (avoids --high-3y violet) */
+  --chart-rs-signal-label: var(--cc-yellow-500); /* signal dots — yellow (avoids --high-2y amber) */
 
   /* Legacy aliases the SVG series strokes read. */
   --ema-10: var(--chart-ema-10-label);
@@ -45,34 +103,34 @@
   --rs-signal: var(--chart-rs-signal-label);
 
   /* TA-Lib library — price-pane overlays. */
-  --ti-sma: #3b82f6;
-  --ti-ema: #ef4444;
-  --ti-wma: #a855f7;
-  --ti-dema: #f59e0b;
-  --ti-tema: #14b8a6;
-  --bb-upper: #60a5fa;
-  --bb-mid: #9ca3af;
-  --bb-lower: #60a5fa;
-  --stage2-band: #22c55e; /* Stage 2 advancing — bottom band (alpha via opacity) */
+  --ti-sma: var(--cc-blue-500);
+  --ti-ema: var(--cc-red-500);
+  --ti-wma: var(--cc-purple-500);
+  --ti-dema: var(--cc-amber-500);
+  --ti-tema: var(--cc-teal-500);
+  --bb-upper: var(--cc-blue-400);
+  --bb-mid: var(--cc-gray-400);
+  --bb-lower: var(--cc-blue-400);
+  --stage2-band: var(--cc-green-500); /* Stage 2 advancing — bottom band (alpha via opacity) */
 
   /* TA-Lib library — momentum/volatility subpanes. */
-  --rsi-line: #8b5cf6;
-  --macd-line: #3b82f6;
-  --macd-signal: #f59e0b;
-  --macd-hist-up: #16a34a;
-  --macd-hist-down: #dc2626;
-  --stoch-k: #3b82f6;
-  --stoch-d: #f59e0b;
-  --willr-line: #ec4899;
-  --adx-line: #14b8a6;
-  --dx-line: #a855f7;
-  --atr-line: #06b6d4;
-  --natr-line: #0ea5e9;
-  --trange-line: #22c55e;
+  --rsi-line: var(--cc-violet-500);
+  --macd-line: var(--cc-blue-500);
+  --macd-signal: var(--cc-amber-500);
+  --macd-hist-up: var(--cc-green-600);
+  --macd-hist-down: var(--cc-red-600);
+  --stoch-k: var(--cc-blue-500);
+  --stoch-d: var(--cc-amber-500);
+  --willr-line: var(--cc-pink-500);
+  --adx-line: var(--cc-teal-500);
+  --dx-line: var(--cc-purple-500);
+  --atr-line: var(--cc-cyan-500);
+  --natr-line: var(--cc-sky-500);
+  --trange-line: var(--cc-green-500);
 
   /* Quarterly Results subpane. */
-  --qr-rps: #60a5fa;
-  --qr-eps: #f97316;
+  --qr-rps: var(--cc-blue-400);
+  --qr-eps: var(--cc-orange-500);
   --chart-qr-rps-label: var(--qr-rps);
   --chart-qr-eps-label: var(--qr-eps);
   --qr-growth-up: var(--chart-positive);
@@ -80,25 +138,34 @@
   --qr-label: var(--chart-tooltip-label);
 
   /* Dashed guide / zero lines drawn in the subpanes. */
-  --subpane-guide: #888888;
+  --subpane-guide: var(--cc-neutral-500);
+
+  /* Background gradient — the single source for both the canvas paint and the
+   * SVG twin gradient (appearance defaults alias these; see registry.ts). */
+  --chart-bg-top: var(--cc-bg-slate);
+  --chart-bg-bottom: var(--cc-bg-taupe);
 
   /* User drawing tools (trend/h/v lines, rays, text, ruler). Per-shape `style`
    * overrides win; these are the zero-config defaults. */
-  --chart-drawing: #3b82f6;
-  --chart-drawing-bg: #1e293b;
-  --chart-drawing-handle: #ffffff;
+  --chart-drawing: var(--cc-blue-500);
+  --chart-drawing-bg: var(--cc-slate-800);
+  --chart-drawing-handle: var(--cc-white);
+  /* Ruler chip label text — its OWN role (white text over the coloured chip),
+   * deliberately not shared with --chart-drawing-handle so retinting the grab
+   * handles never silently recolours the chip text. */
+  --chart-drawing-label-text: var(--cc-white);
 
   /* Price-stats panel — threshold bands + chrome. Consumed directly in CSS
    * (the panel is HTML, not canvas). `up`/`down` reuse the price-change colors;
    * `strong` is lime, `neutral` amber. */
-  --stats-strong: #84cc16;
+  --stats-strong: var(--cc-lime-500);
   /* up/down do NOT reuse --chart-positive/--chart-negative: those are the
-   * candlestick fills tuned for the dark CANVAS (#16a34a / #dc2626) and read
-   * dim as text on --stats-bg's raised panel. Brighter 500-shade green/red
-   * (still distinct from the lime `strong` + amber `neutral`) restore contrast. */
-  --stats-up: #22c55e;
-  --stats-neutral: #f59e0b;
-  --stats-down: #ef4444;
+   * candlestick fills tuned for the dark CANVAS and read dim as text on
+   * --stats-bg's raised panel. Brighter 500-shade green/red (still distinct
+   * from the lime `strong` + amber `neutral`) restore contrast. */
+  --stats-up: var(--cc-green-500);
+  --stats-neutral: var(--cc-amber-500);
+  --stats-down: var(--cc-red-500);
   --stats-text: var(--text-primary);
   /* Dim header/label rows. Uses --text-muted (readable secondary text on a
    * RAISED surface), NOT --chart-tooltip-label — that token is tuned for the
@@ -112,35 +179,47 @@
   --stats-border: var(--chart-separator);
   --stats-radius: var(--radius-sm);
 
-  --bg-card: #ffffff;
+  /* Pattern overlays — their OWN role. Not aliased to --surface-panel-box even
+   * though both default to the same stone; retinting the stats box must not
+   * recolour every pattern overlay. */
+  --chart-pattern-fill: var(--cc-stone-850);
+  --chart-pattern-label-text: var(--cc-white);
+
+  --bg-card: var(--cc-white);
 
   /* Axis / tooltip font-size tokens. */
   --text-2hxs: 9px;
+  --text-2xs: 11px;
   --text-3xs: 10px;
   --text-sm: 13px;
+  --text-md: 16px;
 
   /*
    * Layout / shadow / spacing / text tokens consumed by Chart + ChartControls.
    * Defaults mirror trading_app's tokens.semantic.css (dark theme) so a blank
    * consumer renders fully styled out of the box; any app :root override wins.
    */
-  --color-dark-700: #30302e;
-  --surface-panel-raised: #30302e;
-  --surface-panel-header: #202020;
+  --color-dark-700: var(--cc-stone-900);
+  --surface-panel-raised: var(--cc-stone-900);
+  --surface-panel-header: var(--cc-stone-950);
   /* Floating corner boxes (Price-Stats + Earnings) — a touch darker than the
      raised panel so they read as their own chrome over the chart. */
-  --surface-panel-box: #252525;
+  --surface-panel-box: var(--cc-stone-850);
   /* Toolbar dropdown panels (indicator/pattern pickers) — darker than the raised
      panel so they read as floating chrome over the chart. */
-  --surface-dropdown: #191919;
+  --surface-dropdown: var(--cc-stone-750);
 
   --shadow-card: 0 1px 3px 0 rgb(0 0 0 / 0.08), 0 2px 6px 0 rgb(0 0 0 / 0.06);
   --shadow-inset-track: inset 0 1px 2px rgba(0, 0, 0, 0.08);
   --shadow-pill-active: 0 1px 2px rgba(0, 0, 0, 0.06);
+  /* Floating-panel drop shadow (popovers, dialogs, drawing/candle popups). */
+  --shadow-popover: 0 8px 24px rgba(0, 0, 0, 0.45), 0 2px 6px rgba(0, 0, 0, 0.3);
 
   --radius-sm: 6px;
   --radius-md: 12px;
   --radius-full: 9999px;
+  /* Floating-panel corner radius. */
+  --radius-popover: 10px;
 
   --space-1: 0.25rem;
   --space-2: 0.5rem;
@@ -149,13 +228,23 @@
 
   --text-base: 0.875rem;
   --text-xs: 0.75rem;
-  --text-primary: #bcbab6;
-  --text-muted: #8e8b86;
+  --text-primary: var(--cc-stone-200);
+  --text-muted: var(--cc-stone-400);
   /* Warm red for live invalid / out-of-range field flags (border at full value,
    * focus ring at ~26% alpha). Sits on --surface-panel-raised without clashing
    * with the blue focus accent. */
-  --field-invalid: #d6705f;
+  --field-invalid: var(--cc-clay-500);
+  /* Blue focus accent for text/select/colour fields. */
+  --color-focus-ring: var(--cc-focus);
 
+  /* Shared field chrome (inputs/selects/colour swatches across popover + dialog). */
+  --field-border: color-mix(in srgb, var(--text-muted) 26%, transparent);
+  --field-bg: color-mix(in srgb, var(--surface-panel-header) 70%, var(--cc-black));
+  /* Floating-panel border. */
+  --panel-border: color-mix(in srgb, var(--text-muted) 22%, transparent);
+
+  --font-family-base: 'Helvetica Neue', Helvetica, Arial, sans-serif;
   --font-weight-medium: 500;
+  --font-weight-semibold: 600;
   --transition-fast: 0.15s ease;
 }

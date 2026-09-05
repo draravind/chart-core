@@ -31,8 +31,9 @@ export function renderTrendline(
 
   if (ctx.selected) {
     const c = ctx.resolveColor(eff.color);
-    drawHandle(layers.label, pa.x, pa.y, c);
-    drawHandle(layers.label, pb.x, pb.y, c);
+    const handleFill = ctx.resolveColor('var(--chart-drawing-handle)');
+    drawHandle(layers.label, pa.x, pa.y, c, handleFill);
+    drawHandle(layers.label, pb.x, pb.y, c, handleFill);
   }
 
   return (mx, my, tx) => hitSegment(mx - tx, my, pa, pb);

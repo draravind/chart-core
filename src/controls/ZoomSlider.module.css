@@ -25,12 +25,12 @@
   border: none;
   background: none;
   cursor: pointer;
-  font-size: 10px;
+  font-size: var(--text-3xs);
   line-height: 14px;
-  color: var(--chart-tooltip-label, #888);
+  color: var(--chart-tooltip-label);
   white-space: nowrap;
 }
 
 .mark:hover {
-  color: var(--text-primary, #fff);
+  color: var(--text-primary);
 }

@@ -144,6 +144,44 @@ describe('pattern renderers smoke test', () => {
     });
   }
 
+  // A bare var(--x) set on an SVG PRESENTATION attribute (fill/stroke/…) renders
+  // nothing — only inline CSS (.style) and true CSS evaluate var(). The identity
+  // resolver above can't catch that; this maps every token to a sentinel rgb and
+  // asserts (a) the sentinel actually reached a painted attribute and (b) no
+  // painted attribute still holds a var(). The `style` attribute is exempt —
+  // font-weight/font-size are set via .style() and legitimately keep var() there.
+  const SENTINEL = 'rgb(1, 2, 3)';
+  const allEls = (...roots: Element[]): Element[] =>
+    roots.flatMap((r) => [r, ...Array.from(r.querySelectorAll('*'))]);
+
+  for (const c of cases) {
+    it(`${c.name} resolves every colour (no var() in an SVG attribute)`, () => {
+      const ctx: ChartPatternCtx = {
+        ...makeCtx(),
+        resolveColor: (expr: string) => (expr.includes('var(') ? SENTINEL : expr),
+      };
+      const target = freshG();
+      const labelTarget = freshG();
+      const detection: PatternMarker = {
+        pattern_name: c.name,
+        detected_on: '2026-01-05',
+        markers: c.markers,
+      };
+      renderers[c.name](detection, target, labelTarget, ctx);
+
+      let sawSentinel = false;
+      for (const el of allEls(target.node()!, labelTarget.node()!)) {
+        for (const name of el.getAttributeNames()) {
+          if (name === 'style') continue;
+          const val = el.getAttribute(name) ?? '';
+          expect(val).not.toContain('var(');
+          if (val === SENTINEL) sawSentinel = true;
+        }
+      }
+      expect(sawSentinel).toBe(true);
+    });
+  }
+
   it('every registered renderer has a smoke case', () => {
     const NEW = cases.map((c) => c.name).sort();
     const expected = [

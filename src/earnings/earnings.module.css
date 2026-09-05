@@ -21,7 +21,7 @@
   border-radius: var(--stats-radius);
   padding: 4px 6px;
   box-shadow: var(--shadow-card);
-  font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+  font-family: var(--font-family-base);
   font-variant-numeric: tabular-nums;
 }
 
@@ -68,16 +68,16 @@
 
 /* ---- Size presets (font-size) --------------------------------------- */
 .sizeTiny {
-  font-size: 9px;
+  font-size: var(--text-2hxs);
 }
 .sizeSmall {
-  font-size: 11px;
+  font-size: var(--text-2xs);
 }
 .sizeNormal {
-  font-size: 13px;
+  font-size: var(--text-sm);
 }
 .sizeLarge {
-  font-size: 16px;
+  font-size: var(--text-md);
 }
 
 /* ---- Drag state ------------------------------------------------------ */

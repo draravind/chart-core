@@ -79,13 +79,17 @@ export function EnumField({
   return (
     <label className={styles.legendPopoverField}>
       <span>{spec.label}</span>
-      <select value={value} onChange={(e) => onChange(Number(e.target.value))}>
-        {spec.options.map((o) => (
-          <option key={o.value} value={o.value}>
-            {o.label}
-          </option>
-        ))}
-      </select>
+      {/* Wrapper carries the caret on ::after so it can be tinted by a token;
+          masking the <select> itself would clip its value text. */}
+      <span className={styles.selectWrap}>
+        <select value={value} onChange={(e) => onChange(Number(e.target.value))}>
+          {spec.options.map((o) => (
+            <option key={o.value} value={o.value}>
+              {o.label}
+            </option>
+          ))}
+        </select>
+      </span>
     </label>
   );
 }

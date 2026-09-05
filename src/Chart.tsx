@@ -83,6 +83,7 @@ import { chooseTimeTicks } from './xAxisTicks';
 import { drawSeries } from './utils/drawSeries';
 import {
   createColorResolver,
+  FALLBACK_COLOR,
   type ColorResolver,
 } from './utils/resolveChartColors';
 import styles from './Chart.module.css';
@@ -123,7 +124,9 @@ import {
 } from './context';
 
 const MARGIN = { top: 4, right: 60, bottom: 30, left: 0 };
-const CHART_FONT = "'Helvetica Neue', Helvetica, Arial, sans-serif";
+// Canvas/SVG font family reaches draw code via the token (SVG `.style()` accepts
+// var(); canvas composes it through the probe — see composeCanvasFont).
+const FONT_FAMILY_VAR = 'var(--font-family-base)';
 // Top band of the price plot reserved for the crosshair OHLC readout (drawn at
 // group-y 14). The price scale's range top starts here so a high candle never
 // rises into the readout. Single source, also passed to IndicatorLegend.
@@ -915,7 +918,8 @@ const Chart = ({
         series: r.series,
         meta: r.meta,
       })),
-      resolveColor: (v) => colorResolverRef.current?.resolve(v) ?? '#888888',
+      resolveColor: (v: string, prop?: string) =>
+        colorResolverRef.current?.resolve(v, prop) ?? FALLBACK_COLOR,
     });
   }, [scaleApi, applySuggestedBitmapSize]);
 
@@ -1269,7 +1273,8 @@ const Chart = ({
       data: scaleApi.data,
       baseTranslateX: scaleApi.baseTranslateX,
       marginTop: MARGIN.top,
-      resolveColor: (v) => colorResolverRef.current?.resolve(v) ?? '#888888',
+      resolveColor: (v: string, prop?: string) =>
+        colorResolverRef.current?.resolve(v, prop) ?? FALLBACK_COLOR,
     });
   }, [scaleApi]);
 
@@ -2300,6 +2305,16 @@ const Chart = ({
       .attr('x', 0)
       .attr('y', -MARGIN.top) as Sel<SVGRectElement>;
 
+    // Gradient stops are resolved from the appearance background (the single
+    // source), not re-hard-coded — so a themed background can't drift from the
+    // canvas paint. The colour probe turns the var() token into rgb.
+    const bgTop =
+      colorResolverRef.current?.resolve(app.background.topColor) ??
+      FALLBACK_COLOR;
+    const bgBottom =
+      colorResolverRef.current?.resolve(app.background.bottomColor) ??
+      FALLBACK_COLOR;
+
     const grad = defs
       .append('linearGradient')
       .attr('id', 'chart-bg-gradient')
@@ -2307,8 +2322,8 @@ const Chart = ({
       .attr('y1', '100%')
       .attr('x2', '0%')
       .attr('y2', '0%');
-    grad.append('stop').attr('offset', '0%').attr('stop-color', '#776a5a');
-    grad.append('stop').attr('offset', '100%').attr('stop-color', '#6e7b8b');
+    grad.append('stop').attr('offset', '0%').attr('stop-color', bgBottom);
+    grad.append('stop').attr('offset', '100%').attr('stop-color', bgTop);
 
     // userSpaceOnUse twin of the chart bg gradient. Used by the trade overlay
     // handles so their fill samples the actual background color at the handle's
@@ -2318,11 +2333,11 @@ const Chart = ({
       .append('linearGradient')
       .attr('id', 'chart-bg-gradient-user')
       .attr('gradientUnits', 'userSpaceOnUse');
-    gradUser.append('stop').attr('offset', '0%').attr('stop-color', '#6e7b8b');
+    gradUser.append('stop').attr('offset', '0%').attr('stop-color', bgTop);
     gradUser
       .append('stop')
       .attr('offset', '100%')
-      .attr('stop-color', '#776a5a');
+      .attr('stop-color', bgBottom);
     bgGradientUserRef.current = gradUser as Sel<SVGLinearGradientElement>;
 
     // The canvas series layer (beneath this SVG) now paints the background
@@ -2340,14 +2355,14 @@ const Chart = ({
     yPriceAxisGRef.current = g
       .append('g')
       .style('font-size', 'var(--text-2hxs)')
-      .style('font-family', CHART_FONT)
+      .style('font-family', FONT_FAMILY_VAR)
       .style('font-weight', '500')
       .style('color', 'var(--chart-axis-label)') as Sel<SVGGElement>;
 
     ySubAxisGRef.current = g
       .append('g')
       .style('font-size', 'var(--text-2hxs)')
-      .style('font-family', CHART_FONT)
+      .style('font-family', FONT_FAMILY_VAR)
       .style('font-weight', '500')
       .style('color', 'var(--chart-axis-label)')
       .style('display', 'none') as Sel<SVGGElement>;
@@ -2394,23 +2409,26 @@ const Chart = ({
     xAxisGRef.current = chartGroup
       .append('g')
       .style('font-size', 'var(--text-2hxs)')
-      .style('font-family', CHART_FONT)
+      .style('font-family', FONT_FAMILY_VAR)
       .style('font-weight', '500')
       .style('color', 'var(--chart-axis-label)') as Sel<SVGGElement>;
 
+    // Crosshair style comes from the appearance defaults (single source); the
+    // effect keyed on appCrosshairKey keeps it in sync. 'currentColor' inherits
+    // the group's --chart-axis-label, so it is set straight, never probe-resolved.
     crosshairVRef.current = g
       .append('line')
-      .attr('stroke', 'currentColor')
-      .attr('stroke-opacity', 0.3)
-      .attr('stroke-dasharray', '3,3')
+      .attr('stroke', app.crosshair.color)
+      .attr('stroke-opacity', app.crosshair.opacity)
+      .attr('stroke-dasharray', app.crosshair.dash)
       .attr('y1', 0)
       .style('visibility', 'hidden') as Sel<SVGLineElement>;
 
     crosshairHRef.current = g
       .append('line')
-      .attr('stroke', 'currentColor')
-      .attr('stroke-opacity', 0.3)
-      .attr('stroke-dasharray', '3,3')
+      .attr('stroke', app.crosshair.color)
+      .attr('stroke-opacity', app.crosshair.opacity)
+      .attr('stroke-dasharray', app.crosshair.dash)
       .attr('x1', 0)
       .style('visibility', 'hidden') as Sel<SVGLineElement>;
 
@@ -2419,7 +2437,7 @@ const Chart = ({
       .attr('x', 8)
       .attr('y', 14)
       .style('font-size', 'var(--text-sm)')
-      .style('font-family', CHART_FONT)
+      .style('font-family', FONT_FAMILY_VAR)
       .style('font-weight', '500')
       .attr('fill', 'currentColor')
       .style('visibility', 'hidden');
@@ -2447,7 +2465,7 @@ const Chart = ({
       .attr('y', 13)
       .attr('text-anchor', 'middle')
       .style('font-size', 'var(--text-3xs)')
-      .style('font-family', CHART_FONT)
+      .style('font-family', FONT_FAMILY_VAR)
       .style('font-weight', '500')
       .attr('fill', 'currentColor') as Sel<SVGTextElement>;
 
@@ -2558,8 +2576,15 @@ const Chart = ({
 
     // Match the userSpace twin gradient to the bg rect's actual y extent, and
     // drive its stop colors from `app.background` so a customized background and
-    // the overlay handles (which sample this gradient) stay in sync.
+    // the overlay handles (which sample this gradient) stay in sync. Resolved to
+    // rgb — the tokens are var() strings that an SVG stop-color can't evaluate.
     const bgH = fullHeight + MARGIN.top + MARGIN.bottom;
+    const bgTopRgb =
+      colorResolverRef.current?.resolve(app.background.topColor) ??
+      FALLBACK_COLOR;
+    const bgBottomRgb =
+      colorResolverRef.current?.resolve(app.background.bottomColor) ??
+      FALLBACK_COLOR;
     bgGradientUserRef
       .current!.attr('x1', 0)
       .attr('y1', -MARGIN.top)
@@ -2568,9 +2593,7 @@ const Chart = ({
     bgGradientUserRef
       .current!.selectAll<SVGStopElement, unknown>('stop')
       .attr('stop-color', function () {
-        return this.getAttribute('offset') === '0%'
-          ? app.background.topColor
-          : app.background.bottomColor;
+        return this.getAttribute('offset') === '0%' ? bgTopRgb : bgBottomRgb;
       });
 
     clipRectRef
@@ -2990,7 +3013,7 @@ const Chart = ({
     // layout / y-scale / indicator / chartType changes — the pan path reuses
     // this with only a fresh baseTranslateX).
     const resolveColor = (v: string) =>
-      colorResolverRef.current?.resolve(v) ?? '#888888';
+      colorResolverRef.current?.resolve(v) ?? FALLBACK_COLOR;
     drawStateRef.current = {
       cssWidth: effectiveWidth,
       cssHeight: totalHeight + MARGIN.top + MARGIN.bottom,
@@ -3113,7 +3136,8 @@ const Chart = ({
       dataLength: scaleApi.data.length,
       marginTop: MARGIN.top,
       patternStyle: app.patterns,
-      resolveColor: (v) => colorResolverRef.current?.resolve(v) ?? '#888888',
+      resolveColor: (v: string, prop?: string) =>
+        colorResolverRef.current?.resolve(v, prop) ?? FALLBACK_COLOR,
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [effectivePatterns, layout, scaleApi, appPatternsKey, colorEpoch]);
@@ -3613,7 +3637,7 @@ const Chart = ({
               onExpandedChange={onInfoBarExpandedChange}
               subscribeHoverIndex={subscribeHoverIndex}
               priceFormatter={fmtPrice}
-              resolveColor={(v) => colorResolverRef.current?.resolve(v) ?? '#888888'}
+              resolveColor={(v) => colorResolverRef.current?.resolve(v) ?? FALLBACK_COLOR}
             />
           )}
           {layout != null &&
@@ -3766,7 +3790,7 @@ const Chart = ({
                   appearance={appearance ?? {}}
                   onAppearanceChange={onAppearanceChange}
                   resolveColor={(v) =>
-                    colorResolverRef.current?.resolve(v) ?? '#888888'
+                    colorResolverRef.current?.resolve(v) ?? FALLBACK_COLOR
                   }
                   triggerRef={settingsGearRef}
                   onClose={() => setSettingsOpen(false)}
@@ -3783,7 +3807,7 @@ const Chart = ({
               appearance={appearance ?? {}}
               onAppearanceChange={onAppearanceChange}
               resolveColor={(v) =>
-                colorResolverRef.current?.resolve(v) ?? '#888888'
+                colorResolverRef.current?.resolve(v) ?? FALLBACK_COLOR
               }
               onClose={closeCenterPanel}
               className={styles.centeredPanel}
@@ -3819,7 +3843,7 @@ const Chart = ({
                     )
                   }
                   resolveColor={(v) =>
-                    colorResolverRef.current?.resolve(v) ?? '#888888'
+                    colorResolverRef.current?.resolve(v) ?? FALLBACK_COLOR
                   }
                   onClose={closeCenterPanel}
                   className={styles.centeredPanel}
@@ -3839,7 +3863,7 @@ const Chart = ({
                 closeCenterPanel();
               }}
               resolveColor={(v) =>
-                colorResolverRef.current?.resolve(v) ?? '#888888'
+                colorResolverRef.current?.resolve(v) ?? FALLBACK_COLOR
               }
               onClose={closeCenterPanel}
               className={styles.centeredPanel}

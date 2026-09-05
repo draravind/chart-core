@@ -10,7 +10,6 @@ const LABEL_PADDING_Y = 4;
 
 // Base-stats annotation (days lasted + depth %) drawn directly on the
 // resistance line — no background chip, centered on the base's midpoint bar.
-const STAT_FONT_SIZE = 10;
 const STAT_BASELINE_OFFSET = 6; // gap above the resistance line for the stat row
 
 type Level = {
@@ -113,9 +112,9 @@ export function renderBaseBreakout(
         .attr('x', statX)
         .attr('y', statY)
         .attr('text-anchor', 'middle')
-        .attr('font-size', STAT_FONT_SIZE)
+        .style('font-size', 'var(--text-3xs)')
         .attr('fill', rc(st.statColor))
-        .attr('font-weight', 600)
+        .style('font-weight', 'var(--font-weight-semibold)')
         .text(
           `${Math.round(level.base_days)}d · ${level.base_depth_pct.toFixed(1)}%`,
         );
@@ -146,7 +145,7 @@ export function renderBaseBreakout(
     .attr('dominant-baseline', 'central')
     .attr('font-size', LABEL_FONT_SIZE)
     .attr('fill', rc(st.labelTextColor))
-    .attr('font-weight', 600)
+    .style('font-weight', 'var(--font-weight-semibold)')
     .text(labelText);
 
   // Measure rendered text width so the chip wraps the text precisely.

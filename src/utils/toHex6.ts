@@ -9,7 +9,7 @@
 // swatch is opaque); `color-mix(... transparent)` line tokens still hex to their
 // base color, which is what the user edits.
 
-const FALLBACK = '#888888';
+import { FALLBACK_COLOR as FALLBACK } from './resolveChartColors';
 
 const hex255 = (n: number): string =>
   Math.max(0, Math.min(255, Math.round(n))).toString(16).padStart(2, '0');

@@ -65,7 +65,7 @@ export function drawLabelChip(
     .attr('dominant-baseline', 'central')
     .attr('font-size', fontSize)
     .attr('fill', rc(style.labelTextColor))
-    .attr('font-weight', 600)
+    .style('font-weight', 'var(--font-weight-semibold)')
     .text(text);
 
   const textW = textEl.node()?.getBBox().width ?? text.length * 7;

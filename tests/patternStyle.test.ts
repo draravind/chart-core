@@ -6,58 +6,58 @@ import { APPEARANCE_DEFAULTS } from '../src/appearance/registry';
 describe('APPEARANCE_DEFAULTS.patterns parity with the original renderer consts', () => {
   it('base_breakout', () => {
     expect(APPEARANCE_DEFAULTS.patterns.base_breakout).toEqual({
-      lineColor: '#252525',
+      lineColor: 'var(--chart-pattern-fill)',
       lineWidth: 1.5,
       lineOpacity: 0.5,
       lineDash: '5 4',
-      statColor: '#252525',
-      dotFill: '#252525',
-      labelBg: '#252525',
+      statColor: 'var(--chart-pattern-fill)',
+      dotFill: 'var(--chart-pattern-fill)',
+      labelBg: 'var(--chart-pattern-fill)',
       labelBgOpacity: 0.7,
-      labelTextColor: '#ffffff',
+      labelTextColor: 'var(--chart-pattern-label-text)',
       labelFontSize: 11,
     });
   });
 
   it('consolidation', () => {
     expect(APPEARANCE_DEFAULTS.patterns.consolidation).toEqual({
-      boxFill: '#252525',
+      boxFill: 'var(--chart-pattern-fill)',
       boxFillOpacity: 0.1,
-      labelBg: '#252525',
+      labelBg: 'var(--chart-pattern-fill)',
       labelBgOpacity: 0.7,
-      labelTextColor: '#ffffff',
+      labelTextColor: 'var(--chart-pattern-label-text)',
       labelFontSize: 11,
     });
   });
 
   it('high_tight_flag', () => {
     expect(APPEARANCE_DEFAULTS.patterns.high_tight_flag).toEqual({
-      poleColor: '#252525',
+      poleColor: 'var(--chart-pattern-fill)',
       poleWidth: 2,
       poleOpacity: 0.35,
-      flagFill: '#252525',
+      flagFill: 'var(--chart-pattern-fill)',
       flagFillOpacity: 0.12,
-      labelBg: '#252525',
+      labelBg: 'var(--chart-pattern-fill)',
       labelBgOpacity: 0.7,
-      labelTextColor: '#ffffff',
+      labelTextColor: 'var(--chart-pattern-label-text)',
       labelFontSize: 11,
     });
   });
 
   // The nine added patterns. Each renderer reads exactly the keys asserted here,
-  // all neutral-gray #252525 with house opacities, so zero-config visuals are
-  // stable and recoloring via the gear dialog hits every drawn element.
+  // all the shared --chart-pattern-fill token with house opacities, so zero-config
+  // visuals are stable and recoloring via the gear dialog hits every drawn element.
   const LABEL = {
-    labelBg: '#252525',
+    labelBg: 'var(--chart-pattern-fill)',
     labelBgOpacity: 0.7,
-    labelTextColor: '#ffffff',
+    labelTextColor: 'var(--chart-pattern-label-text)',
     labelFontSize: 11,
   };
-  const MARKER = { markerColor: '#252525', markerOpacity: 0.9 };
+  const MARKER = { markerColor: 'var(--chart-pattern-fill)', markerOpacity: 0.9 };
 
   it('gap_up', () => {
     expect(APPEARANCE_DEFAULTS.patterns.gap_up).toEqual({
-      bandFill: '#252525',
+      bandFill: 'var(--chart-pattern-fill)',
       bandFillOpacity: 0.1,
       ...LABEL,
     });
@@ -72,14 +72,14 @@ describe('APPEARANCE_DEFAULTS.patterns parity with the original renderer consts'
 
   it('golden_cross', () => {
     expect(APPEARANCE_DEFAULTS.patterns.golden_cross).toEqual({
-      dotFill: '#252525',
+      dotFill: 'var(--chart-pattern-fill)',
       ...LABEL,
     });
   });
 
   it('nr7', () => {
     expect(APPEARANCE_DEFAULTS.patterns.nr7).toEqual({
-      lineColor: '#252525',
+      lineColor: 'var(--chart-pattern-fill)',
       lineWidth: 1,
       lineOpacity: 0.5,
       ...MARKER,
@@ -110,10 +110,10 @@ describe('APPEARANCE_DEFAULTS.patterns parity with the original renderer consts'
 
   it('inside_day', () => {
     expect(APPEARANCE_DEFAULTS.patterns.inside_day).toEqual({
-      lineColor: '#252525',
+      lineColor: 'var(--chart-pattern-fill)',
       lineWidth: 1.5,
       lineOpacity: 0.5,
-      boxStroke: '#252525',
+      boxStroke: 'var(--chart-pattern-fill)',
       boxStrokeWidth: 1.5,
       boxStrokeOpacity: 0.6,
       ...LABEL,
@@ -122,8 +122,8 @@ describe('APPEARANCE_DEFAULTS.patterns parity with the original renderer consts'
 
   it('pullback_to_ema', () => {
     expect(APPEARANCE_DEFAULTS.patterns.pullback_to_ema).toEqual({
-      dotFill: '#252525',
-      lineColor: '#252525',
+      dotFill: 'var(--chart-pattern-fill)',
+      lineColor: 'var(--chart-pattern-fill)',
       lineWidth: 1.5,
       lineOpacity: 0.5,
       ...LABEL,

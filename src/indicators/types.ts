@@ -182,13 +182,15 @@ export type IndicatorDef<S = Record<string, unknown>> = {
    *  untouched to `draw`. A user SETTING never rides `meta`. */
   compute(input: IndicatorInput, s: S): { series: IndicatorSeries; meta?: unknown };
   /** Paint the indicator. `resolveColor` resolves a color-field expr (var() or
-   *  raw hex) to rgb; `meta` is the per-instance compute payload. */
+   *  raw hex) to rgb; pass a second `prop` ('font-weight' | 'font-size' | …) to
+   *  read back a non-colour computed value instead (used by volume/quarterly to
+   *  compose their `ctx.font`). `meta` is the per-instance compute payload. */
   draw(
     ctx: CanvasRenderingContext2D,
     series: IndicatorSeries,
     scale: IndicatorDrawScale,
     s: S,
-    resolveColor: (expr: string) => string,
+    resolveColor: (expr: string, prop?: string) => string,
     meta?: unknown,
   ): void;
   /** Which of this def's series the scale autofits over — read by BOTH the

@@ -35,20 +35,22 @@ export function styleOf(shape: DrawingShape): EffectiveDrawingStyle {
   return effectiveDrawingStyle(shape.style);
 }
 
-// Endpoint grab handle (white fill, shape-colored ring). pointer-events: none so
-// the underlying overlayRect keeps the mousedown — hit-testing is manual.
+// Endpoint grab handle (token-tinted fill, shape-colored ring). pointer-events:
+// none so the underlying overlayRect keeps the mousedown — hit-testing is manual.
+// `fill` is already resolved by the caller (drawHandle has no resolver in scope).
 export function drawHandle(
   label: Sel,
   x: number,
   y: number,
   color: string,
+  fill: string,
 ): void {
   label
     .append('circle')
     .attr('cx', x)
     .attr('cy', y)
     .attr('r', HANDLE_RADIUS)
-    .attr('fill', '#ffffff')
+    .attr('fill', fill)
     .attr('stroke', color)
     .attr('stroke-width', 1.5)
     .style('pointer-events', 'none');

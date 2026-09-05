@@ -103,7 +103,7 @@ export function renderConsolidation(
     .attr('dominant-baseline', 'central')
     .attr('font-size', LABEL_FONT_SIZE)
     .attr('fill', rc(st.labelTextColor))
-    .attr('font-weight', 600)
+    .style('font-weight', 'var(--font-weight-semibold)')
     .text(labelText);
   const textW = text.node()?.getBBox().width ?? labelText.length * 7;
   const chipW = textW + 2 * LABEL_PADDING_X;

@@ -50,7 +50,14 @@ export function renderText(
     .attr('stroke', ctx.selected ? rc(eff.color) : 'none')
     .attr('stroke-width', ctx.selected ? 1 : 0);
 
-  if (ctx.selected) drawHandle(layers.label, p.x, p.y, rc(eff.color));
+  if (ctx.selected)
+    drawHandle(
+      layers.label,
+      p.x,
+      p.y,
+      rc(eff.color),
+      rc('var(--chart-drawing-handle)'),
+    );
 
   // Box origin is the anchor (top-left), in panned-local space.
   const box = { x: p.x, y: p.y, width: boxW, height: boxH };

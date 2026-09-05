@@ -2,6 +2,7 @@ import type { QuarterlyResult } from '../../types';
 import { barIndexForDate } from '../../utils/dateBarIndex';
 import type { DomainSpec, IndicatorDef, IndicatorInput } from '../types';
 import { cellAt, fmt2 } from '../draw';
+import { composeCanvasFont } from '../../utils/resolveChartColors';
 
 // ---------------------------------------------------------------------------
 // Quarterly Results — a fundamentals subpane porting the finance website's
@@ -41,7 +42,9 @@ export type QrRow = {
 const YOY_TOLERANCE_DAYS = 40;
 const MIN_COL_SPACING_PX = 70;
 const MIN_FULL_LAYOUT_PANE_PX = 65;
-const QR_FONT = "500 10px 'Helvetica Neue', Helvetica, Arial, sans-serif";
+// Composed at draw time from weight/size/family tokens via the probe (canvas
+// reads no CSS vars); the literal is the fallback when the probe is unmounted.
+const QR_FONT_FALLBACK = "500 10px 'Helvetica Neue', Helvetica, Arial, sans-serif";
 const DAY_MS = 86_400_000;
 const YEAR_MS = 365 * DAY_MS;
 const MAX_BAR_PX = 48;
@@ -253,7 +256,12 @@ const draw: IndicatorDef<QuarterlyResultsSettings>['draw'] = (
   ctx.beginPath();
   ctx.rect(-1e6, paneTop, 2e6, paneHeight);
   ctx.clip();
-  ctx.font = QR_FONT;
+  ctx.font = composeCanvasFont(
+    resolveColor,
+    'var(--font-weight-medium)',
+    'var(--text-3xs)',
+    QR_FONT_FALLBACK,
+  );
 
   // Visible anchors → { g, x (column center), row }.
   const anchors: { g: number; x: number; row: QrRow }[] = [];

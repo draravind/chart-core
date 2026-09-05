@@ -142,7 +142,7 @@ export function renderHighTightFlag(
     .attr('dominant-baseline', 'central')
     .attr('font-size', LABEL_FONT_SIZE)
     .attr('fill', rc(st.labelTextColor))
-    .attr('font-weight', 600)
+    .style('font-weight', 'var(--font-weight-semibold)')
     .text(labelText);
 
   // Measure rendered text width so the chip wraps the text precisely.
