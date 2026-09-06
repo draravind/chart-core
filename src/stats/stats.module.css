@@ -23,10 +23,12 @@
   box-shadow: var(--shadow-card);
   font-family: var(--font-family-base);
   font-variant-numeric: tabular-nums;
+  font-weight: 300;
 }
 
 .statsTable {
   border-collapse: collapse;
+  opacity: 0.85;
 }
 
 .statsTable td {
