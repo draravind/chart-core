@@ -3389,8 +3389,15 @@ const Chart = ({
           0,
           Math.min(width - CROSSHAIR_DATE_PILL_W, lineX - CROSSHAIR_DATE_PILL_W / 2),
         );
+        // Sit in the date gutter at the BOTTOM of every pane, where the permanent
+        // time ticks are drawn (`translate(0, fullHeight)`), not the price pane's
+        // bottom — with subpanes present `fullHeight > priceHeight`, so keying off
+        // `priceHeight` dropped the pill between the price pane and the subpanes.
+        // Without subpanes `fullHeight === priceHeight`, so the common case is
+        // unchanged. `scaleApi` doesn't carry fullHeight; the live band ref does.
+        const gutterY = paneBandsRef.current.fullHeight + 4;
         dateLabelGroupRef
-          .current!.attr('transform', `translate(${px},${priceHeight + 4})`)
+          .current!.attr('transform', `translate(${px},${gutterY})`)
           .style('visibility', 'visible');
         dateLabelTextRef.current!.text(formatCrosshairDate(dateStr));
       } else {
@@ -3588,8 +3595,7 @@ const Chart = ({
       const panel = panelTargetAt(mx, my);
       if (panel) openCenterPanelRef.current(panel);
       // A text box also opens the on-canvas editor for its text (the popup keeps
-      // colour / size / background / box width). Text is edited in place, never
-      // in the popup.
+      // colour / size / background). Text is edited in place, never in the popup.
       if (panel?.kind === 'drawing') {
         const hit = effectiveDrawingsRef.current.find((s) => s.id === panel.id);
         if (hit?.type === 'text') setEditingTextId(panel.id);

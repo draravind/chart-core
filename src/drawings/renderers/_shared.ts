@@ -60,6 +60,26 @@ export function drawHandle(
     .style('pointer-events', 'none');
 }
 
+// A filled triangular arrowhead, tip AT (x, tipY), pointing along `dir`
+// (+1 = down / larger y, -1 = up). A `<polygon>`, not a `<marker>` — marker
+// `url(#id)` refs resolve document-wide and the ids in play here aren't unique
+// (the placement preview uses `__draft__`), so two charts on one page would
+// cross-wire; a polygon also puts the tip exactly where we ask. `color` is
+// already resolved by the caller.
+export function drawArrowHead(
+  sel: Sel,
+  opts: { x: number; tipY: number; dir: number; color: string; size: number },
+): void {
+  const { x, tipY, dir, color, size } = opts;
+  const halfW = size * 0.7;
+  const baseY = tipY - dir * size;
+  sel
+    .append('polygon')
+    .attr('points', `${x},${tipY} ${x - halfW},${baseY} ${x + halfW},${baseY}`)
+    .attr('fill', color)
+    .style('pointer-events', 'none');
+}
+
 // Apply the resolved line style to a <line>/<polyline> selection. Generic over
 // the element type so a concrete `Selection<SVGLineElement>` passes (the d3
 // Selection type is effectively invariant on its element).

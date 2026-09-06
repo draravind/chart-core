@@ -1,4 +1,4 @@
-import type { PointerEvent as ReactPointerEvent } from 'react';
+import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import { GripHorizontal, Trash2 } from 'lucide-react';
 import { cn } from '../internal/cn';
 import { useDraggablePanel } from '../panel/useDraggablePanel';
@@ -6,6 +6,7 @@ import { defaultPanelPosition } from '../stats/position';
 import type { StatsPaneRect, StatsPosition, LegacyStatsPosition } from '../stats/types';
 import type { DrawingTool } from '../drawings/types';
 import { DRAW_TOOLS } from './drawTools';
+import { useDismissable } from './useDismissable';
 import styles from './DrawToolbar.module.css';
 
 type Props = {
@@ -44,6 +45,21 @@ export default function DrawToolbar(p: Props) {
     if (!(e.target as HTMLElement).closest('[data-drag-handle]')) return;
     beginDrag?.(e);
   };
+
+  // "Delete all" wipes every drawing at once, so it asks first: the click opens a
+  // small confirm popover anchored to the button, and only its Delete fires the
+  // clear. An outside press or Escape (via the shared dismissal stack) closes it,
+  // as does the drawings going to zero from under it.
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const trashRef = useRef<HTMLButtonElement | null>(null);
+  const confirmRef = useRef<HTMLDivElement | null>(null);
+  const closeConfirm = () => setConfirmOpen(false);
+  // `trashRef` is in the layer so the button's own toggle click isn't read as an
+  // outside press (which would dismiss-then-reopen).
+  useDismissable(confirmOpen, closeConfirm, [confirmRef, trashRef]);
+  useEffect(() => {
+    if (p.drawingCount === 0) setConfirmOpen(false);
+  }, [p.drawingCount]);
 
   return (
     <div className={styles.host} data-chart-drawtoolbar="">
@@ -88,16 +104,50 @@ export default function DrawToolbar(p: Props) {
         {p.onDeleteAll && (
           <>
             <div className={styles.divider} />
-            <button
-              type="button"
-              title="Delete all"
-              aria-label="Delete all drawings"
-              className={styles.toolBtn}
-              disabled={p.drawingCount === 0}
-              onClick={p.onDeleteAll}
-            >
-              <Trash2 size={16} />
-            </button>
+            <div className={styles.trashWrap}>
+              <button
+                ref={trashRef}
+                type="button"
+                title="Delete all"
+                aria-label="Delete all drawings"
+                aria-haspopup="dialog"
+                aria-expanded={confirmOpen}
+                className={cn(styles.toolBtn, confirmOpen && styles.toolBtnActive)}
+                disabled={p.drawingCount === 0}
+                onClick={() => setConfirmOpen((o) => !o)}
+              >
+                <Trash2 size={16} />
+              </button>
+              {confirmOpen && (
+                <div
+                  ref={confirmRef}
+                  className={styles.confirmPopover}
+                  role="dialog"
+                  aria-label="Delete all drawings"
+                >
+                  <div className={styles.confirmText}>Delete all drawings?</div>
+                  <div className={styles.confirmActions}>
+                    <button
+                      type="button"
+                      className={styles.confirmCancel}
+                      onClick={closeConfirm}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      className={styles.confirmDelete}
+                      onClick={() => {
+                        closeConfirm();
+                        p.onDeleteAll?.();
+                      }}
+                    >
+                      Delete
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
           </>
         )}
       </div>

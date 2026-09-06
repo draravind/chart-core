@@ -1,6 +1,6 @@
 import { projectAnchor } from '../projection';
 import { hitTextBox } from '../hitTest';
-import { wrapText } from '../wrapText';
+import { textBoxLayout, TEXT_PAD_X, TEXT_PAD_Y } from '../textLayout';
 import type { TextDrawing } from '../types';
 import {
   drawHandle,
@@ -10,12 +10,13 @@ import {
   type DrawnHit,
 } from './_shared';
 
-// A text comment box: SVG <rect> + wrapping <text> (pans for free with the inner
-// group, no foreignObject quirks). Fixed width (`eff.boxWidth`); text wraps onto
-// new <tspan> lines and the box height grows with the line count. Drawn in the
-// unclipped label layer so it isn't sliced at the viewport edge. Editing happens
-// on-canvas in an HTML <textarea>; while a box is being edited its SVG body is
-// skipped (`ctx.editingId`) so the two don't double-draw.
+// A text comment box: SVG <rect> + <text> (pans for free with the inner group, no
+// foreignObject quirks). The box hugs its text — width is the widest line, height
+// is one <tspan> per hard newline, both measured off the real font. No soft-wrap:
+// lines come only from newlines the editor kept. Drawn in the unclipped label
+// layer so it isn't sliced at the viewport edge. Editing happens on-canvas in an
+// HTML <textarea>; while a box is being edited its SVG body is skipped
+// (`ctx.editingId`) so the two don't double-draw.
 export function renderText(
   shape: TextDrawing,
   layers: DrawLayers,
@@ -24,8 +25,6 @@ export function renderText(
   const eff = styleOf(shape);
   const rc = ctx.resolveColor;
   const p = projectAnchor(shape.a, ctx.s);
-  const padX = 6;
-  const padY = 4;
   const lineHeight = Math.round(eff.fontSize * 1.35);
   const editing = ctx.editingId != null && ctx.editingId === shape.id;
 
@@ -35,14 +34,15 @@ export function renderText(
     .style('pointer-events', 'none');
 
   // One text node, used first to MEASURE (getComputedTextLength) and then to
-  // hold the wrapped tspans. An empty box shows a placeholder so it stays
-  // selectable.
-  const raw = eff.text || 'Text';
+  // hold the tspans. `xml:space="preserve"` keeps leading/inner/trailing spaces
+  // (SVG collapses them by default), so measure and paint match what the
+  // `white-space: pre` editor showed.
   const text = g
     .append('text')
-    .attr('x', padX)
-    .attr('y', padY)
+    .attr('x', TEXT_PAD_X)
+    .attr('y', TEXT_PAD_Y)
     .attr('dominant-baseline', 'hanging')
+    .attr('xml:space', 'preserve')
     .attr('font-size', eff.fontSize)
     .style('font-family', 'var(--font-family-base)')
     .attr('fill', rc(eff.color));
@@ -52,20 +52,21 @@ export function renderText(
     node.textContent = s;
     return node.getComputedTextLength();
   };
-  const lines = wrapText(raw, eff.boxWidth, measure);
+  const { lines, boxWidth: boxW, boxHeight: boxH } = textBoxLayout(
+    eff.text,
+    eff.fontSize,
+    measure,
+  );
   if (node) node.textContent = '';
   lines.forEach((ln, i) => {
     text
       .append('tspan')
-      .attr('x', padX)
+      .attr('x', TEXT_PAD_X)
       .attr('dy', i === 0 ? 0 : lineHeight)
-      // A zero-width space keeps an empty wrapped line from collapsing.
+      // A zero-width space keeps an empty line from collapsing.
       .text(ln.length === 0 ? '\u200b' : ln);
   });
   if (editing) text.style('visibility', 'hidden');
-
-  const boxW = eff.boxWidth + 2 * padX;
-  const boxH = lines.length * lineHeight + 2 * padY;
   g.insert('rect', 'text')
     .attr('x', 0)
     .attr('y', 0)

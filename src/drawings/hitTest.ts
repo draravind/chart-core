@@ -65,17 +65,21 @@ export function hitVLine(
   return null;
 }
 
-// Text box — a rect `{x,y,width,height}` (top-left origin).
+// Text box — a rect `{x,y,width,height}` (top-left origin). `tolerance` inflates
+// the rect on all four sides; it defaults to 0 so every text-box call is exact
+// and unchanged, while the ruler passes `HIT_TOLERANCE` so a zero-height (flat)
+// or zero-width (single-bar) box stays grabbable.
 export function hitTextBox(
   mx: number,
   my: number,
   box: { x: number; y: number; width: number; height: number },
+  tolerance = 0,
 ): Hit {
   if (
-    mx >= box.x &&
-    mx <= box.x + box.width &&
-    my >= box.y &&
-    my <= box.y + box.height
+    mx >= box.x - tolerance &&
+    mx <= box.x + box.width + tolerance &&
+    my >= box.y - tolerance &&
+    my <= box.y + box.height + tolerance
   )
     return { kind: 'body' };
   return null;

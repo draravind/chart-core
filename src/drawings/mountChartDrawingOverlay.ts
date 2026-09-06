@@ -191,8 +191,9 @@ export function mountChartDrawingOverlay(
       // Live feedback chip: signed Δprice + Δ% from the first anchor to the
       // cursor, near the cursor, coloured by direction (green up / red down) —
       // the same math the ruler chip uses. Only the two-click tools have a
-      // first anchor to measure from.
-      if (ctx.draft.anchors.length >= 1) {
+      // first anchor to measure from. The ruler labels itself while placing (its
+      // own renderer paints the measure box), so it skips this generic chip.
+      if (ctx.draft.anchors.length >= 1 && ctx.draft.tool !== 'ruler') {
         drawPlacingChip(labelG, ctx.draft.anchors[0], ctx.draftPointer, s, ctx.resolveColor);
       }
     }

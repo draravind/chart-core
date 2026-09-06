@@ -190,10 +190,49 @@ test('trash button: disabled with no drawings, clears all once one exists', asyn
   expect(await num(page, 'drawingsCount')).toBe(1);
   await expect(trash).toBeEnabled();
 
+  // Click opens a confirm popover; the drawing is untouched until Delete.
+  const dialog = page.getByRole('dialog', { name: 'Delete all drawings' });
   await trash.click();
+  await expect(dialog).toBeVisible();
+  expect(await num(page, 'drawingsCount')).toBe(1); // still there — confirm pending
+  await dialog.getByRole('button', { name: 'Delete', exact: true }).click();
   await settle(page);
   expect(await num(page, 'drawingsCount')).toBe(0);
   await expect(trash).toBeDisabled();
+  await expect(dialog).toBeHidden();
+});
+
+test('trash confirm popover: Cancel and outside-click both spare the drawings', async ({ page }) => {
+  const trash = page.getByRole('button', { name: 'Delete all drawings' });
+  const dialog = page.getByRole('dialog', { name: 'Delete all drawings' });
+  const box = await frameBox(page);
+  const s = await readScale(page);
+  // Draw a trend line so the trash button is enabled, then return to the cursor
+  // tool so the "click away" below is a plain deselect, not a new placement.
+  await page.getByRole('button', { name: 'Trend line', exact: true }).click();
+  const a = client(box, s.width * 0.4, s.priceHeight * 0.4);
+  const c = client(box, s.width * 0.6, s.priceHeight * 0.6);
+  await page.mouse.click(a.x, a.y);
+  await page.mouse.click(c.x, c.y);
+  await page.getByRole('button', { name: 'Cursor', exact: true }).click();
+  await settle(page);
+  expect(await num(page, 'drawingsCount')).toBe(1);
+
+  // Cancel closes it, drawing intact.
+  await trash.click();
+  await expect(dialog).toBeVisible();
+  await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await expect(dialog).toBeHidden();
+  expect(await num(page, 'drawingsCount')).toBe(1);
+
+  // Re-open, then click empty chart space — dismisses without deleting.
+  await trash.click();
+  await expect(dialog).toBeVisible();
+  const away = client(box, s.width * 0.5, s.priceHeight * 0.15);
+  await page.mouse.click(away.x, away.y);
+  await settle(page);
+  await expect(dialog).toBeHidden();
+  expect(await num(page, 'drawingsCount')).toBe(1); // NOT cleared
 });
 
 test('moving the pointer onto the card keeps the OHLC readout', async ({ page }) => {

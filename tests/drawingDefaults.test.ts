@@ -12,16 +12,17 @@ describe('effectiveDrawingStyle', () => {
     expect(eff.fontSize).toBe(DRAWING_DEFAULTS.fontSize);
     expect(eff.bgColor).toBe(DRAWING_DEFAULTS.bgColor);
     expect(eff.bgOpacity).toBe(DRAWING_DEFAULTS.bgOpacity);
-    expect(eff.boxWidth).toBe(DRAWING_DEFAULTS.boxWidth);
   });
 
-  it('carries a default box width, overridable sparsely', () => {
-    expect(typeof DRAWING_DEFAULTS.boxWidth).toBe('number');
-    const eff = effectiveDrawingStyle({ boxWidth: 260 });
-    expect(eff.boxWidth).toBe(260);
-    // other fields untouched
+  it('ignores a stale boxWidth key without throwing (no migration needed)', () => {
+    // A drawing saved before box-width was removed still deserializes; the
+    // extra key is simply dropped by the merge.
+    const eff = effectiveDrawingStyle(JSON.parse('{"text":"hi","boxWidth":240}'));
+    expect(eff.text).toBe('hi');
     expect(eff.fontSize).toBe(DRAWING_DEFAULTS.fontSize);
     expect(eff.color).toBe(DRAWING_DEFAULTS.color);
+    expect(eff.bgOpacity).toBe(DRAWING_DEFAULTS.bgOpacity);
+    expect('boxWidth' in eff).toBe(false);
   });
 
   it('merges sparse overrides over defaults without mutating the input', () => {
@@ -74,7 +75,7 @@ describe('normalizeDrawing read-tolerance', () => {
     expect(normalizeDrawing(future)).toBe(future);
   });
 
-  it('round-trips a text shape with and without a boxWidth override', () => {
+  it('round-trips a text shape carrying a stale boxWidth key untouched', () => {
     const withWidth = {
       id: 't1',
       type: 'text',
@@ -87,7 +88,8 @@ describe('normalizeDrawing read-tolerance', () => {
       a: { date: '2024-01-01', price: 5 },
       style: { text: 'hi' },
     };
-    // Older payloads have neither field — read-tolerance keeps both.
+    // boxWidth is no longer a live field, but a payload that still carries it
+    // survives a load→save cycle unchanged (the caster returns `raw`).
     expect(normalizeDrawing(withWidth)).toBe(withWidth);
     expect(normalizeDrawing(withoutWidth)).toBe(withoutWidth);
   });

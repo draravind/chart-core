@@ -68,6 +68,30 @@ describe('hitHLine / hitVLine / hitTextBox', () => {
   });
 });
 
+describe('hitTextBox tolerance (ruler flat / single-bar boxes)', () => {
+  it('default tolerance 0 leaves text-box hits exact', () => {
+    const box = { x: 10, y: 10, width: 40, height: 20 };
+    // Same as the existing text-box cases, explicit tolerance 0.
+    expect(hitTextBox(30, 20, box, 0)).toEqual({ kind: 'body' });
+    expect(hitTextBox(9, 20, box, 0)).toBeNull();
+    expect(hitTextBox(51, 20, box, 0)).toBeNull();
+  });
+
+  it('a zero-HEIGHT rect (flat ruler) is grabbable within the tolerance band', () => {
+    const flat = { x: 0, y: 100, width: 80, height: 0 };
+    expect(hitTextBox(40, 100 - HIT_TOLERANCE, flat, HIT_TOLERANCE)).toEqual({ kind: 'body' });
+    expect(hitTextBox(40, 100 + HIT_TOLERANCE, flat, HIT_TOLERANCE)).toEqual({ kind: 'body' });
+    expect(hitTextBox(40, 100 + HIT_TOLERANCE + 1, flat, HIT_TOLERANCE)).toBeNull();
+  });
+
+  it('a zero-WIDTH rect (single-bar ruler) is grabbable within the tolerance band', () => {
+    const thin = { x: 100, y: 0, width: 0, height: 80 };
+    expect(hitTextBox(100 - HIT_TOLERANCE, 40, thin, HIT_TOLERANCE)).toEqual({ kind: 'body' });
+    expect(hitTextBox(100 + HIT_TOLERANCE, 40, thin, HIT_TOLERANCE)).toEqual({ kind: 'body' });
+    expect(hitTextBox(100 + HIT_TOLERANCE + 1, 40, thin, HIT_TOLERANCE)).toBeNull();
+  });
+});
+
 describe('hitAnchoredSegment (hray)', () => {
   const a = { x: 20, y: 50 };
   const end = { x: 200, y: 50 };

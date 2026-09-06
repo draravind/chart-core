@@ -4,7 +4,14 @@
   pointer-events: auto;
   position: absolute;
   z-index: 4;
-  width: 240px;
+  /* Fit the field rows rather than a fixed 240px: the text popup's "Background
+     opacity" label beside its slider is intrinsically ~244px, so a hard 240px
+     forced the panel-scroll body (overflow-y:auto ⇒ overflow-x computes to auto)
+     to show a horizontal scrollbar. max-content sizes to the widest row; the
+     bounds keep it from collapsing or running away. */
+  width: max-content;
+  min-width: 200px;
+  max-width: 300px;
   max-height: 70%;
   display: flex;
   flex-direction: column;

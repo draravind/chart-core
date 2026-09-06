@@ -53,9 +53,9 @@ export default function DrawingStylePopup({
   const eff = effectiveDrawingStyle(shape.style);
   const isText = shape.type === 'text';
 
-  // Uniform dismissal via the shared layer stack. This popup now carries only
-  // colour / size / background / box-width for a text shape — the text itself is
-  // edited on-canvas — so it no longer opens from a placing press.
+  // Uniform dismissal via the shared layer stack. This popup carries only colour
+  // / size / background for a text shape — the text itself is edited on-canvas
+  // and the box sizes to it — so it no longer opens from a placing press.
   useDismissable(true, onClose, [ref]);
 
   const patch = (partial: Partial<DrawingStyle>) =>
@@ -108,19 +108,6 @@ export default function DrawingStylePopup({
               }}
               value={eff.fontSize}
               onCommit={(v) => patch({ fontSize: v })}
-            />
-            <NumberField
-              spec={{
-                key: 'boxWidth',
-                label: 'Box width',
-                kind: 'number',
-                default: eff.boxWidth,
-                min: 80,
-                max: 600,
-                step: 1,
-              }}
-              value={eff.boxWidth}
-              onCommit={(v) => patch({ boxWidth: v })}
             />
             <ColorField
               label="Background"
