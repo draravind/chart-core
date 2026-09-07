@@ -6,7 +6,12 @@ import React, {
   useRef,
   useState,
 } from 'react';
-import { BarChart3, MousePointerClick, RotateCcw, Settings } from 'lucide-react';
+import {
+  BarChart3,
+  MousePointerClick,
+  RotateCcw,
+  Settings,
+} from 'lucide-react';
 import * as d3 from 'd3';
 import type {
   AutoFitMode,
@@ -101,10 +106,7 @@ import {
 } from './drawings/mountChartDrawingOverlay';
 import type { DrawingShape, DrawingTool, TextDrawing } from './drawings/types';
 import { normalizeDrawing } from './drawings/types';
-import {
-  reduceDrawing,
-  type DraftState,
-} from './drawings/interaction';
+import { reduceDrawing, type DraftState } from './drawings/interaction';
 import {
   dateForX,
   priceForY,
@@ -128,6 +130,10 @@ import {
 const MARGIN = { top: 4, right: 60, bottom: 30, left: 0 };
 // Width of the crosshair date pill in the time-axis gutter ("DD Mon 'YY").
 const CROSSHAIR_DATE_PILL_W = 72;
+// Gap in px between a crosshair pill and its axis line — the price pill from the
+// right border, the date pill from the bottom baseline. Shared so the two match
+// (they had drifted to 2px and 4px, which read as an uneven gap).
+const CROSSHAIR_PILL_GAP = 0;
 // Canvas/SVG font family reaches draw code via the token (SVG `.style()` accepts
 // var(); canvas composes it through the probe — see composeCanvasFont).
 const FONT_FAMILY_VAR = 'var(--font-family-base)';
@@ -153,7 +159,11 @@ const SUBPANE_MIN_PX = 24;
 const DEFAULT_SUBPANE_PAD = 0.08;
 const RIGHT_BUFFER = 18;
 const INFO_SPAN_COUNT = 12;
-const AXIS_STROKE = 'currentColor';
+// Tick marks share the axis-line colour (border/baseline/separators all use
+// --chart-separator), so the ticks read as short extensions of the frame rather
+// than a fainter, differently-tinted mark. Their opacity comes from
+// app.axis.opacity (default 1); a user can still fade them via the config.
+const AXIS_STROKE = 'var(--chart-separator)';
 // Minimum horizontal breathing room between two x-axis labels. A '%b %y' label is
 // ~40px wide, so below this they smear into each other; the axis drops to year
 // boundaries rather than overprint.
@@ -431,7 +441,10 @@ function shiftDrawing(
     case 'text':
       return { ...origin, a: shiftDrawingAnchor(origin.a, dxPx, dyPx, s) };
     case 'hline':
-      return { ...origin, price: priceForY(yForPrice(origin.price, s) + dyPx, s) };
+      return {
+        ...origin,
+        price: priceForY(yForPrice(origin.price, s) + dyPx, s),
+      };
     case 'vline':
       return { ...origin, date: dateForX(xForDate(origin.date, s) + dxPx, s) };
     default:
@@ -662,7 +675,10 @@ const Chart = ({
   // Measured bars/year — the engine is bar-index based and holds no interval
   // concept, so anything that needs calendar meaning (the zoom ladder, the ATR
   // stat windows) derives it from the series' own cadence.
-  const measuredBarsPerYear = useMemo(() => measureBarsPerYear(data ?? []), [data]);
+  const measuredBarsPerYear = useMemo(
+    () => measureBarsPerYear(data ?? []),
+    [data],
+  );
   // The named-range ladder for THIS series, in bar counts. Drives both the
   // readability cap below and the host's slider marks.
   const rangeMarks = useMemo(
@@ -838,12 +854,7 @@ const Chart = ({
     if (!data || data.length === 0) return null;
     const combined =
       warmupSeed && warmupSeed.length ? warmupSeed.concat(data) : data;
-    return computeStats(
-      combined,
-      statsTable,
-      statsMarket,
-      measuredBarsPerYear,
-    );
+    return computeStats(combined, statsTable, statsMarket, measuredBarsPerYear);
   }, [data, warmupSeed, statsTable, statsMarket, measuredBarsPerYear]);
 
   // Earnings-box view-model — the last six quarters baked into a corner table.
@@ -1100,7 +1111,8 @@ const Chart = ({
   // snapping X back when a per-frame setPriceView (Y pan) re-runs it mid-drag,
   // and so the crosshair yields. Derived from the gesture owner, not a mirror.
   const panDragging = () =>
-    gestureRef.current.kind === 'pan' && gestureRef.current.phase === 'dragging';
+    gestureRef.current.kind === 'pan' &&
+    gestureRef.current.phase === 'dragging';
   const chartGroupRef = useRef<SVGGElement | null>(null);
 
   // Long-lived d3 selections built once in Effect 1.
@@ -1170,13 +1182,17 @@ const Chart = ({
   // Chart-pattern overlay — read-only, bundled core feature; single persistent
   // handle (no per-tool map since detections aren't editable).
   const patternOverlayContainerRef = useRef<SVGGElement | null>(null);
-  const patternOverlayHandleRef = useRef<ChartPatternOverlayHandle | null>(null);
+  const patternOverlayHandleRef = useRef<ChartPatternOverlayHandle | null>(
+    null,
+  );
 
   // Drawing-tools overlay — interactive, persisted. Single persistent handle
   // driven from the same pan/rescale sites as the pattern overlay. Interaction
   // refs are read live by the imperative pointer handlers so they never rebind.
   const drawingOverlayContainerRef = useRef<SVGGElement | null>(null);
-  const drawingOverlayHandleRef = useRef<ChartDrawingOverlayHandle | null>(null);
+  const drawingOverlayHandleRef = useRef<ChartDrawingOverlayHandle | null>(
+    null,
+  );
   const activeToolRef = useRef<DrawingTool>(activeDrawingTool);
   useEffect(() => {
     activeToolRef.current = activeDrawingTool;
@@ -1316,7 +1332,10 @@ const Chart = ({
   const commitDrawing = useCallback((shape: DrawingShape) => {
     const list = effectiveDrawingsRef.current;
     const i = list.findIndex((s) => s.id === shape.id);
-    const next = i === -1 ? [...list, shape] : list.map((s) => (s.id === shape.id ? shape : s));
+    const next =
+      i === -1
+        ? [...list, shape]
+        : list.map((s) => (s.id === shape.id ? shape : s));
     onDrawingsChangeRef.current?.(next);
   }, []);
 
@@ -1368,12 +1387,7 @@ const Chart = ({
       }
       renderDrawings();
     },
-    [
-      pointerToAnchor,
-      selectDrawing,
-      commitDrawing,
-      renderDrawings,
-    ],
+    [pointerToAnchor, selectDrawing, commitDrawing, renderDrawings],
   );
 
   // Cursor mode + hit: select + start a drag (whole-shape or endpoint).
@@ -1384,12 +1398,18 @@ const Chart = ({
       my: number,
       pointerId: number,
     ) => {
-      const shape = effectiveDrawingsRef.current.find((s) => s.id === target.id);
+      const shape = effectiveDrawingsRef.current.find(
+        (s) => s.id === target.id,
+      );
       if (!shape) return;
       const anchor = pointerToAnchor(mx, my);
       const res = reduceDrawing(
         draftRef.current,
-        { type: 'down', anchor, target: { id: target.id, hit: target.hit, shape } },
+        {
+          type: 'down',
+          anchor,
+          target: { id: target.id, hit: target.hit, shape },
+        },
         { tool: 'cursor', makeId: makeDrawingId },
       );
       draftRef.current = res.draft;
@@ -1422,14 +1442,14 @@ const Chart = ({
   const panelDrawing = useMemo<DrawingShape | null>(
     () =>
       centerPanel?.kind === 'drawing'
-        ? effectiveDrawings.find((s) => s.id === centerPanel.id) ?? null
+        ? (effectiveDrawings.find((s) => s.id === centerPanel.id) ?? null)
         : null,
     [centerPanel, effectiveDrawings],
   );
   const panelIndicator = useMemo<IndicatorConfig | null>(
     () =>
       centerPanel?.kind === 'indicator'
-        ? indicators.find((c) => c.id === centerPanel.id) ?? null
+        ? (indicators.find((c) => c.id === centerPanel.id) ?? null)
         : null,
     [centerPanel, indicators],
   );
@@ -1501,7 +1521,10 @@ const Chart = ({
         }
         return;
       }
-      if ((e.key === 'Delete' || e.key === 'Backspace') && selectedIdRef.current) {
+      if (
+        (e.key === 'Delete' || e.key === 'Backspace') &&
+        selectedIdRef.current
+      ) {
         const t = e.target as HTMLElement | null;
         if (
           t &&
@@ -1561,7 +1584,10 @@ const Chart = ({
     [],
   );
 
-  const overlayPriceBounds = useMemo<{ min: number; max: number } | null>(() => {
+  const overlayPriceBounds = useMemo<{
+    min: number;
+    max: number;
+  } | null>(() => {
     const mins: number[] = [];
     const maxs: number[] = [];
     if (tradeBounds && !autoFitExcluded.includes('trade')) {
@@ -1589,7 +1615,8 @@ const Chart = ({
       seen.add(config.defKey);
       rows.push({ key: config.defKey, label: def.longLabel ?? def.label });
     }
-    if (tradeBounds != null) rows.push({ key: 'trade', label: 'Trade overlays' });
+    if (tradeBounds != null)
+      rows.push({ key: 'trade', label: 'Trade overlays' });
     if (triggerBounds != null)
       rows.push({ key: 'trigger', label: 'Trigger overlays' });
     return rows;
@@ -1724,8 +1751,12 @@ const Chart = ({
         // That is what absorbs a sub-pixel position; `round(w * ratio)` can't.
         const ratio = window.devicePixelRatio || 1;
         const r = c.getBoundingClientRect();
-        w = Math.round(r.left * ratio + r.width * ratio) - Math.round(r.left * ratio);
-        h = Math.round(r.top * ratio + r.height * ratio) - Math.round(r.top * ratio);
+        w =
+          Math.round(r.left * ratio + r.width * ratio) -
+          Math.round(r.left * ratio);
+        h =
+          Math.round(r.top * ratio + r.height * ratio) -
+          Math.round(r.top * ratio);
       }
       bitmapRef.current = {
         cssWidth: cssW,
@@ -1750,7 +1781,9 @@ const Chart = ({
     };
     function arm() {
       if (mql) mql.removeEventListener('change', onChange);
-      mql = window.matchMedia(`(resolution: ${window.devicePixelRatio || 1}dppx)`);
+      mql = window.matchMedia(
+        `(resolution: ${window.devicePixelRatio || 1}dppx)`,
+      );
       mql.addEventListener('change', onChange);
     }
     arm();
@@ -1788,7 +1821,8 @@ const Chart = ({
       // Without this, the wrapper's preventDefault() cancels the panel's native
       // scroll and zooms the chart instead. Contract: scroll panels tag their
       // scroll body with data-chart-wheel-scroll (see CLAUDE.md).
-      if ((e.target as Element | null)?.closest?.('[data-chart-wheel-scroll]')) return;
+      if ((e.target as Element | null)?.closest?.('[data-chart-wheel-scroll]'))
+        return;
       e.preventDefault();
       applyZoomFactor(e.deltaY > 0 ? ZOOM_FACTOR : 1 / ZOOM_FACTOR);
     }
@@ -1989,7 +2023,10 @@ const Chart = ({
     if (wrapperRef.current) wrapperRef.current.style.cursor = '';
     if (!wasDragging) return; // armed-only: nothing was moved
     if (chartGroupRef.current)
-      chartGroupRef.current.setAttribute('transform', `translate(${s.baseTx},0)`);
+      chartGroupRef.current.setAttribute(
+        'transform',
+        `translate(${s.baseTx},0)`,
+      );
     scaleApi.baseTranslateX = s.baseTx;
     notifyScale('pan');
     patternOverlayHandleRef.current?.setTransform(s.baseTx);
@@ -2399,10 +2436,7 @@ const Chart = ({
       .attr('id', 'chart-bg-gradient-user')
       .attr('gradientUnits', 'userSpaceOnUse');
     gradUser.append('stop').attr('offset', '0%').attr('stop-color', bgTop);
-    gradUser
-      .append('stop')
-      .attr('offset', '100%')
-      .attr('stop-color', bgBottom);
+    gradUser.append('stop').attr('offset', '100%').attr('stop-color', bgBottom);
     bgGradientUserRef.current = gradUser as Sel<SVGLinearGradientElement>;
 
     // The canvas series layer (beneath this SVG) now paints the background
@@ -2750,15 +2784,13 @@ const Chart = ({
       `translate(${baseTranslateX},0)`,
     );
 
-    xAxisGRef
-      .current!.attr('transform', `translate(0,${fullHeight})`)
-      .call(
-        d3
-          .axisBottom(xScale)
-          .tickValues(tickValues)
-          .tickSize(app.axis.tickSize)
-          .tickFormat((i) => tickLabels.get(i as number) ?? ''),
-      );
+    xAxisGRef.current!.attr('transform', `translate(0,${fullHeight})`).call(
+      d3
+        .axisBottom(xScale)
+        .tickValues(tickValues)
+        .tickSize(app.axis.tickSize)
+        .tickFormat((i) => tickLabels.get(i as number) ?? ''),
+    );
     // d3's domain path spans the bar RANGE and lives in the panned axis group, so
     // it drifts under pan/zoom and never reliably meets the price axis — drop it and
     // draw the baseline as fixed frame furniture instead (see xAxisBaselineRef).
@@ -2784,7 +2816,14 @@ const Chart = ({
       .attr('width', MARGIN.right)
       .attr('height', fullHeight);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [layout, effectiveWidth, data, activeSubpanes, appAxisKey, appBackgroundKey]);
+  }, [
+    layout,
+    effectiveWidth,
+    data,
+    activeSubpanes,
+    appAxisKey,
+    appBackgroundKey,
+  ]);
 
   // Effect B — y-scale draw. Runs on priceView changes too. Recomputes yPrice,
   // redraws the price axis, publishes the scale api, and repaints the canvas
@@ -3012,8 +3051,8 @@ const Chart = ({
         if (!spec?.hideAxis) {
           // Pane-specific tick format (e.g. Volume's K/M/B) overrides the default.
           const tickFmt = spec?.tickFormat ?? subTickFormat;
-          const axisG = ySubAxisGRef.current!
-            .append('g')
+          const axisG = ySubAxisGRef
+            .current!.append('g')
             .attr('transform', `translate(${width},0)`) as Sel<SVGGElement>;
           axisG.call(
             d3
@@ -3031,8 +3070,8 @@ const Chart = ({
         const levels = [...(spec?.guideLines ?? [])];
         if (spec?.zeroLine) levels.push(0);
         for (const level of levels) {
-          subGuidesGroupRef.current!
-            .append('line')
+          subGuidesGroupRef
+            .current!.append('line')
             .attr('x1', 0)
             .attr('x2', width)
             .attr('y1', scale(level))
@@ -3238,7 +3277,15 @@ const Chart = ({
   useEffect(() => {
     renderDrawings();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [effectiveDrawings, selectedId, editingTextId, layout, scaleApi, colorEpoch, renderDrawings]);
+  }, [
+    effectiveDrawings,
+    selectedId,
+    editingTextId,
+    layout,
+    scaleApi,
+    colorEpoch,
+    renderDrawings,
+  ]);
 
   // Re-apply crosshair styling (stroke / opacity / dash) from `app.crosshair`
   // whenever it changes. The crosshair lines are created once in Effect 1; SVG
@@ -3281,8 +3328,7 @@ const Chart = ({
         infoTextRef.current?.style('visibility', 'hidden');
         return;
       }
-      const i =
-        idx < 0 || idx >= stateData.length ? stateData.length - 1 : idx;
+      const i = idx < 0 || idx >= stateData.length ? stateData.length - 1 : idx;
       const d = stateData[i];
       const prevClose = i > 0 ? stateData[i - 1].close : d.open;
       const chg = d.close - prevClose;
@@ -3344,6 +3390,21 @@ const Chart = ({
         width,
       } = scaleApi;
 
+      // Tracking is bound to the SVG root (so it survives the cursor passing over
+      // overlay handles), so pointermove also fires over the axis gutters. Draw
+      // the crosshair only while the cursor is inside the plot rectangle — without
+      // this the vertical line strays past the price axis into the right gutter and
+      // the horizontal past the baseline into the bottom one. Same bounds the axis
+      // pills already use, extended to fullHeight so subpanes still show it.
+      const fullHeight = paneBandsRef.current.fullHeight;
+      if (mx < 0 || mx > width || my < 0 || my > fullHeight) {
+        crosshairVRef.current!.style('visibility', 'hidden');
+        crosshairHRef.current!.style('visibility', 'hidden');
+        priceLabelGroupRef.current!.style('visibility', 'hidden');
+        dateLabelGroupRef.current!.style('visibility', 'hidden');
+        return;
+      }
+
       crosshairHRef
         .current!.attr('y1', my)
         .attr('y2', my)
@@ -3375,7 +3436,10 @@ const Chart = ({
       // together, both gated on the pointer being inside the price pane.
       if (my <= priceHeight && mx <= width) {
         priceLabelGroupRef
-          .current!.attr('transform', `translate(${width + 2},${my - 9})`)
+          .current!.attr(
+            'transform',
+            `translate(${width + CROSSHAIR_PILL_GAP},${my - 9})`,
+          )
           .style('visibility', 'visible');
         priceLabelTextRef.current!.text(fmtPriceRef.current(yPrice.invert(my)));
 
@@ -3387,7 +3451,10 @@ const Chart = ({
           : dateForX(mx - scaleApi.baseTranslateX, buildProjScale());
         const px = Math.max(
           0,
-          Math.min(width - CROSSHAIR_DATE_PILL_W, lineX - CROSSHAIR_DATE_PILL_W / 2),
+          Math.min(
+            width - CROSSHAIR_DATE_PILL_W,
+            lineX - CROSSHAIR_DATE_PILL_W / 2,
+          ),
         );
         // Sit in the date gutter at the BOTTOM of every pane, where the permanent
         // time ticks are drawn (`translate(0, fullHeight)`), not the price pane's
@@ -3395,7 +3462,7 @@ const Chart = ({
         // `priceHeight` dropped the pill between the price pane and the subpanes.
         // Without subpanes `fullHeight === priceHeight`, so the common case is
         // unchanged. `scaleApi` doesn't carry fullHeight; the live band ref does.
-        const gutterY = paneBandsRef.current.fullHeight + 4;
+        const gutterY = paneBandsRef.current.fullHeight + CROSSHAIR_PILL_GAP;
         dateLabelGroupRef
           .current!.attr('transform', `translate(${px},${gutterY})`)
           .style('visibility', 'visible');
@@ -3626,7 +3693,10 @@ const Chart = ({
         // crosshair lines + axis tags LIVE so the anchor's exact level reads off
         // the axes while you draw (matching TradingView). Cursor mode is
         // untouched: it still runs the affordance path below.
-        if (activeToolRef.current !== 'cursor' || draftRef.current.phase !== 'idle') {
+        if (
+          activeToolRef.current !== 'cursor' ||
+          draftRef.current.phase !== 'idle'
+        ) {
           if (wrapper) wrapper.style.cursor = 'crosshair';
         } else if (wrapper) {
           // Hover affordance, resolved through the SAME `panelTargetAt` the
@@ -3691,7 +3761,9 @@ const Chart = ({
         .on('mouseenter', null)
         .on('mouseleave', null)
         .on('pointermove', null);
-      svgSel.on('pointermove.crosshair', null).on('pointerleave.crosshair', null);
+      svgSel
+        .on('pointermove.crosshair', null)
+        .on('pointerleave.crosshair', null);
       if (crosshairRafRef.current != null) {
         cancelAnimationFrame(crosshairRafRef.current);
         crosshairRafRef.current = null;
@@ -3734,293 +3806,309 @@ const Chart = ({
             className={bare ? styles.chartFrameBare : styles.chartFrame}
             data-trade-overlay-anchor=""
           >
-          <canvas
-            ref={canvasRef}
-            className={styles.seriesCanvas}
-            aria-hidden="true"
-          />
-          <svg ref={svgRef} className={styles.chartSvg} />
-          {layout != null && (
-            <IndicatorLegend
-              indicators={indicators}
-              onIndicatorsChange={onIndicatorsChange}
-              resolved={resolvedIndicators}
-              subpanes={layout.subpanes}
-              marginTop={MARGIN.top}
-              marginLeft={MARGIN.left}
-              infoBarHeight={INFO_BAR_HEIGHT}
-              barCount={dataLength}
-              expanded={infoBarExpanded}
-              onExpandedChange={onInfoBarExpandedChange}
-              subscribeHoverIndex={subscribeHoverIndex}
-              priceFormatter={fmtPrice}
-              resolveColor={(v) => colorResolverRef.current?.resolve(v) ?? FALLBACK_COLOR}
+            <canvas
+              ref={canvasRef}
+              className={styles.seriesCanvas}
+              aria-hidden="true"
             />
-          )}
-          {layout != null &&
-            layout.subpanes.map((band, i) => {
-              // Center the drag handle ON the static separator line for this
-              // boundary (drawn flush at `band.top`) so the grab strip + its hover
-              // highlight coincide with the one visible divider — not a second,
-              // offset one. Fixed grab height straddles the line on both panes.
-              const handleH = 8;
-              const lineY = MARGIN.top + band.top;
-              return (
-                <div
-                  key={band.key}
-                  className={styles.subpaneDivider}
-                  style={{ top: lineY - handleH / 2, height: handleH }}
-                  onPointerDown={onDividerPointerDown(i)}
-                  onPointerMove={onDividerPointerMove}
-                  onPointerUp={onDividerPointerUp}
-                  onPointerCancel={onDividerPointerCancel}
-                >
-                  <span className={styles.subpaneDividerLine} />
-                </div>
-              );
-            })}
-          {layout != null && statsEnabled !== false && statsModel && dataLength > 0 && (
-            <StatsPanel
-              model={statsModel}
-              size={statsSize}
-              pane={{
-                left: MARGIN.left,
-                top: MARGIN.top,
-                width: layout.width,
-                height: layout.priceHeight,
-              }}
-              position={normalizedStatsPosition}
-              onPositionChange={onStatsPositionChange}
-            />
-          )}
-          {layout != null && earningsEnabled && earningsModel && dataLength > 0 && (
-            <EarningsPanel
-              model={earningsModel}
-              size={statsSize}
-              pane={{
-                left: MARGIN.left,
-                top: MARGIN.top,
-                width: layout.width,
-                height: layout.priceHeight,
-              }}
-              position={normalizedEarningsPosition}
-              onPositionChange={onEarningsPositionChange}
-            />
-          )}
-          {layout != null && drawToolbarEnabled && onActiveDrawingToolChange && (
-            <DrawToolbar
-              activeTool={activeDrawingTool}
-              onToolChange={onActiveDrawingToolChange}
-              drawingCount={drawings?.length ?? 0}
-              onDeleteAll={
-                onDrawingsChange ? () => onDrawingsChange([]) : undefined
-              }
-              pane={{
-                left: MARGIN.left,
-                top: MARGIN.top,
-                width: layout.width,
-                height: layout.priceHeight,
-              }}
-              position={normalizedDrawToolbarPosition}
-              onPositionChange={onDrawToolbarPositionChange}
-            />
-          )}
-          {priceBottomPx > 0 && (
-            <button
-              type="button"
-              data-chart-native-menu=""
-              className={`${styles.resetPanBtn} ${panOffset === 0 ? styles.resetPanBtnInactive : ''}`}
-              title="Reset pan"
-              onClick={() => onPanOffsetChange(0)}
-              disabled={panOffset === 0}
-              style={{ bottom: MARGIN.bottom + 2, right: MARGIN.right + 2 }}
-            >
-              <RotateCcw size={14} />
-            </button>
-          )}
-          {priceBottomPx > 0 && showAutoFitBtn && (
-            <button
-              type="button"
-              ref={autoFitBtnRef}
-              data-chart-native-menu=""
-              className={`${styles.autoFitBtn} ${isAutoFit ? styles.autoFitBtnActive : ''}`}
-              title={
-                !isAutoFit
-                  ? 'Auto-fit price scale (off — drag y-axis to enable)'
-                  : autoFitMode === 'priceAndOverlays'
-                    ? 'Auto-fit: price + overlays (click for price-only)'
-                    : 'Auto-fit: price-only (click to include overlays)'
-              }
-              // The menu counts this button as "inside" via `autoFitBtnRef`, so
-              // onContextMenu toggles it cleanly. (Old `onMouseDown
-              // stopPropagation` guarded the removed mousedown listener.)
-              onClick={() => {
-                // A left-click changes mode/range, making the exclusion menu
-                // stale — close it so it doesn't linger or pin the button.
-                setAutoFitMenuOpen(false);
-                if (!isAutoFit) {
-                  setPriceView(null);
-                  return;
+            <svg ref={svgRef} className={styles.chartSvg} />
+            {layout != null && (
+              <IndicatorLegend
+                indicators={indicators}
+                onIndicatorsChange={onIndicatorsChange}
+                resolved={resolvedIndicators}
+                subpanes={layout.subpanes}
+                marginTop={MARGIN.top}
+                marginLeft={MARGIN.left}
+                infoBarHeight={INFO_BAR_HEIGHT}
+                barCount={dataLength}
+                expanded={infoBarExpanded}
+                onExpandedChange={onInfoBarExpandedChange}
+                subscribeHoverIndex={subscribeHoverIndex}
+                priceFormatter={fmtPrice}
+                resolveColor={(v) =>
+                  colorResolverRef.current?.resolve(v) ?? FALLBACK_COLOR
                 }
-                onAutoFitModeChange(
-                  autoFitMode === 'priceAndOverlays' ? 'price' : 'priceAndOverlays',
+              />
+            )}
+            {layout != null &&
+              layout.subpanes.map((band, i) => {
+                // Center the drag handle ON the static separator line for this
+                // boundary (drawn flush at `band.top`) so the grab strip + its hover
+                // highlight coincide with the one visible divider — not a second,
+                // offset one. Fixed grab height straddles the line on both panes.
+                const handleH = 8;
+                const lineY = MARGIN.top + band.top;
+                return (
+                  <div
+                    key={band.key}
+                    className={styles.subpaneDivider}
+                    style={{ top: lineY - handleH / 2, height: handleH }}
+                    onPointerDown={onDividerPointerDown(i)}
+                    onPointerMove={onDividerPointerMove}
+                    onPointerUp={onDividerPointerUp}
+                    onPointerCancel={onDividerPointerCancel}
+                  >
+                    <span className={styles.subpaneDividerLine} />
+                  </div>
                 );
-              }}
-              onContextMenu={(e) => {
-                e.preventDefault();
-                // Menu only meaningful in price+overlays mode with auto-fit active.
-                if (autoFitMode === 'priceAndOverlays' && isAutoFit)
-                  setAutoFitMenuOpen((o) => !o);
-              }}
-              onMouseEnter={() => setAutoFitHovered(true)}
-              onMouseLeave={() => setAutoFitHovered(false)}
-              style={{
-                bottom: MARGIN.bottom + 2,
-                right: MARGIN.right - 26,
-                color:
-                  isAutoFit && autoFitMode === 'priceAndOverlays'
-                    ? '#22c55e'
-                    : undefined,
-              }}
-            >
-              A
-            </button>
-          )}
-          {autoFitMenuOpen &&
-            autoFitMode === 'priceAndOverlays' &&
-            isAutoFit && (
-            <AutoFitMenu
-              contributors={autoFitContributors}
-              excluded={autoFitExcluded}
-              onExcludedChange={onAutoFitExcludedChange}
-              triggerRef={autoFitBtnRef}
-              onClose={() => setAutoFitMenuOpen(false)}
-              style={{
-                bottom: MARGIN.bottom + 28,
-                right: MARGIN.right - 26,
-              }}
-            />
-          )}
-          {/* Appearance gear — TradingView-faithful bottom-right axis-intersection
-              corner (price gutter × date row). Only when the host can persist. */}
-          {onAppearanceChange && (
-            <>
-              <button
-                type="button"
-                ref={settingsGearRef}
-                data-chart-native-menu=""
-                className={styles.settingsGearBtn}
-                title="Chart settings"
-                onClick={() => {
-                  // Only one floating editor at a time.
-                  setCenterPanel(null);
-                  setSettingsOpen((o) => !o);
-                }}
-                style={{ right: 4, bottom: 4 }}
-              >
-                <Settings size={14} />
-              </button>
-              {settingsOpen && (
-                <SettingsDialog
-                  appearance={appearance ?? {}}
-                  onAppearanceChange={onAppearanceChange}
-                  resolveColor={(v) =>
-                    colorResolverRef.current?.resolve(v) ?? FALLBACK_COLOR
-                  }
-                  triggerRef={settingsGearRef}
-                  onClose={() => setSettingsOpen(false)}
-                  style={{ right: MARGIN.right + 4, bottom: MARGIN.bottom + 4 }}
+              })}
+            {layout != null &&
+              statsEnabled !== false &&
+              statsModel &&
+              dataLength > 0 && (
+                <StatsPanel
+                  model={statsModel}
+                  size={statsSize}
+                  pane={{
+                    left: MARGIN.left,
+                    top: MARGIN.top,
+                    width: layout.width,
+                    height: layout.priceHeight,
+                  }}
+                  position={normalizedStatsPosition}
+                  onPositionChange={onStatsPositionChange}
                 />
               )}
-            </>
-          )}
-          {/* Double-click editors, all centred over the chart wrapper. Rendered
+            {layout != null &&
+              earningsEnabled &&
+              earningsModel &&
+              dataLength > 0 && (
+                <EarningsPanel
+                  model={earningsModel}
+                  size={statsSize}
+                  pane={{
+                    left: MARGIN.left,
+                    top: MARGIN.top,
+                    width: layout.width,
+                    height: layout.priceHeight,
+                  }}
+                  position={normalizedEarningsPosition}
+                  onPositionChange={onEarningsPositionChange}
+                />
+              )}
+            {layout != null &&
+              drawToolbarEnabled &&
+              onActiveDrawingToolChange && (
+                <DrawToolbar
+                  activeTool={activeDrawingTool}
+                  onToolChange={onActiveDrawingToolChange}
+                  drawingCount={drawings?.length ?? 0}
+                  onDeleteAll={
+                    onDrawingsChange ? () => onDrawingsChange([]) : undefined
+                  }
+                  pane={{
+                    left: MARGIN.left,
+                    top: MARGIN.top,
+                    width: layout.width,
+                    height: layout.priceHeight,
+                  }}
+                  position={normalizedDrawToolbarPosition}
+                  onPositionChange={onDrawToolbarPositionChange}
+                />
+              )}
+            {priceBottomPx > 0 && (
+              <button
+                type="button"
+                data-chart-native-menu=""
+                className={`${styles.resetPanBtn} ${panOffset === 0 ? styles.resetPanBtnInactive : ''}`}
+                title="Reset pan"
+                onClick={() => onPanOffsetChange(0)}
+                disabled={panOffset === 0}
+                style={{ bottom: MARGIN.bottom + 2, right: MARGIN.right + 2 }}
+              >
+                <RotateCcw size={14} />
+              </button>
+            )}
+            {priceBottomPx > 0 && showAutoFitBtn && (
+              <button
+                type="button"
+                ref={autoFitBtnRef}
+                data-chart-native-menu=""
+                className={`${styles.autoFitBtn} ${isAutoFit ? styles.autoFitBtnActive : ''}`}
+                title={
+                  !isAutoFit
+                    ? 'Auto-fit price scale (off — drag y-axis to enable)'
+                    : autoFitMode === 'priceAndOverlays'
+                      ? 'Auto-fit: price + overlays (click for price-only)'
+                      : 'Auto-fit: price-only (click to include overlays)'
+                }
+                // The menu counts this button as "inside" via `autoFitBtnRef`, so
+                // onContextMenu toggles it cleanly. (Old `onMouseDown
+                // stopPropagation` guarded the removed mousedown listener.)
+                onClick={() => {
+                  // A left-click changes mode/range, making the exclusion menu
+                  // stale — close it so it doesn't linger or pin the button.
+                  setAutoFitMenuOpen(false);
+                  if (!isAutoFit) {
+                    setPriceView(null);
+                    return;
+                  }
+                  onAutoFitModeChange(
+                    autoFitMode === 'priceAndOverlays'
+                      ? 'price'
+                      : 'priceAndOverlays',
+                  );
+                }}
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  // Menu only meaningful in price+overlays mode with auto-fit active.
+                  if (autoFitMode === 'priceAndOverlays' && isAutoFit)
+                    setAutoFitMenuOpen((o) => !o);
+                }}
+                onMouseEnter={() => setAutoFitHovered(true)}
+                onMouseLeave={() => setAutoFitHovered(false)}
+                style={{
+                  bottom: MARGIN.bottom + 2,
+                  right: MARGIN.right - 26,
+                  color:
+                    isAutoFit && autoFitMode === 'priceAndOverlays'
+                      ? '#22c55e'
+                      : undefined,
+                }}
+              >
+                A
+              </button>
+            )}
+            {autoFitMenuOpen &&
+              autoFitMode === 'priceAndOverlays' &&
+              isAutoFit && (
+                <AutoFitMenu
+                  contributors={autoFitContributors}
+                  excluded={autoFitExcluded}
+                  onExcludedChange={onAutoFitExcludedChange}
+                  triggerRef={autoFitBtnRef}
+                  onClose={() => setAutoFitMenuOpen(false)}
+                  style={{
+                    bottom: MARGIN.bottom + 28,
+                    right: MARGIN.right - 26,
+                  }}
+                />
+              )}
+            {/* Appearance gear — TradingView-faithful bottom-right axis-intersection
+              corner (price gutter × date row). Only when the host can persist. */}
+            {onAppearanceChange && (
+              <>
+                <button
+                  type="button"
+                  ref={settingsGearRef}
+                  data-chart-native-menu=""
+                  className={styles.settingsGearBtn}
+                  title="Chart settings"
+                  onClick={() => {
+                    // Only one floating editor at a time.
+                    setCenterPanel(null);
+                    setSettingsOpen((o) => !o);
+                  }}
+                  style={{ right: 4, bottom: 4 }}
+                >
+                  <Settings size={14} />
+                </button>
+                {settingsOpen && (
+                  <SettingsDialog
+                    appearance={appearance ?? {}}
+                    onAppearanceChange={onAppearanceChange}
+                    resolveColor={(v) =>
+                      colorResolverRef.current?.resolve(v) ?? FALLBACK_COLOR
+                    }
+                    triggerRef={settingsGearRef}
+                    onClose={() => setSettingsOpen(false)}
+                    style={{
+                      right: MARGIN.right + 4,
+                      bottom: MARGIN.bottom + 4,
+                    }}
+                  />
+                )}
+              </>
+            )}
+            {/* Double-click editors, all centred over the chart wrapper. Rendered
               off `centerPanel`, never off selection — a single click on a
               drawing selects it and nothing more. */}
-          {centerPanel?.kind === 'candles' && onAppearanceChange && (
-            <CandleSettingsPopup
-              appearance={appearance ?? {}}
-              onAppearanceChange={onAppearanceChange}
-              resolveColor={(v) =>
-                colorResolverRef.current?.resolve(v) ?? FALLBACK_COLOR
-              }
-              onClose={closeCenterPanel}
-              className={styles.centeredPanel}
-            />
-          )}
-          {panelIndicator &&
-            (() => {
-              const def = getIndicator(panelIndicator.defKey);
-              if (!def || (def.settingsSchema?.length ?? 0) === 0) return null;
-              return (
-                <IndicatorSettingsPopover
-                  config={panelIndicator}
-                  def={def}
-                  onCommit={(key, value) =>
-                    onIndicatorsChange(
-                      withSettingOverride(
-                        indicators,
-                        panelIndicator.id,
-                        key,
-                        value,
-                      ),
-                    )
-                  }
-                  onReset={(key) =>
-                    onIndicatorsChange(
-                      withSettingsReset(indicators, panelIndicator.id, [key]),
-                    )
-                  }
-                  onResetKeys={(keys) =>
-                    keys.length > 0 &&
-                    onIndicatorsChange(
-                      withSettingsReset(indicators, panelIndicator.id, keys),
-                    )
-                  }
-                  resolveColor={(v) =>
-                    colorResolverRef.current?.resolve(v) ?? FALLBACK_COLOR
-                  }
-                  onClose={closeCenterPanel}
-                  className={styles.centeredPanel}
-                />
-              );
-            })()}
-          {/* Per-drawing style popup. Only when the host can persist edits. */}
-          {onDrawingsChange && panelDrawing && (
-            <DrawingStylePopup
-              shape={panelDrawing}
-              onChange={(next) => commitDrawing(next)}
-              onDelete={() => {
-                onDrawingsChange(
-                  effectiveDrawings.filter((s) => s.id !== panelDrawing.id),
+            {centerPanel?.kind === 'candles' && onAppearanceChange && (
+              <CandleSettingsPopup
+                appearance={appearance ?? {}}
+                onAppearanceChange={onAppearanceChange}
+                resolveColor={(v) =>
+                  colorResolverRef.current?.resolve(v) ?? FALLBACK_COLOR
+                }
+                onClose={closeCenterPanel}
+                className={styles.centeredPanel}
+              />
+            )}
+            {panelIndicator &&
+              (() => {
+                const def = getIndicator(panelIndicator.defKey);
+                if (!def || (def.settingsSchema?.length ?? 0) === 0)
+                  return null;
+                return (
+                  <IndicatorSettingsPopover
+                    config={panelIndicator}
+                    def={def}
+                    onCommit={(key, value) =>
+                      onIndicatorsChange(
+                        withSettingOverride(
+                          indicators,
+                          panelIndicator.id,
+                          key,
+                          value,
+                        ),
+                      )
+                    }
+                    onReset={(key) =>
+                      onIndicatorsChange(
+                        withSettingsReset(indicators, panelIndicator.id, [key]),
+                      )
+                    }
+                    onResetKeys={(keys) =>
+                      keys.length > 0 &&
+                      onIndicatorsChange(
+                        withSettingsReset(indicators, panelIndicator.id, keys),
+                      )
+                    }
+                    resolveColor={(v) =>
+                      colorResolverRef.current?.resolve(v) ?? FALLBACK_COLOR
+                    }
+                    onClose={closeCenterPanel}
+                    className={styles.centeredPanel}
+                  />
                 );
-                selectDrawing(null);
-                closeCenterPanel();
-              }}
-              resolveColor={(v) =>
-                colorResolverRef.current?.resolve(v) ?? FALLBACK_COLOR
-              }
-              onClose={closeCenterPanel}
-              className={styles.centeredPanel}
-            />
-          )}
-          {/* On-canvas text editor. Only when the host can persist edits. */}
-          {onDrawingsChange && editingTextShape && (
-            <TextEditorOverlay
-              key={editingTextShape.id}
-              shape={editingTextShape}
-              scaleApi={scaleApi}
-              buildProjScale={buildProjScale}
-              marginLeft={MARGIN.left}
-              marginTop={MARGIN.top}
-              resolveColor={(v) =>
-                colorResolverRef.current?.resolve(v) ?? FALLBACK_COLOR
-              }
-              onCommit={commitEditorText}
-              onDeleteEmpty={deleteEditingText}
-            />
-          )}
-          {children}
+              })()}
+            {/* Per-drawing style popup. Only when the host can persist edits. */}
+            {onDrawingsChange && panelDrawing && (
+              <DrawingStylePopup
+                shape={panelDrawing}
+                onChange={(next) => commitDrawing(next)}
+                onDelete={() => {
+                  onDrawingsChange(
+                    effectiveDrawings.filter((s) => s.id !== panelDrawing.id),
+                  );
+                  selectDrawing(null);
+                  closeCenterPanel();
+                }}
+                resolveColor={(v) =>
+                  colorResolverRef.current?.resolve(v) ?? FALLBACK_COLOR
+                }
+                onClose={closeCenterPanel}
+                className={styles.centeredPanel}
+              />
+            )}
+            {/* On-canvas text editor. Only when the host can persist edits. */}
+            {onDrawingsChange && editingTextShape && (
+              <TextEditorOverlay
+                key={editingTextShape.id}
+                shape={editingTextShape}
+                scaleApi={scaleApi}
+                buildProjScale={buildProjScale}
+                marginLeft={MARGIN.left}
+                marginTop={MARGIN.top}
+                resolveColor={(v) =>
+                  colorResolverRef.current?.resolve(v) ?? FALLBACK_COLOR
+                }
+                onCommit={commitEditorText}
+                onDeleteEmpty={deleteEditingText}
+              />
+            )}
+            {children}
           </div>
         </div>
       </ChartOverlayProvider>

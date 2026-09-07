@@ -49,8 +49,9 @@ export const APPEARANCE_DEFAULTS: ChartAppearance = {
   },
   // Price-series opacity (globalAlpha around the candle/bar paint pass).
   candle: { opacity: 1 },
-  // Axis tick lines — Chart.tsx AXIS_OPACITY / TICK_SIZE.
-  axis: { opacity: 0.12, tickSize: 4 },
+  // Axis tick lines — Chart.tsx AXIS_OPACITY / TICK_SIZE. Full opacity so the
+  // ticks match the axis lines (both --chart-separator); a user can fade them.
+  axis: { opacity: 1, tickSize: 4 },
   // Crosshair lines — Chart.tsx (currentColor / 0.3 / '3,3').
   crosshair: { color: 'currentColor', opacity: 0.3, dash: '3,3' },
   // Pattern styling — migrated from the three renderers' module consts.
