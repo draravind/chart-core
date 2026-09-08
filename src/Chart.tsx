@@ -1544,6 +1544,34 @@ const Chart = ({
     return () => document.removeEventListener('keydown', onKey);
   }, [selectDrawing, renderDrawings]);
 
+  // Arrow keys step the app's trade list while focus sits off the chart, and
+  // never move the crosshair — so a crosshair left over from the last hover would
+  // hang frozen over a chart that just changed symbol underneath it. Hide it on
+  // any arrow key, and hide the mouse pointer with it (cursor: none on the
+  // wrapper — the same element pointermove.crosshair already sets the cursor on).
+  // The next real pointer move reseeds crosshairLastPosRef and redraws the lines,
+  // and resets the wrapper cursor, so both come back together on mouse move.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (
+        e.key !== 'ArrowUp' &&
+        e.key !== 'ArrowDown' &&
+        e.key !== 'ArrowLeft' &&
+        e.key !== 'ArrowRight'
+      )
+        return;
+      if (crosshairRafRef.current != null) {
+        cancelAnimationFrame(crosshairRafRef.current);
+        crosshairRafRef.current = null;
+      }
+      crosshairLastPosRef.current = null;
+      hideOverlaysRef.current?.();
+      if (wrapperRef.current) wrapperRef.current.style.cursor = 'none';
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, []);
+
   // The drawing-drag / placement follow-through and the pan follow-through both
   // live in the single pointer owner (one document pointermove/up/cancel set,
   // dispatched by `gestureRef.current.kind`) defined below alongside `cancelPan`.
